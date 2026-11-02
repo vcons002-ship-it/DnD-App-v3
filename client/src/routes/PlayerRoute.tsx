@@ -2,12 +2,13 @@ import {LegacyModeControl} from '../components/LegacyModeControl';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useStore, loadSavedSession } from '../state/socket';
+import { useHasSnapshot } from '../store/useGameStore';
 import { PlayerView } from './PlayerView';
 
 export function PlayerRoute() {
   const [params] = useSearchParams();
   const status = useStore((s) => s.status);
-  const snapshot = useStore((s) => s.snapshot);
+  const hasSnapshot = useHasSnapshot();
   const error = useStore((s) => s.error);
   const connect = useStore((s) => s.connect);
   const [code, setCode] = useState(params.get('code') ?? '');
@@ -35,7 +36,7 @@ export function PlayerRoute() {
 
   // Stay on the game view through a reconnect blip (we keep the last snapshot);
   // ConnectionStatus shows the "Reconnecting…" banner.
-  if (status === 'connected' || (status === 'reconnecting' && snapshot)) {
+  if (status === 'connected' || (status === 'reconnecting' && hasSnapshot)) {
     return <PlayerView />;
   }
 

@@ -10,7 +10,7 @@ import {isLiveCommand,noteRollFacing,noteLiveRollReveal,noteRollResult} from './
 import { processHitEffects, expireOnCasterTurn } from './hitEffectTurns.js';
 import { abilityKey, markSpell } from '../../shared/hitFeatures.js';
 import { checkReveal } from '../../shared/rollReveal.js';
-import {teleportTime,clearTeleport} from './tokenTeleports.js';
+import {teleportTime,clearTeleport,markTeleport} from './tokenTeleports.js';
 import { clearRipostes, RIPOSTE_SPENT } from './reactions.js';
 import { creatureBaseline, readCreatureBaseline, scaleCreature, scaledCurrentHp, validCR } from "../../shared/creatureScaling.js";
 import { requestCreatureAsset } from './assets/hooks.js';
@@ -45,9 +45,9 @@ import {
   sanitizeWeapons,
 } from '../../shared/modifiers.js';
 import { tokenVisibleAt } from '../../shared/fog.js';
-import {createPlayerVision,fogVisionContains,usesTokenVision} from '../../shared/playerVision.js';
+import {createPlayerVision,fogVisionContainsToken,tokenRadiusPx,usesTokenVision} from '../../shared/playerVision.js';
 import {isInvisible} from '../../shared/advancedSpells.js';
-import {seesInvisible} from '../../shared/invisibleSight.js';
+import {isBlindCondition,seesInvisible} from '../../shared/invisibleSight.js';
 import {tokenDistanceFt} from '../../shared/distance.js';
 import { weaponsFromActions, actionsToSheetAbilities, isCleanAttackDuplicate, effectiveRecharge } from '../../shared/monsterAttacks.js';
 import { isDamageType } from '../../shared/damage.js';
@@ -503,16 +503,35 @@ export function getActiveMapId(sessionId: string): string | null {
 
 export function listTokens(mapId: string): Token[] {
   const rows = db
-    .prepare('SELECT * FROM tokens WHERE map_id = ? ORDER BY created_at ASC')
-    .all(mapId) as Parameters<typeof rowToToken>[0][];
-  return rows.map(row=>({...rowToToken(row),teleportedAt:teleportTime(row.id)}));
+    .prepare(
+      `SELECT tokens.*, CASE WHEN tokens.kind = 'pc' THEN (SELECT conditions FROM characters WHERE id = tokens.ref_id) ELSE NULL END AS pc_conditions
+       FROM tokens WHERE map_id = ? ORDER BY created_at ASC`,
+    )
+    .all(mapId) as (Parameters<typeof rowToToken>[0] & { pc_conditions?: string | null })[];
+  return rows.map((row) => {
+    const blind = row.pc_conditions ? isBlindCondition(parseJsonColumn<Condition[]>(row.pc_conditions, [], 'characters.conditions')) : false;
+    return {
+      ...rowToToken(row),
+      teleportedAt: teleportTime(row.id),
+      ...(blind ? { blind: true } : {}),
+    };
+  });
 }
 
 export function getToken(tokenId: string): Token | null {
-  const row = db.prepare('SELECT * FROM tokens WHERE id = ?').get(tokenId) as
-    | Parameters<typeof rowToToken>[0]
-    | undefined;
-  return row ? {...rowToToken(row),teleportedAt:teleportTime(row.id)} : null;
+  const row = db
+    .prepare(
+      `SELECT tokens.*, CASE WHEN tokens.kind = 'pc' THEN (SELECT conditions FROM characters WHERE id = tokens.ref_id) ELSE NULL END AS pc_conditions
+       FROM tokens WHERE id = ?`,
+    )
+    .get(tokenId) as (Parameters<typeof rowToToken>[0] & { pc_conditions?: string | null }) | undefined;
+  if (!row) return null;
+  const blind = row.pc_conditions ? isBlindCondition(parseJsonColumn<Condition[]>(row.pc_conditions, [], 'characters.conditions')) : false;
+  return {
+    ...rowToToken(row),
+    teleportedAt: teleportTime(row.id),
+    ...(blind ? { blind: true } : {}),
+  };
 }
 
 export function createToken(opts: {
@@ -658,8 +677,9 @@ export function wallLimitedMove(token:Token,x:number,y:number) {
   return resolveWallMovement(token,{x,y},radius,map?.walls);
 }
 
-export function moveToken(tokenId: string, x: number, y: number, blockWalls=false): Token | null {
-  clearTeleport(tokenId);
+export function moveToken(tokenId: string, x: number, y: number, blockWalls=false, relocate=false): Token | null {
+  if (relocate) markTeleport(tokenId);
+  else clearTeleport(tokenId);
   // Never trust client coordinates: reject NaN/Infinity and clamp to a sane
   // canvas range so a buggy/forged payload can't park a token at ±1e9 (which
   // would break the map view for everyone) or bind a non-finite value.
@@ -676,7 +696,7 @@ export function moveToken(tokenId: string, x: number, y: number, blockWalls=fals
   const facing = facingAfterMove(previous.x, previous.y, nextX, nextY, previous.facing);
   db.prepare('UPDATE tokens SET x = ?, y = ?, facing = ? WHERE id = ?').run(nextX, nextY, facing, tokenId);
   const next=getToken(tokenId)!;
-  spikeMovement(previous,next);
+  if (!relocate) spikeMovement(previous,next);
   return next;
 }
 
@@ -1433,7 +1453,7 @@ export function createInitiativeVisibility(map: MapState | null, tokens: Token[]
   if (!map) return () => true;
   const monById = new Map(monsters.map(m => [m.id, m]));
   const charById = new Map(characters.map(c => [c.id, c]));
-  const party = tokens.filter(t => t.kind === 'pc' && !t.isHidden);
+  const party = tokens.filter(t => t.kind === 'pc' && !t.isHidden && !t.blind);
   const owned = new Set(party.map(t => t.refId));
   const mapFog = map.mapFogEnabled ? new Set(map.mapFogRevealed) : null;
   const tokenFog = map.tokenFogEnabled ? new Set(map.tokenFogRevealed) : null;
@@ -1444,7 +1464,7 @@ export function createInitiativeVisibility(map: MapState | null, tokens: Token[]
   return token => {
     if (!manualVisible(token)) return false;
     if (token.kind === 'pc') return true;
-    if (!fogVisionContains(vision, token.x, token.y, usesTokenVision(map))) return false;
+    if (!fogVisionContainsToken(vision, token.x, token.y, tokenRadiusPx(token, map), usesTokenVision(map))) return false;
     const monster = monById.get(token.refId);
     return monster?.disposition==='friendly' || !isInvisible(monster) || party.some(t => {
       const character=charById.get(t.refId);

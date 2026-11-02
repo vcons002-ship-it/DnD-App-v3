@@ -59,6 +59,8 @@ export const sameTokenFields = (a: Token, b: Token): boolean =>
   a.kind === b.kind &&
   a.refId === b.refId &&
   a.sharedSightOnly === b.sharedSightOnly &&
+  a.revealedOnly === b.revealedOnly &&
+  a.partiallyRevealed === b.partiallyRevealed &&
   a.invisible === b.invisible &&
   a.revealTag === b.revealTag &&
   a.widthFt === b.widthFt &&

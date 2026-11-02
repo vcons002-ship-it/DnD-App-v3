@@ -1,4 +1,5 @@
 import {requestBattlefieldFrame,cancelBattlefieldFrame} from './battlefieldFrame';
+import {attachWebglContextRecovery} from './webglContextRecovery';
 import {
   cancelLoadingTask,
   cancelLoadingTasksByPrefix,
@@ -70,6 +71,7 @@ import {
 
 export type MiniatureToken = {
   sharedSightOnly?: boolean;
+  partiallyRevealed?: boolean;
   invisible?: boolean;
   id: string; x: number; y: number; diameter: number; hidden: boolean;
   facing?: number;
@@ -669,25 +671,22 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           [...instances.values()].map(i=>({x:i.root.position.x,y:i.root.position.z,visible:i.root.visible})),battlefield?.lighting,!!props.environmentPreview?.heavyDarkness);
         archArtStudy?.draw(useStore.getState().snapshot?.map?.id,view,props.width,props.height,props.tiltDegrees,props.rotationDegrees??0,
           [...instances.values()].map(i=>({x:i.root.position.x,y:i.root.position.z,visible:i.root.visible})),battlefield?.lighting,!!props.environmentPreview?.heavyDarkness);
-        if(props.personalVision&&!useComposite)visionLift??=createMiniatureVisionLift(renderer,host,outlineMask.texture);
         timing?.end();visionTiming?.begin();
-        // Fog covers ground, never the silhouette of an already visible figure.
-        // Its outside rim is not part of the opaque body mask; draw it after fog
-        // rather than letting a wall boundary erase heads/shoulders' outlines.
-        const foreground=()=>{silhouette.render(renderer,outlineRects);spellImpacts.renderForeground(renderer,camera);};
-        visionLift?.render(!!props.personalVision&&!useComposite,foreground);
+        visionLift?.render(false);
+        silhouette.render(renderer,outlineRects);
         // Flashing spells light terrain in sight. Outside magical darkness all
         // of it is visible already, so only heavy darkness needs the reach.
         const flashes=useComposite&&sightFrame?.enabled&&sightFrame.grade?.heavy?impactLights.filter(l=>l.revealsTerrain).map(l=>({source:l,
           polygon:battlefield?.lighting.wallPolygon(l.id)??FLASH_CIRCLE.map(v=>({x:l.x+v.x*spellLightReach(l),y:l.y+v.y*spellLightReach(l)}))})):NO_FLASHES;
         visionComposite?.render(!!props.personalVision&&useComposite,sightFrame,camera,flashes,battlefield?.memoryTexture);
-        if(!props.personalVision||useComposite){
-          silhouette.render(renderer,outlineRects);
-          if(deferSpells&&useComposite){
+        if(deferSpells){
+          if(useComposite){
             // Drawn above terrain fog, so clip to the live sight cover here.
             spellImpacts.setCoverClip(sightFrame?.enabled&&visionComposite?visionComposite.cover:null);
             spellImpacts.renderForeground(renderer,camera);
             spellImpacts.setCoverClip(null);
+          }else{
+            spellImpacts.renderForeground(renderer,camera);
           }
         }
         host.dataset.spellFogPass=deferSpells?(useComposite?'foreground':'legacy-lift'):'scene';
@@ -819,7 +818,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     model.updateMatrix();
     }
     if(battlefield && (instance.root.position.x!==position.x || instance.root.position.z!==position.y || instance.root.rotation.y!==(position.facing??0)))renderer.shadowMap.needsUpdate=true;
-    instance.hunterMark.visible=!!token.hunterMarked && !token.sharedSightOnly;
+    instance.hunterMark.visible=!!token.hunterMarked && !token.sharedSightOnly && !token.partiallyRevealed;
     instance.root.visible = visible;
     instance.root.position.set(position.x, 0, position.y);
     instance.root.rotation.y = position.facing ?? 0;
@@ -1227,7 +1226,21 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     invalidate();
     if(plan.pending)scheduleLod();
   };
-  const contextLost = (event: Event) => { event.preventDefault(); fail(); };
+  const contextRecovery = attachWebglContextRecovery(renderer.domElement, {
+    onContextLost: () => {
+      cancelBattlefieldFrame(frame);
+      frame = 0;
+      fail();
+    },
+    onContextRestored: () => {
+      if (disposed) return;
+      failed = false;
+      drawnCameraKey = '';
+      if (battlefield) renderer.shadowMap.needsUpdate = true;
+      sync(sourceProps, true);
+      invalidate();
+    },
+  });
   const visibility = () => { invalidate(); };
   const dispose = () => {
     if (disposed) return;
@@ -1239,7 +1252,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     preloadQueue.clear();cancelLoadingTasksByPrefix('miniature:');cancelLoadingTasksByPrefix('lod:');cancelLoadingTasksByPrefix('preload:');
     abort.abort();
     cancelBattlefieldFrame(frame);
-    renderer.domElement.removeEventListener('webglcontextlost', contextLost);
+    contextRecovery.dispose();
     document.removeEventListener('visibilitychange', visibility);
     reducedMotion.removeEventListener('change', invalidate);
     [...instances.keys()].forEach(removeInstance);
@@ -1266,7 +1279,6 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     if (!renderer.getContext().isContextLost()) renderer.forceContextLoss();
     renderer.domElement.remove();
   };
-  renderer.domElement.addEventListener('webglcontextlost', contextLost);
   document.addEventListener('visibilitychange', visibility);
   reducedMotion.addEventListener('change', invalidate);
   // Throttle rather than debounce: a continuous wheel/pinch gesture must not
@@ -1326,7 +1338,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       const token = tokenById.get(id)??props.environmentPreview?.carriedLanterns?.find(t=>t.id===id);
       if (!token) return;
       if(finished)scheduleLod();
-      if(finished && facing!==undefined && x===token.x && y===token.y){
+      if(finished && x===token.x && y===token.y && (facing===undefined || facing===token.facing)){
         moves.delete(id);invalidate();return;
       }
       moves.set(id, { x, y, facing: facing ?? facingAfterMove(token.x, token.y, x, y, token.facing),
@@ -1381,7 +1393,7 @@ export const MiniatureLayer = forwardRef<MiniatureLayerHandle, Props>(function M
   return <div ref={host} className="miniature-layer" aria-hidden="true"
     data-testid="miniature-layer" data-miniature-count={state.ids.length}
     data-invisible-miniature-count={state.ids.filter(id=>props.tokens.find(t=>t.id===id)?.invisible).length}
-    data-personal-miniature-count={state.ids.filter(id=>!props.tokens.find(t=>t.id===id)?.sharedSightOnly).length}
+    data-personal-miniature-count={state.ids.filter(id=>{const t=props.tokens.find(t=>t.id===id);return !t?.sharedSightOnly&&!t?.partiallyRevealed;}).length}
     data-miniature-ids={state.ids.join(',')} data-miniature-status={state.status}
     data-tilt-degrees={props.tiltDegrees} />;
 });

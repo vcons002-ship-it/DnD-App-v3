@@ -12,7 +12,7 @@ import type {TerrainFramesJob,TerrainFramesResult} from './legacyTerrain.js';
 import type {AtlasCacheSync,LightBounds} from './terrainAtlas.js';
 process.env.UV_THREADPOOL_SIZE ??= String(Math.max(8,Math.min(32,os.availableParallelism?.()??os.cpus().length)));
 type Observe=(span:MovementWorkerTiming)=>void;
-export type VisionJob={mapId:string;vision:PlayerVision;wallFog:boolean;detailed?:boolean;explored?:ExploredTerrain;tokens:{id:string;x:number;y:number;sharedSightOnly?:boolean}[]};
+export type VisionJob={mapId:string;vision:PlayerVision;wallFog:boolean;detailed?:boolean;explored?:ExploredTerrain;tokens:{id:string;x:number;y:number;sharedSightOnly?:boolean;partiallyRevealed?:boolean}[]};
 export type GeometryJob=VisionJob&{outlinesOnly?:boolean};
 export type RasterJob={svg:string;format?:'png'|'webp'};
 export type MaskTilesJob={maskTiles:{svg:string;width:number;height:number;tileSize:number}};
@@ -38,7 +38,7 @@ export function formatExploredMemory(explored?:ExploredTerrain):string[]{
 }
 function attachVisionFields(base:LegacyGeometry,job:VisionJob):LegacyGeometry{
  const {outlines,...paths}=base;
- return {...paths,...(job.detailed&&outlines?{outlines}:{}),memory:formatExploredMemory(job.explored),affinity:job.tokens.filter(t=>!t.sharedSightOnly&&visionShowsAffinity(job.vision,t.x,t.y)).map(t=>t.id)};
+ return {...paths,...(job.detailed&&outlines?{outlines}:{}),memory:formatExploredMemory(job.explored),affinity:job.tokens.filter(t=>!t.sharedSightOnly&&!t.partiallyRevealed&&visionShowsAffinity(job.vision,t.x,t.y)).map(t=>t.id)};
 }
 /** Bounded CPU pool. No DB handles, sockets or unfiltered snapshots enter workers. */
 export class VisibilityWorkers{

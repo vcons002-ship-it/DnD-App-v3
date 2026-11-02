@@ -21,20 +21,28 @@ import { AiStatus } from '../components/AiStatus';
 import { TopToolbar } from '../components/TopToolbar';
 import { useSelection } from '../lib/useSelection';
 import { useSpawnRequests } from '../lib/spawnChannel';
+import { resolveToken } from '../lib/entities';
 
 export function DmView() {
   const snapshot = useStore((s) => s.snapshot);
   const spawnToken = useStore((s) => s.spawnToken);
+  const moveToken = useStore((s) => s.moveToken);
   const deleteToken = useStore((s) => s.deleteToken);
   const undo = useStore((s) => s.undo);
   const rightPanelNudge = useStore((s) => s.rightPanelNudge);
   const nudgeRightPanel = useStore((s) => s.nudgeRightPanel);
+  const teleportingTokenIds = useStore((s) => s.teleportingTokenIds);
+  const setTeleportingTokens = useStore((s) => s.setTeleportingTokens);
   const { selectedIds, setSelectedIds, handleSelect, handleMove, primaryId } =
     useSelection(snapshot, snapshot ? `dm-sel-${snapshot.sessionCode}` : undefined);
   const [pending, setPending] = useState<{
     kind: 'pc' | 'monster';
     refId: string;
   } | null>(null);
+  const teleportTokens = useMemo(
+    () => (snapshot ? snapshot.tokens.filter((t) => teleportingTokenIds.includes(t.id)) : []),
+    [snapshot, teleportingTokenIds],
+  );
 
   // The standalone Monster Library window has no map canvas, so its "Place on
   // map" hands off to us: arm the same placement flow the left panel uses and
@@ -87,11 +95,14 @@ export function DmView() {
         e.preventDefault();
         undo();
       }
-      if (e.key === 'Escape') setPending(null);
+      if (e.key === 'Escape') {
+        setPending(null);
+        setTeleportingTokens([]);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedIds, deleteToken, setSelectedIds, undo]);
+  }, [selectedIds, deleteToken, setSelectedIds, undo, setTeleportingTokens]);
 
   useEffect(() => { window.scrollTo(0, 0); }, [snapshot?.map?.id]);
   if (!snapshot) return <div className="loading"><MapLoadingBar mode="screen" label="Opening Campaign…" /></div>;
@@ -120,6 +131,16 @@ export function DmView() {
               onCancel={() => setPending(null)}
             />
           )}
+          {!pending && teleportTokens.length > 0 && snapshot.map && (
+            <div className="place-banner" role="status">
+              <span className="place-banner-text">
+                ✦ Teleporting <strong>{teleportTokens.map((t) => resolveToken(snapshot, t).name).join(', ')}</strong> — click the map (or drag) to place without exploring in between.
+              </span>
+              <button className="btn tiny" onClick={() => setTeleportingTokens([])} title="Cancel teleport (Esc)">
+                ✕ Cancel
+              </button>
+            </div>
+          )}
           <MapStage
             snapshot={snapshot}
             draggableTokens
@@ -133,7 +154,15 @@ export function DmView() {
               pending && snapshot.map
                 ? (x, y) =>
                     spawnToken(snapshot.map!.id, pending.kind, pending.refId, x, y)
-                : undefined
+                : teleportTokens.length > 0 && snapshot.map
+                  ? (x, y) => {
+                      const anchor = teleportTokens[0];
+                      for (const t of teleportTokens) {
+                        moveToken(t.id, x + (t.x - anchor.x), y + (t.y - anchor.y), undefined, 'relocate');
+                      }
+                      setTeleportingTokens([]);
+                    }
+                  : undefined
             }
           />
         </main>

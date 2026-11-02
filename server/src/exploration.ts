@@ -27,7 +27,7 @@ function memoryStore(mapId:string,characterId?:string){
  return {
   read:()=>db.prepare(`SELECT terrain_key,geometry,token_memory FROM ${table} WHERE ${where}`).get(...args) as MemoryRow|undefined,
   terrain:(key:string,geometry:string)=>db.prepare(`INSERT INTO ${table}(${columns},terrain_key,geometry) VALUES(${marks},?,?) ON CONFLICT(${columns}) DO UPDATE SET token_memory=CASE WHEN ${table}.terrain_key=excluded.terrain_key THEN ${table}.token_memory ELSE '[]' END,terrain_key=excluded.terrain_key,geometry=excluded.geometry`).run(...args,key,geometry),
-  figures:(key:string,figures:string)=>db.prepare(`INSERT INTO ${table}(${columns},terrain_key,token_memory) VALUES(${marks},?,?) ON CONFLICT(${columns}) DO UPDATE SET token_memory=excluded.token_memory`).run(...args,key,figures),
+  figures:(key:string,figures:string)=>db.prepare(`INSERT INTO ${table}(${columns},terrain_key,token_memory) VALUES(${marks},?,?) ON CONFLICT(${columns}) DO UPDATE SET terrain_key=excluded.terrain_key,token_memory=excluded.token_memory`).run(...args,key,figures),
  };
 }
 
@@ -43,11 +43,11 @@ export function resetExploration(sessionId:string,mapId:string):boolean {
 
 export function rememberTerrain(map:MapState,tokens:Token[],tiles:MapImage[],lightAllowed:(t:Token)=>boolean,readOnly=false,precomputedVision?:import('../../shared/playerVision.js').PlayerVision,characterId?:string):ExploredTerrain {
  const terrainKey=explorationKey(map,tiles),store=memoryStore(map.id,characterId);
- const owned=new Set(tokens.filter(t=>t.kind==='pc'&&!t.isHidden&&(!characterId||t.refId===characterId)).map(t=>t.refId));
+ const owned=new Set(tokens.filter(t=>t.kind==='pc'&&!t.isHidden&&!t.blind&&(!characterId||t.refId===characterId)).map(t=>t.refId));
  let fog:ExploredTerrain|undefined;
  const clipFog=(shape:ExploredTerrain)=>map.mapFogEnabled?clipping.intersection(shape,fog??=fogArea(map)):shape;
 
-  const vision=precomputedVision!==undefined?precomputedVision:(createPlayerVision(map,tokens,owned,lightAllowed)??{rangeFt:60,radius:60*map.gridSizePx/map.feetPerSquare,heavy:false,daylight:true,lights:[],origins:tokens.filter(t=>t.kind==='pc'&&owned.has(t.refId)&&!t.isHidden).map(t=>({id:t.id,x:t.x,y:t.y}))});
+  const vision=precomputedVision!==undefined?precomputedVision:(createPlayerVision(map,tokens,owned,lightAllowed)??{rangeFt:60,radius:60*map.gridSizePx/map.feetPerSquare,heavy:false,daylight:true,lights:[],origins:tokens.filter(t=>t.kind==='pc'&&owned.has(t.refId)&&!t.isHidden&&!t.blind).map(t=>({id:t.id,x:t.x,y:t.y}))});
   const id=memoryKey(map.id,characterId),key=JSON.stringify([terrainKey,vision,map.mapFogEnabled,map.mapFogEnabled?map.mapFogRevealed:[]]);
   const previous=cache.get(id);
   if(previous?.key===key)return previous.terrain;
@@ -95,7 +95,9 @@ export function rememberTerrain(map:MapState,tokens:Token[],tiles:MapImage[],lig
   cache.set(id,{key,terrain:result});return result;
 }
 
-export type RevealedFigure={token:Token;monster?:MonsterPublic};
+export type RevealedFigure={token:Token;monster?:MonsterPublic;updatedAt?:number;cleared?:boolean};
+let lastFigureTimestamp=0;
+const nextFigureTimestamp=()=>{const now=Date.now();lastFigureTimestamp=now>lastFigureTimestamp?now:lastFigureTimestamp+1;return lastFigureTimestamp;};
 const explorationKey=(map:MapState,tiles:MapImage[])=>JSON.stringify([map.imagePath,map.slidesUrl,tiles.map(t=>[t.imagePath,t.x,t.y,t.w,t.h,t.z])]);
 export const terrainIdentity=explorationKey;
 /** Merge one completed worker sweep into the latest history, preserving other
@@ -111,17 +113,20 @@ export function mergeWalkingTerrain(map:MapState,tiles:MapImage[],seen:ExploredT
  mergedCache.set(id,{terrainKey:key,geometry,terrain:result});
  readOnlyCache.delete(id);
  if(tokens&&!tokens.some(t=>t.carriedLantern&&t.kind==='monster')){
-  const owned=new Set(tokens.filter(t=>t.kind==='pc'&&!t.isHidden&&(!characterId||t.refId===characterId)).map(t=>t.refId));
-  const vision=createPlayerVision(map,tokens,owned)??{rangeFt:60,radius:60*map.gridSizePx/map.feetPerSquare,heavy:false,daylight:true,lights:[],origins:tokens.filter(t=>t.kind==='pc'&&owned.has(t.refId)&&!t.isHidden).map(t=>({id:t.id,x:t.x,y:t.y}))};
+  const owned=new Set(tokens.filter(t=>t.kind==='pc'&&!t.isHidden&&!t.blind&&(!characterId||t.refId===characterId)).map(t=>t.refId));
+  const vision=createPlayerVision(map,tokens,owned)??{rangeFt:60,radius:60*map.gridSizePx/map.feetPerSquare,heavy:false,daylight:true,lights:[],origins:tokens.filter(t=>t.kind==='pc'&&owned.has(t.refId)&&!t.isHidden&&!t.blind).map(t=>({id:t.id,x:t.x,y:t.y}))};
   const cacheKey=JSON.stringify([key,vision,map.mapFogEnabled,map.mapFogEnabled?map.mapFogRevealed:[]]);
   const clipped=map.mapFogEnabled?clipping.intersection(result,fogArea(map)):result;
   if(cache.size>=512)cache.delete(cache.keys().next().value!);
   cache.set(id,{key:cacheKey,terrain:clipped});
  }else cache.delete(id);
 }
+const sameRememberedState=(a:RevealedFigure,token:Token,monster?:MonsterPublic)=>
+ !a.cleared&&a.token.x===token.x&&a.token.y===token.y&&a.token.facing===token.facing&&a.token.widthFt===token.widthFt&&
+ a.token.shape===token.shape&&a.token.miniatureWidthFt===token.miniatureWidthFt&&JSON.stringify(a.monster)===JSON.stringify(monster);
 /** Only true party sightings update these frozen display records. No unseen
  * movement, HP, conditions, or appearance changes are sent to players. */
-export function rememberFigures(map:MapState,tiles:MapImage[],tokens:Token[],seen:(token:Token)=>boolean,seenPoint:(x:number,y:number)=>boolean,display:(token:Token)=>MonsterPublic|undefined,readOnly=false,characterId?:string):RevealedFigure[]{
+export function rememberFigures(map:MapState,tiles:MapImage[],tokens:Token[],seen:(token:Token)=>boolean,seenPoint:(x:number,y:number)=>boolean,display:(token:Token)=>MonsterPublic|undefined,readOnly=false,characterId?:string,includeCleared=false):RevealedFigure[]{
  if(map.explorationMode!=='revealed')return [];
  const key=explorationKey(map,tiles),store=memoryStore(map.id,characterId);
  const row=store.read();
@@ -134,10 +139,25 @@ export function rememberFigures(map:MapState,tiles:MapImage[],tokens:Token[],see
  }).map(r=>[r.token.id,r]));
  for(const token of tokens){
   if(token.kind!=='monster'||token.isHidden)continue;
-  if(seen(token))records.set(token.id,{token:{...token},monster:display(token)});
-  else {const old=records.get(token.id);if(old&&seenPoint(old.token.x,old.token.y))records.delete(token.id);}
+  const old=records.get(token.id);
+  if(seen(token)){
+   const monster=display(token);
+   const updatedAt=old&&sameRememberedState(old,token,monster)&&old.updatedAt?old.updatedAt:nextFigureTimestamp();
+   records.set(token.id,{token:{...token},monster,updatedAt});
+  }else if(old&&!old.cleared&&seenPoint(old.token.x,old.token.y)){
+   if(characterId)records.set(token.id,{...old,cleared:true,updatedAt:nextFigureTimestamp()});
+   else records.delete(token.id);
+  }
  }
- const result=[...records.values()],encoded=JSON.stringify(result);
+ const stored=[...records.values()],encoded=JSON.stringify(stored);
  if(!readOnly&&(encoded!==row?.token_memory||row?.terrain_key!==key))store.figures(key,encoded);
- return result;
+ return includeCleared?stored:stored.filter(r=>!r.cleared);
+}
+export function mergePersonalFigures(groups:RevealedFigure[][]):RevealedFigure[]{
+ const byId=new Map<string,RevealedFigure>();
+ for(const group of groups)for(const r of group){
+  const prev=byId.get(r.token.id);
+  if(!prev||(r.updatedAt??0)>=(prev.updatedAt??0))byId.set(r.token.id,r);
+ }
+ return [...byId.values()].filter(r=>!r.cleared);
 }

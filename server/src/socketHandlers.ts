@@ -1,5 +1,12 @@
-import {traceMovement,movementApplied} from './movementTiming.js';
-import {diceArtForSaveOwner} from '../../shared/diceThemes.js';
+import { traceMovement,movementApplied } from './movementTiming.js';
+import {
+  combatRouter,
+  libraryRouter,
+  mapAuthoringRouter,
+  movementRouter,
+  recordDomainAction,
+} from './routers/index.js';
+import { diceArtForSaveOwner } from '../../shared/diceThemes.js';
 import {resetExploration} from './exploration.js';
 import {recordWalkingMove} from './walking.js';
 import {hasPlayerConnection} from './connections.js';
@@ -27,7 +34,7 @@ import {chatAudience,privateChatVisible} from './privateChat.js';
 import {chatImageForSend} from './chatImages.js';
 import {doorApproachPoints,hasLineOfSight} from '../../shared/mapWalls.js';
 import {doorInReach} from '../../shared/doorInteraction.js';
-import {visionContains} from '../../shared/playerVision.js';
+import {visionContains,fogVisionContainsToken,tokenRadiusPx,usesTokenVision} from '../../shared/playerVision.js';
 import {pendingGeometry,resyncDelivery,resetDelivery} from './stateDelivery.js';
 import {visibilityWorkers} from './visibilityWorkers.js';
 import {lastSnapshotFor,withRenderingState} from './connections.js';
@@ -1090,39 +1097,39 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
     });
 
     on('fog:setLayer', ({ mapId, layer, enabled }) => {
-      if (!isDm() || !getMap(mapId)) return;
-      setFogLayer(mapId, layer, enabled);
+      const sid = sessionId();
+      if (!sid || !isDm() || !mapAuthoringRouter.executeSetFogLayer({ sessionId: sid, mapId, layer, enabled, actorSocketId: socket.id })) return;
       afterChange();
     });
 
     on('fog:setVision', ({mapId,layer,enabled})=>{
       const sid=sessionId();
-      if(!sid||!isDm()||!setVisionFog(sid,mapId,layer,enabled))return;
+      if(!sid||!isDm()||!mapAuthoringRouter.executeSetVisionFog({ sessionId: sid, mapId, layer, enabled, actorSocketId: socket.id }))return;
       afterChange();
     });
 
     on('fog:setPartyVision',({mapId,enabled})=>{
       const sid=sessionId();
-      if(!sid||!isDm()||!setSharedPartyVision(sid,mapId,enabled))return;
+      if(!sid||!isDm()||!mapAuthoringRouter.executeSetSharedPartyVision({ sessionId: sid, mapId, enabled, actorSocketId: socket.id }))return;
       afterChange();
     });
     on('fog:setExploration', ({mapId,mode})=>{
       const sid=sessionId();
-      if(!sid||!isDm()||!setExplorationMode(sid,mapId,mode))return;
+      if(!sid||!isDm()||!mapAuthoringRouter.executeSetExplorationMode({ sessionId: sid, mapId, mode, actorSocketId: socket.id }))return;
       afterChange();
     });
 
     on('fog:resetExploration', ({mapId})=>{
       const sid=sessionId();
-      if(!sid||!isDm()||!resetExploration(sid,mapId))return;
+      if(!sid||!isDm()||!mapAuthoringRouter.executeResetExploration({ sessionId: sid, mapId, actorSocketId: socket.id }))return;
       socket.emit('notice',{message:'Player remembered map reset. Areas currently in sight remain visible.'});
       afterChange();
     });
 
     on('fog:paint', ({ mapId, layer, cells, reveal }) => {
-      const map=isDm()?getMap(mapId):undefined;
-      if (!map || map.sessionId!==sessionId() || !Array.isArray(cells)) return;
-      if(paintFog(mapId, layer, cells, reveal))afterChange();
+      const sid = sessionId();
+      if (!sid || !isDm() || !Array.isArray(cells)) return;
+      if (mapAuthoringRouter.executePaintFog({ sessionId: sid, mapId, layer, cells, reveal, actorSocketId: socket.id })) afterChange();
     });
 
     on('fog:cover', ({ mapId, layer }) => {
@@ -1132,35 +1139,24 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       // Snapshot the cells about to be wiped so "cover all" is undoable.
       const before = layer === 'map' ? map.mapFogRevealed : map.tokenFogRevealed;
       captureFogCover(sid, () => setFogRevealed(mapId, layer, before));
-      coverFog(mapId, layer);
-      afterChange();
+      if (mapAuthoringRouter.executeCoverFog({ sessionId: sid, mapId, layer, actorSocketId: socket.id })) afterChange();
     });
 
     on('token:spawn', (p) => {
       const sid = sessionId();
-      if (!sid || !getMap(p.mapId)) return;
-      if (!isDm()) {
-        // Players may place ONLY their own claimed character, on the active map.
-        if (p.kind !== 'pc') return;
-        const c = getCharacter(p.refId);
-        if (!c || c.claimedBy !== socket.id) return;
-        if (p.mapId !== getActiveMapId(sid)) return;
-        // Don't pile up duplicates: skip if their token is already on this map.
-        const exists = listTokens(p.mapId).some(
-          (t) => t.kind === 'pc' && t.refId === p.refId,
-        );
-        if (exists) return;
+      if (!sid) return;
+      if (libraryRouter.executeSpawnToken({
+        sessionId: sid,
+        mapId: p.mapId,
+        kind: p.kind,
+        refId: p.refId,
+        x: p.x,
+        y: p.y,
+        actorRole: isDm() ? 'dm' : 'player',
+        actorSocketId: socket.id,
+      })) {
+        afterChange();
       }
-      // Monsters spawn from a template -> each placement is a fresh numbered
-      // instance (Goblin 1, 2, …). PCs reference their character directly.
-      let refId = p.refId;
-      if (p.kind === 'monster') {
-        const inst = instantiateMonster(p.refId);
-        if (!inst) return;
-        refId = inst.id;
-      }
-      createToken({ mapId: p.mapId, kind: p.kind, refId, x: p.x, y: p.y });
-      afterChange();
     });
 
     // ---- Shared: anyone in the session may move/resize tokens (per spec) ----
@@ -1171,7 +1167,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       const conn=getConn(socket.id),snapshot=lastSnapshotFor(socket.id);
       if(!conn||!snapshot||!point||!Number.isFinite(point.x)||!Number.isFinite(point.y)||typeof point.tokenId!=='string'||previewBusy||Date.now()-lastPreviewAt<150){ack(null);return;}
       if(!renderingState(conn.sessionId,snapshot.map?.id,conn.role==='player'?conn.playerId:null,conn.serverRendering!==false).enabled){ack(null);return;}
-      const token=snapshot.tokens.find(t=>t.id===point.tokenId&&!t.isHidden&&!t.sharedSightOnly);
+      const token=snapshot.tokens.find(t=>t.id===point.tokenId&&!t.isHidden&&!t.sharedSightOnly&&!t.partiallyRevealed);
       const allowed=token&&(conn.role==='dm'||token.kind==='pc'&&snapshot.characters.some(c=>c.id===token.refId&&c.claimedBy===socket.id)||token.kind==='monster'&&snapshot.monsters.some(m=>m.id===token.refId&&m.disposition==='friendly'&&!('objectKind' in m&&m.objectKind)));
       if(!token||!allowed||token.mapId!==snapshot.map?.id){ack(null);return;}
       previewBusy=true;lastPreviewAt=Date.now();const connection=conn;
@@ -1219,10 +1215,11 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
           return;
         }
       }
-      const dmMove=isDm(),sid=sessionId()!,relocate=dmMove&&movement==='relocate',moved=moveToken(tokenId,x,y,!dmMove);
+      const dmMove=isDm(),sid=sessionId()!,relocate=dmMove&&movement==='relocate',from={x:moving.x,y:moving.y},moved=moveToken(tokenId,x,y,!dmMove,relocate);
+      if(moved)recordDomainAction({sessionId:sid,domain:'movement',action:'token:move',actorRole:dmMove?'dm':'player',actorSocketId:socket.id,patch:{tokenId,mapId:moving.mapId,from,to:{x:moved.x,y:moved.y},relocate}});
       movementApplied();
       expireTimedSpellEffects(sid);
-      return afterRollCommit(async()=>{if(moved)try{await recordWalkingMove(moving,moved,hasPlayerConnection(sid),relocate);}catch(error){console.warn('Could not remember walking route:',String(error));}finishInitiative(sid);broadcastSnapshots(io,sid);if(moved&&typeof placed==='function')placed({x:moved.x,y:moved.y});});
+      return afterRollCommit(async()=>{if(moved)try{await recordWalkingMove(moving,moved,getActiveMapId(sid)===moved.mapId,relocate);}catch(error){console.warn('Could not remember walking route:',String(error));}finishInitiative(sid);broadcastSnapshots(io,sid);if(moved&&typeof placed==='function')placed({x:moved.x,y:moved.y});});
     });
 
     // Live, throttled drag preview (no DB write / snapshot) — same sender gate
@@ -1271,11 +1268,14 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
     on('token:setLantern',({tokenId,enabled})=>{
       const sid=sessionId(),token=getToken(tokenId);
       if(!sid||!token||typeof enabled!=='boolean'||getMap(token.mapId)?.sessionId!==sid)return;
-      if(!isDm()){
-        const character=token.kind==='pc'?getCharacter(token.refId):null;
-        if(token.isHidden||token.mapId!==getActiveMapId(sid)||character?.claimedBy!==socket.id)return;
-      }
-      setTokenLantern(tokenId,enabled);afterChange();
+      if(!isDm()&&token.mapId!==getActiveMapId(sid))return;
+      if(movementRouter.executeSetLantern({
+        sessionId:sid,
+        tokenId,
+        enabled,
+        actorRole:isDm()?'dm':'player',
+        actorSocketId:socket.id,
+      }))afterChange();
     });
 
     on('token:setShape', ({ tokenId, shape }) => {
@@ -1677,8 +1677,8 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       const conn = commandConnection();
       if (!conn) return false;
       const snapshot = buildSnapshot(conn.sessionId, conn.role, conn.viewMapId, commandSocketId(), conn.playerId);
-      return !!snapshot?.tokens.some((token) => token.id === tokenId && !token.sharedSightOnly &&
-        (conn.role==='dm'||visionContains(snapshot.playerVision,token.x,token.y)));
+      return !!snapshot?.tokens.some((token) => token.id === tokenId && !token.sharedSightOnly && !token.partiallyRevealed &&
+        (conn.role==='dm'||fogVisionContainsToken(snapshot.playerVision,token.x,token.y,tokenRadiusPx(token,snapshot.map),usesTokenVision(snapshot.map))));
     };
 
     const targetBehindWall=(targetId:string,origin:{kind:'pc'|'monster';refId:string}|string):boolean=>{
@@ -2059,7 +2059,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         if (!slot || slot.remaining<=0) {
           socket.emit('notice',{message:'No spell slot available for this mark.'}); return;
         }
-        if(!tgt || (!isDm()&&!buildSnapshot(sid,'player',null,commandSocketId())?.tokens.some(t=>t.id===tgt))) {
+        if(!tgt || (!isDm()&&!buildSnapshot(sid,'player',null,commandSocketId())?.tokens.some(t=>t.id===tgt&&!t.sharedSightOnly&&!t.partiallyRevealed))) {
           socket.emit('notice',{message:'Choose a visible creature for the mark.'}); return;
         }
       }

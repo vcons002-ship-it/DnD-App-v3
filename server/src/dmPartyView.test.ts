@@ -35,13 +35,16 @@ describe('DM combined player view',()=>{
   const f=fixture();setFogLayer(f.map.id,'tokens',true);setFogRevealed(f.map.id,'tokens',[]);
   expect(f.preview().tokens.some(t=>t.id===f.left.id||t.id===f.right.id)).toBe(false);
  });
- it('never writes exploration memory or changes character claims during preview',()=>{
+ it('writes exploration memory on the active map even without players, but never on an inactive map',()=>{
   const f=fixture();const before=db.prepare('SELECT * FROM explored_terrain WHERE map_id=?').get(f.map.id);
+  expect(before).toBeUndefined();
   f.preview();
-  expect(db.prepare('SELECT * FROM explored_terrain WHERE map_id=?').get(f.map.id)).toEqual(before);
-  expect(getCharacter(f.a.id)?.claimedBy).toBe('left-player');expect(getCharacter(f.b.id)?.claimedBy).toBe('right-player');
-  const build=createSnapshotBuilder(f.s.id)!;build('dm',f.map.id,'dm',null,true);build('player',null,'left-player');
   expect(db.prepare('SELECT * FROM explored_terrain WHERE map_id=?').get(f.map.id)).toBeDefined();
+  expect(getCharacter(f.a.id)?.claimedBy).toBe('left-player');expect(getCharacter(f.b.id)?.claimedBy).toBe('right-player');
+  const prep=createMap(f.s.id,{name:'Staging map'});
+  createToken({mapId:prep.id,kind:'pc',refId:f.a.id,x:100,y:100});
+  buildSnapshot(f.s.id,'dm',prep.id,'dm',null,true);
+  expect(db.prepare('SELECT * FROM explored_terrain WHERE map_id=?').get(prep.id)).toBeUndefined();
  });
  it('preserves existing revealed-mode token memory without updating it',()=>{
   const f=fixture();db.prepare("UPDATE maps SET exploration_mode='revealed' WHERE id=?").run(f.map.id);

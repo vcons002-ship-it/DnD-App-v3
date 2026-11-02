@@ -25,12 +25,15 @@ export function TokenAdminButtons({
   const setTokensHideCombatRole = useStore((s) => s.setTokensHideCombatRole);
   const deleteToken = useStore((s) => s.deleteToken);
   const speakAs = useStore((s) => s.speakAs);
+  const teleportingTokenIds = useStore((s) => s.teleportingTokenIds);
+  const setTeleportingTokens = useStore((s) => s.setTeleportingTokens);
   const menu = variant === 'menu';
   const run = (fn: () => void) => () => {
     fn();
     onAfter?.();
   };
   const badgeTargets = roleBadgeTargets ?? [token.id];
+  const teleporting = teleportingTokenIds.includes(token.id);
   const cls = (active?: boolean, danger?: boolean) =>
     menu
       ? `floating-menu-item${danger ? ' danger' : ''}`
@@ -38,6 +41,13 @@ export function TokenAdminButtons({
 
   return (
     <>
+      <button
+        className={cls(teleporting)}
+        onClick={run(() => setTeleportingTokens(teleporting ? [] : badgeTargets))}
+        title="Place token at a new spot without exploring the path in between (or hold Alt while dragging)"
+      >
+        ✦ {teleporting ? 'Cancel teleport' : 'Teleport token'}
+      </button>
       <button
         className={cls()}
         onClick={run(() => duplicateToken(token.id))}

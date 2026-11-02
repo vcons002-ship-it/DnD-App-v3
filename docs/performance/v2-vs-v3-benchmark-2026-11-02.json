@@ -1,0 +1,131 @@
+{
+  "generatedAt": "2026-11-02T11:21:13.037Z",
+  "environment": {
+    "nodeVersion": "v24.16.0",
+    "platform": "win32",
+    "arch": "x64"
+  },
+  "stateAndSubscribers": {
+    "scenario": "500 single-token movement ticks (60 tokens, 64 walls, 16 lights, 68 subscribed UI/canvas nodes)",
+    "v2": {
+      "totalMs": 33.373,
+      "meanMs": 0.0667,
+      "medianMs": 0.0725,
+      "p95Ms": 0.1035,
+      "p99Ms": 0.2081,
+      "subscriberReEvaluations": 34000,
+      "avgSubscribersPerTick": 68,
+      "digest": 224
+    },
+    "v3": {
+      "totalMs": 7.367,
+      "meanMs": 0.0147,
+      "medianMs": 0.0124,
+      "p95Ms": 0.02,
+      "p99Ms": 0.0665,
+      "subscriberReEvaluations": 971,
+      "avgSubscribersPerTick": 1.94,
+      "digest": 114
+    },
+    "speedupFactor": 4.54,
+    "reRenderReductionPct": 97.14
+  },
+  "visionAndShadows": [
+    {
+      "wallCount": 48,
+      "frames": 160,
+      "originsAndLights": 10,
+      "v2CpuPolygonRaycast": {
+        "totalMs": 370.802,
+        "meanMs": 2.3175,
+        "medianMs": 2.2015,
+        "p95Ms": 3.2936,
+        "p99Ms": 3.6675,
+        "totalVerticesProduced": 113170
+      },
+      "v3GpuShadowStencilPass": {
+        "totalMs": 3.259,
+        "meanMs": 0.0204,
+        "medianMs": 0.0178,
+        "p95Ms": 0.096,
+        "p99Ms": 0.2452,
+        "stencilDraws": 80,
+        "cacheHits": 80,
+        "wallUploads": 1
+      },
+      "speedupFactor": 113.6
+    },
+    {
+      "wallCount": 128,
+      "frames": 160,
+      "originsAndLights": 10,
+      "v2CpuPolygonRaycast": {
+        "totalMs": 407.77,
+        "meanMs": 2.5486,
+        "medianMs": 2.463,
+        "p95Ms": 3.0264,
+        "p99Ms": 3.5256,
+        "totalVerticesProduced": 113644
+      },
+      "v3GpuShadowStencilPass": {
+        "totalMs": 1.859,
+        "meanMs": 0.0116,
+        "medianMs": 0.0168,
+        "p95Ms": 0.0267,
+        "p99Ms": 0.0323,
+        "stencilDraws": 80,
+        "cacheHits": 80,
+        "wallUploads": 1
+      },
+      "speedupFactor": 219.71
+    },
+    {
+      "wallCount": 256,
+      "frames": 160,
+      "originsAndLights": 10,
+      "v2CpuPolygonRaycast": {
+        "totalMs": 409.19,
+        "meanMs": 2.5574,
+        "medianMs": 2.5252,
+        "p95Ms": 2.8393,
+        "p99Ms": 3.1573,
+        "totalVerticesProduced": 113644
+      },
+      "v3GpuShadowStencilPass": {
+        "totalMs": 2.366,
+        "meanMs": 0.0148,
+        "medianMs": 0.0226,
+        "p95Ms": 0.0328,
+        "p99Ms": 0.0477,
+        "stencilDraws": 80,
+        "cacheHits": 80,
+        "wallUploads": 1
+      },
+      "speedupFactor": 172.8
+    }
+  ],
+  "frameScheduler": {
+    "idleWindowSeconds": 10,
+    "v2ContinuousLoop": {
+      "idleFps": 20,
+      "idleFramesOver10s": 200,
+      "framesPer100EventTickBurst": 100
+    },
+    "v3DemandScheduler": {
+      "idleFps": 0,
+      "idleFramesOver10s": 0,
+      "framesPer100EventTickBurst": 1,
+      "rafScheduledFor200Invalidations": 1
+    }
+  },
+  "combatRulePipeline": {
+    "iterations": 5000,
+    "totalMs": 7.733,
+    "meanMs": 0.0015,
+    "medianMs": 0.001,
+    "p95Ms": 0.0024,
+    "p99Ms": 0.0059,
+    "avgMicrosecondsPerEvaluation": 1.5,
+    "totalModifierEffectsApplied": 1000
+  }
+}

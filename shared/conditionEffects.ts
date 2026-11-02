@@ -7,6 +7,13 @@
 import type { Advantage } from './combatMath.js';
 import { hitFeature, markSpell } from './hitFeatures.js';
 import { seesInvisible } from './invisibleSight.js';
+import {
+  evaluateDeclarativeRuleModifiers,
+  type CoverGrade,
+  type IlluminationContext,
+  type RuleModifier,
+  type RuleModifierEffect,
+} from './ruleModifiers.js';
 import type { Condition, CreatureAbility, SheetAbility } from './types.js';
 
 const norm = (labels: string[]): Set<string> =>
@@ -111,8 +118,37 @@ export function evaluateAttackContext(opts: {
   includeArmedManeuvers?: boolean;
   extraFeatureAdv?: readonly string[];
   extraFeatureDis?: readonly string[];
-}): { adv: AdvResult; autoCrit: string | null } {
+  cover?: CoverGrade;
+  illumination?: IlluminationContext;
+  allyAdjacentToTarget?: boolean;
+  customModifiers?: readonly RuleModifier[];
+}): {
+  adv: AdvResult;
+  autoCrit: string | null;
+  acBonus: number;
+  dexSaveBonus: number;
+  blockedReason: string | null;
+  modifierEffects: RuleModifierEffect[];
+} {
   const dist = opts.distanceFt ?? (opts.within5ft ? 5 : Infinity);
+  const declarative = evaluateDeclarativeRuleModifiers(
+    {
+      attackerConditions: opts.attackerConditions,
+      targetConditions: opts.targetConditions,
+      attackerAbilities: opts.attackerEntity?.abilities,
+      targetAbilities: opts.targetEntity?.abilities,
+      attackerSheetAbilities: opts.attackerEntity?.sheetAbilities,
+      targetSheetAbilities: opts.targetEntity?.sheetAbilities,
+      within5ft: opts.within5ft,
+      distanceFt: dist,
+      weaponKind: opts.weaponKind,
+      targetTokenId: opts.targetTokenId,
+      cover: opts.cover,
+      illumination: opts.illumination,
+      allyAdjacentToTarget: opts.allyAdjacentToTarget,
+    },
+    opts.customModifiers,
+  );
   const attackerLabels = opts.attackerConditions
     .filter((c) => !c.isConcentration)
     .map((c) => c.label)
@@ -131,8 +167,8 @@ export function evaluateAttackContext(opts: {
         !opts.attackerEntity ||
         !seesInvisible({ conditions: opts.attackerConditions, abilities: opts.attackerEntity.abilities }, dist),
     );
-  const featureAdv: string[] = [...(opts.extraFeatureAdv ?? [])];
-  const featureDis: string[] = [...(opts.extraFeatureDis ?? [])];
+  const featureAdv: string[] = [...(opts.extraFeatureAdv ?? []), ...declarative.featureAdv];
+  const featureDis: string[] = [...(opts.extraFeatureDis ?? []), ...declarative.featureDis];
   for (const ab of opts.attackerEntity?.sheetAbilities ?? []) {
     if (hitFeature(ab) || (markSpell(ab) && ab.mark)) continue;
     if ((opts.includeAttackerStances ?? true) && ab.type === 'stance' && ab.stance?.active) {
@@ -158,6 +194,10 @@ export function evaluateAttackContext(opts: {
   return {
     adv: attackAdvantage(attackerLabels, targetLabels, opts.within5ft, opts.manual, featureAdv, featureDis),
     autoCrit: autoCritFromConditions(targetLabels, opts.within5ft),
+    acBonus: declarative.acBonus,
+    dexSaveBonus: declarative.dexSaveBonus,
+    blockedReason: declarative.blockedReason,
+    modifierEffects: declarative.effects,
   };
 }
 

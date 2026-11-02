@@ -28,7 +28,10 @@ export function BulkActionsPanel({
   const deleteToken = useStore((s) => s.deleteToken);
   const combatSave = useStore((s) => s.combatSave);
   const consumeAdvantage = useStore((s) => s.consumeAdvantage);
+  const teleportingTokenIds = useStore((s) => s.teleportingTokenIds);
+  const setTeleportingTokens = useStore((s) => s.setTeleportingTokens);
   const isDm = snapshot.role === 'dm';
+  const teleportingAll = selectedIds.length > 0 && selectedIds.every((id) => teleportingTokenIds.includes(id));
   const [cond, setCond] = useState(STANDARD_CONDITIONS[0]);
   const [saveAbility, setSaveAbility] = useState('DEX');
   const [saveDc, setSaveDc] = useState(13);
@@ -169,6 +172,13 @@ export function BulkActionsPanel({
 
           <h4>Visibility (all)</h4>
           <div className="bulk-vis">
+            <button
+              className={`btn tiny${teleportingAll ? ' on' : ''}`}
+              onClick={() => setTeleportingTokens(teleportingAll ? [] : selectedIds)}
+              title="Place all selected tokens at a new spot without exploring the path in between (or hold Alt while dragging)"
+            >
+              ✦ {teleportingAll ? 'Cancel teleport' : `Teleport ${selectedIds.length} tokens`}
+            </button>
             <button
               className="btn tiny"
               onClick={() => setTokensHidden(selectedIds, true)}

@@ -1,0 +1,9 @@
+tunnel: ca3a24d9-af1a-40e4-ba57-9a8d4108a34e
+credentials-file: C:\Users\vcons\.cloudflared\ca3a24d9-af1a-40e4-ba57-9a8d4108a34e.json
+
+ingress:
+  - hostname: v3.nic024i.app
+    service: http://localhost:4300
+  - hostname: dnd-v3.nic024i.app
+    service: http://localhost:4300
+  - service: http_status:404
