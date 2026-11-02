@@ -388,7 +388,15 @@ function MapStageInner({
   const removeMapImage = useStore((s) => s.removeMapImage);
   // Tile-arrange mode: tiles become draggable/resizable on the map.
   const [tilesMode, setTilesMode] = useState(false);
-  const legacyTerrain=legacy&&renderPlayerVision&&!!snapshot.terrainRaster&&!tilesMode;
+  const terrainTiles = useMemo(
+    () => [
+      ...(map?.imagePath && baseW && baseH ? [{ url: map.imagePath, x: 0, y: 0, w: baseW, h: baseH }] : []),
+      ...tiles.map((t) => ({ url: t.imagePath, x: t.x, y: t.y, w: t.w, h: t.h })),
+    ],
+    [map?.imagePath, baseW, baseH, tiles],
+  );
+  const legacyServerTerrain=legacy&&renderPlayerVision&&!!snapshot.terrainRaster&&!tilesMode;
+  const legacyTerrain=legacy&&renderPlayerVision&&!tilesMode&&(!!snapshot.terrainRaster||(!!snapshot.playerVision&&!snapshot.playerVision.daylight&&terrainTiles.length>0));
   // Annotation tool: a freehand pen or text-label placer, with a colour.
   const [annotate, setAnnotate] = useState<'pen' | 'text' | null>(null);
   const [annoColor, setAnnoColor] = useState('#ffd166');
@@ -1059,7 +1067,7 @@ function MapStageInner({
     const groundTokens = groundTokenLayerRef.current?.getNativeCanvasElement();
     const foreground = tokenLayerRef.current?.getNativeCanvasElement();
     if (background) background.style.zIndex = legacyTerrain?'1':'0';
-    if (groundTokens) groundTokens.style.zIndex = legacyTerrain?'1':'0';
+    if (groundTokens) groundTokens.style.zIndex = legacy?'1':'0';
     if (foreground) foreground.style.zIndex = '2';
     const shared=sharedTokenLayerRef.current?.getNativeCanvasElement();
     if(shared){shared.style.zIndex='4';shared.style.filter=map?.explorationMode==='revealed'?'none':'grayscale(1)';shared.style.opacity=map?.explorationMode==='revealed'?'1':'.78';shared.style.pointerEvents='none';shared.dataset.testid='shared-sight-hud';}
@@ -1961,7 +1969,7 @@ function MapStageInner({
               />}
             </Layer>
             {legacy&&<Layer name="legacy-footsteps" listening={false} x={view.x} y={view.y} scaleX={view.scale} scaleY={view.scale}
-              ref={layer=>{legacyFootstepsLayerRef.current=layer;if(layer){const canvas=layer.getNativeCanvasElement();canvas.style.zIndex=legacyTerrain?'1':'0';canvas.style.pointerEvents='none';canvas.dataset.testid='legacy-footsteps';}}}>
+              ref={layer=>{legacyFootstepsLayerRef.current=layer;if(layer){const canvas=layer.getNativeCanvasElement();canvas.style.zIndex=legacy?'1':'0';canvas.style.pointerEvents='none';canvas.dataset.testid='legacy-footsteps';}}}>
               <FootprintLayer key={map?.id} compact tokens={snapshot.tokens} pxPerFoot={pxPerFoot} isVisibleAt={tokenVisibleAtPosition}
                 movementDurationMs={legacyMovement.playback?.durationMs??(snapshot.legacyGeometry!==undefined?0:undefined)} visualPosition={presentation.position}/>
             </Layer>}
@@ -2156,8 +2164,8 @@ function MapStageInner({
               tiltDegrees={tiltDegrees} rotationDegrees={rotationDegrees} width={size.w} height={size.h} onReady={handleMiniatureReady}
               nameLabels={miniatureNameLabels} onRenderedNames={handleRenderedNames} onVisionLights={renderPlayerVision?handleVisionLights:undefined} onPrepareVisionLights={renderPlayerVision?handlePrepareVisionLights:undefined} />
           </Suspense></MiniatureFallback>}
-          {renderPlayerVision&&snapshot.playerVision&&(legacy?<LegacyVisionOverlay ref={visionRef} presentation={presentation} terrainRaster={legacyTerrain?snapshot.terrainRaster:undefined} motion={legacyMovement.playback} tiles={snapshot.visionTiles} raster={snapshot.visionRaster} geometry={snapshot.legacyGeometry} vision={snapshot.playerVision} view={view} width={size.w} height={size.h} mapFogOfWar={usesMapVision(map)} explored={snapshot.exploredTerrain} keepRevealed={map?.explorationMode==='revealed'}/>:<PlayerVisionOverlay serverGeometry={snapshot.legacyGeometry??(sourceViewSnapshot.legacyMotion?.membershipOnly?sourceViewSnapshot.legacyGeometry:undefined)} spellLighting={!spellColorOverlay} ref={visionRef} presentation={presentation} vision={snapshot.playerVision} keepRevealed={map?.explorationMode==='revealed'} mapFogOfWar={usesMapVision(map)} view={view} tilt={tiltDegrees} rotation={rotationDegrees} width={size.w} height={size.h}
-            terrain={{environment:map?.environment,explored:snapshot.exploredTerrain,tiles:[...(map?.imagePath&&baseW&&baseH?[{url:map.imagePath,x:0,y:0,w:baseW,h:baseH}]:[]),...tiles.map(t=>({url:t.imagePath,x:t.x,y:t.y,w:t.w,h:t.h}))],bounds:{x:extX0,y:extY0,w:imgW,h:imgH},grid:map?.gridHidden?undefined:{size:grid,x:map?.gridOffsetX??0,y:map?.gridOffsetY??0}}}/>)}
+          {renderPlayerVision&&snapshot.playerVision&&(legacy?<LegacyVisionOverlay terrain={{tiles:terrainTiles,grid:map?.gridHidden?undefined:{size:grid,x:map?.gridOffsetX??0,y:map?.gridOffsetY??0}}} ref={visionRef} presentation={presentation} terrainRaster={legacyServerTerrain?snapshot.terrainRaster:undefined} motion={legacyMovement.playback} tiles={snapshot.visionTiles} raster={snapshot.visionRaster} geometry={snapshot.legacyGeometry} vision={snapshot.playerVision} view={view} width={size.w} height={size.h} mapFogOfWar={usesMapVision(map)} explored={snapshot.exploredTerrain} keepRevealed={map?.explorationMode==='revealed'}/>:<PlayerVisionOverlay serverGeometry={snapshot.legacyGeometry??(sourceViewSnapshot.legacyMotion?.membershipOnly?sourceViewSnapshot.legacyGeometry:undefined)} spellLighting={!spellColorOverlay} ref={visionRef} presentation={presentation} vision={snapshot.playerVision} keepRevealed={map?.explorationMode==='revealed'} mapFogOfWar={usesMapVision(map)} view={view} tilt={tiltDegrees} rotation={rotationDegrees} width={size.w} height={size.h}
+            terrain={{environment:map?.environment,explored:snapshot.exploredTerrain,tiles:terrainTiles,bounds:{x:extX0,y:extY0,w:imgW,h:imgH},grid:map?.gridHidden?undefined:{size:grid,x:map?.gridOffsetX??0,y:map?.gridOffsetY??0}}}/>)}
           <WallAndDoorHud wallActive={wallActive} wallTool={wallTool} setWallTool={setWallTool} setWallAnchor={setWallAnchor} wallThickness={wallThickness} setWallThickness={setWallThickness} selectedWall={selectedWall} featureSelection={featureSelection} deleteFeatures={deleteFeatures} map={map} doorDragPreview={doorDragPreview} doors={doors} activeDoorControls={activeDoorControls} dismissDoorControls={dismissDoorControls} actualDm={actualDm} sourceSnapshot={sourceSnapshot} snapshot={snapshot} onSelectToken={onSelectToken} operateDoor={operateDoor} />
           <DecalPopup snapshot={actualDm?sourceSnapshot:snapshot} />
           {hover && !menu && (
