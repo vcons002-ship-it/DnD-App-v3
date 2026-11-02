@@ -94,9 +94,9 @@ export const mapAuthoringRouter = {
   executeSetExplorationMode(params: {
     sessionId: string;
     mapId: string;
-    mode: 'remembered' | 'revealed';
+    mode: 'remembered' | 'revealed' | 'off';
     actorSocketId?: string;
-  }): VersionedActionPatch<{ mapId: string; mode: 'remembered' | 'revealed' }> | null {
+  }): VersionedActionPatch<{ mapId: string; mode: 'remembered' | 'revealed' | 'off' }> | null {
     if (!setExplorationMode(params.sessionId, params.mapId, params.mode)) return null;
     return recordDomainAction({
       sessionId: params.sessionId,

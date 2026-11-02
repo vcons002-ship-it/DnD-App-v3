@@ -339,10 +339,10 @@ export function createSnapshotBuilder(
   const mapData = new Map<string, MapData>();
 
   /**
-   * Effective combat role for a token: hidden → null, override → it, else the
-   * creature's most recent attack role (so the badge follows the weapon last
-   * used), falling back to deriving from its stat block.
-   */
+    * Effective combat role for a token: hidden → null, override → it, else the
+    * creature's most recent attack role (so the badge follows the weapon last
+    * used), falling back to deriving from its stat block.
+    */
   const tokenCombatRole = (t: Token): CombatRole | null => {
     if (t.hideCombatRole) return null;
     if (t.combatRoleOverride) return t.combatRoleOverride;
@@ -486,7 +486,7 @@ export function createSnapshotBuilder(
     let previewVisionHit: MapData['previewVisionCache'] | undefined;
     const isActiveMap = !!map && map.id === activeMapId;
     const readOnly = !!preview || !isActiveMap;
-    const boardKey = role !== 'dm' && !preview ? `${map?.explorationMode === 'revealed' && readOnly ? 1 : 0}:${[...owned].sort().join(',')}` : undefined;
+    const boardKey = role !== 'dm' && !preview ? `${map?.explorationMode !== 'off' && readOnly ? 1 : 0}:${[...owned].sort().join(',')}` : undefined;
     const cachedBoard = boardKey ? loaded.boardByOwned?.get(boardKey) : undefined;
     if (role !== 'dm') {
       if (preview) {
@@ -528,19 +528,6 @@ export function createSnapshotBuilder(
       owned:t.kind==='pc',foe:t.kind==='monster'&&monById.get(t.refId)?.disposition!=='friendly',
       mapFog,tokenFog,grid,x:t.x,y:t.y}),readOnly,getPartyVision());
       viewerTerrain=isActiveMap?(exploredTerrain??=terrain()):terrain();
-    }
-    if(role==='dm'&&isActiveMap&&!preview&&!includePartyView&&map?.explorationMode==='revealed'){
-      const manualVisible=(t:Token)=>tokenVisibleAt({role:'player',hidden:t.isHidden,owned:t.kind==='pc',foe:t.kind==='monster'&&monById.get(t.refId)?.disposition!=='friendly',mapFog,tokenFog,grid,x:t.x,y:t.y});
-      if(!sharedPartyVision){
-        for(const [id,vision] of personalMemories){
-          const sees=(t:Token)=>manualVisible(t)&&fogVisionContainsToken(vision,t.x,t.y,tokenRadiusPx(t,map),usesTokenVision(map))&&(!isInvisible(monById.get(t.refId)!)||data.tokens.some(o=>o.kind==='pc'&&!o.blind&&o.refId===id&&seesInvisible(charById.get(id)!,tokenDistanceFt(o,t,map))));
-          rememberFigures(map,data.mapImages,data.tokens,sees,(x,y)=>fogVisionContains(vision,x,y,usesTokenVision(map)),t=>{const m=monById.get(t.refId);return m?getPlayerMonster(m):undefined;},false,id);
-        }
-      }else{
-        const pv=getPartyVision();
-        const sees=(t:Token)=>manualVisible(t)&&fogVisionContainsToken(pv,t.x,t.y,tokenRadiusPx(t,map),usesTokenVision(map))&&(!isInvisible(monById.get(t.refId)!)||data.tokens.some(o=>o.kind==='pc'&&!o.blind&&party.has(o.refId)&&seesInvisible(charById.get(o.refId)!,tokenDistanceFt(o,t,map))));
-        rememberFigures(map,data.mapImages,data.tokens,sees,(x,y)=>fogVisionContains(pv,x,y,usesTokenVision(map)),t=>{const m=monById.get(t.refId);return m?getPlayerMonster(m):undefined;},false);
-      }
     }
     let tokens = data.tokens;
     let shapedMonsters: (Monster | MonsterPublic)[] = monsters;
@@ -603,7 +590,7 @@ export function createSnapshotBuilder(
         const isStationaryPreview = !!previewVisionHit && !preview!.positions.has(t.id);
         const retained=rememberedById.get(t.id);
         const retain=()=>{
-          if(!retained||map?.explorationMode!=='revealed'||!manualVisible(retained.token)||!fogVisionContains(playerVision,retained.token.x,retained.token.y,false))return [];
+          if(!retained||map?.explorationMode==='off'||!manualVisible(retained.token)||(playerVision&&!playerVision.origins.length))return [];
           if(retained.monster)retainedDisplays.set(t.refId,retained.monster);
           return [{...retained.token,initiative:partySees(t)?t.initiative:null,sharedSightOnly:true,revealedOnly:true}];
         };
@@ -638,11 +625,10 @@ export function createSnapshotBuilder(
           return part.length?part:retain();
         }
         // Party positions are always known. Explicit DM hiding still wins.
-        // The normal remembered mode retains only terrain, not lost creatures.
-        if(t.kind==='pc')return [{...t,sharedSightOnly:true,...(map?.explorationMode==='revealed'?{revealedOnly:true}:{})}];
+        if(t.kind==='pc')return [{...t,sharedSightOnly:true,...(map?.explorationMode!=='off'?{revealedOnly:true}:{})}];
         const part=partial();if(part.length)return part;
         const kept=retain();if(kept.length)return kept;
-        if(map?.explorationMode==='revealed'&&playerVision?.heavy&&!fogVisionContains(playerVision,t.x,t.y,false))return [];
+
         if(monById.get(t.refId)?.objectKind || !party.size || sameAsParty)return [];
         let partyVisible: boolean | undefined;
         if (!preview) {
