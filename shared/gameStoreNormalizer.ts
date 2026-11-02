@@ -29,7 +29,7 @@ export type NormalizedCombatState = {
 export type NormalizedMapVision = {
   mapId: string;
   sharedPartyVision: boolean;
-  explorationMode: 'remembered' | 'revealed';
+  explorationMode: 'remembered' | 'revealed' | 'off';
   mapVisionEnabled: boolean;
   tokenVisionEnabled: boolean;
   mapFogEnabled: boolean;
