@@ -132,7 +132,7 @@ if (fs.existsSync(config.clientDist)) {
 registerSocketHandlers(io);
 
 server.listen(config.port, config.host, async () => {
-  console.log(`\n  DnD-App-v2 server listening on http://localhost:${config.port}`);
+  console.log(`\n  DnD-App-v3 server listening on http://localhost:${config.port}`);
   await startTunnel();
   const base = publicUrl();
   console.log('\n  ──────────────────────────────────────────────');

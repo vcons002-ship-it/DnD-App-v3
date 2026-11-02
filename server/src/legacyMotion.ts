@@ -37,7 +37,7 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
  if(!before.map||!after.map||before.explorationEpoch!==after.explorationEpoch||walkingMapKey(before.map)!==walkingMapKey(after.map)||!equal(before.mapImages,after.mapImages)||before.tokenLayerRaster||after.tokenLayerRaster)return;
  const old=new Map(before.tokens.map(t=>[t.id,t])),moves:LegacyMotion['moves']={},routes=[];
  for(const t of after.tokens){
-  const previous=old.get(t.id);if(!previous||previous.x===t.x&&previous.y===t.y)continue;
+  const previous=old.get(t.id);if(!previous||previous.x===t.x&&previous.y===t.y||previous.revealedOnly||t.revealedOnly)continue;
   const route=walkingRoute(t.id);
   if(!route||route.generation!==explorationGeneration(after.map.id)||t.teleportedAt!==previous.teleportedAt||route.mapId!==after.map.id||route.walls!==JSON.stringify(after.map.walls??[])||route.from.x!==previous.x||route.from.y!==previous.y||route.to.x!==t.x||route.to.y!==t.y)return;
   moves[t.id]={from:route.from,to:route.to};routes.push(route);
@@ -120,10 +120,10 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
    else if(index===0&&hasFullGeometry(before)&&first.tokens.length===before.tokens.length)view.legacyGeometry=before.legacyGeometry;
    else if(view.playerVision&&needsVisibilityLayer(view.map,view.playerVision)){
     if(hasFullGeometry(after)&&equal(view.playerVision,after.playerVision)){
-     view.legacyGeometry={sight:after.legacyGeometry!.sight,near:after.legacyGeometry!.near,lights:after.legacyGeometry!.lights,memory:t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
+     view.legacyGeometry={sight:after.legacyGeometry!.sight,near:after.legacyGeometry!.near,lights:after.legacyGeometry!.lights,memory:t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
     }else{
      if(hasFullGeometry(before)&&equal(view.playerVision,before.playerVision)){
-      view.legacyGeometry={sight:before.legacyGeometry!.sight,near:before.legacyGeometry!.near,lights:before.legacyGeometry!.lights,memory:t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
+      view.legacyGeometry={sight:before.legacyGeometry!.sight,near:before.legacyGeometry!.near,lights:before.legacyGeometry!.lights,memory:t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
      }else{
       const vKey=JSON.stringify(view.playerVision);
       let geomPromise=stepGeomByVision.get(vKey);
@@ -132,11 +132,11 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
        stepGeomByVision.set(vKey,geomPromise);
       }
       const geom=await geomPromise;
-      view.legacyGeometry={...geom,memory:index===LEGACY_MOTION_STEPS?formatMemory(after.exploredTerrain):t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
+      view.legacyGeometry={...geom,memory:index===LEGACY_MOTION_STEPS?formatMemory(after.exploredTerrain):t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
      }
     }
    }
-   else view.legacyGeometry={sight:[],near:[],lights:[],memory:[],affinity:view.tokens.filter(t=>!t.sharedSightOnly).map(t=>t.id)};
+   else view.legacyGeometry={sight:[],near:[],lights:[],memory:[],affinity:view.tokens.filter(t=>!t.sharedSightOnly&&!t.partiallyRevealed).map(t=>t.id)};
    return view;
   }));
   if(options?.current&&!options.current())return;
@@ -153,7 +153,7 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
      const viewMonsters=new Map(view.monsters.map(m=>[m.id,m]));
      const changedTokens=view.tokens.filter(t=>{
       const endTok=endById.get(t.id);if(!endTok)return true;
-      if(!!t.sharedSightOnly!==!!endTok.sharedSightOnly||viewAffinity.has(t.id)!==endAffinity.has(t.id))return true;
+      if(!!t.sharedSightOnly!==!!endTok.sharedSightOnly||!!t.partiallyRevealed!==!!endTok.partiallyRevealed||viewAffinity.has(t.id)!==endAffinity.has(t.id))return true;
       if(!equal(moves[t.id]?{...t,...moves[t.id].to}:t,endTok))return true;
       return t.kind==='monster'&&!equal(viewMonsters.get(t.refId),endMonsters.get(t.refId));
      });

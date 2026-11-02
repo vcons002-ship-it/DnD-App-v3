@@ -152,6 +152,8 @@ export type FogLayer = 'map' | 'tokens';
 export type Token = {
   teleportedAt?: number;
   leavesNoTracks?: boolean;
+  /** True when the represented character has a Blinded/Blind condition (no sight). */
+  blind?: boolean;
   /** Derived active spell marks; display only, never a persisted condition. */
   markLabels?: string[];
   /** Viewer-only live party awareness. Render grayscale; never a direct target.
@@ -159,6 +161,8 @@ export type Token = {
   sharedSightOnly?: boolean;
   /** Full-color last-seen reference in Keep revealed fog; never a direct target. */
   revealedOnly?: boolean;
+  /** Partially visible at the edge of fog; rendered under fog mask, never targetable or shown in menus. */
+  partiallyRevealed?: boolean;
   /** Owner/party/DM ghost rendering; unseen hostile tokens never arrive. */
   invisible?: boolean;
   /** Server-assigned public encounter tag; U means not yet revealed (DM only). */

@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-title DnD-App-v2 - Install always-on server service
+title DnD-App-v3 - Install always-on server service
 cd /d "%~dp0"
 
 REM ============================================================
@@ -59,8 +59,8 @@ REM ----- Remove any previous copy of the service, then install fresh. -----
 echo Installing the DnDServer service...
 "%NSSM%" install DnDServer "%NODE_EXE%" "--import tsx src/index.ts"
 "%NSSM%" set DnDServer AppDirectory "%~dp0server"
-"%NSSM%" set DnDServer DisplayName "DnD-App-v2 server"
-"%NSSM%" set DnDServer Description "Local D&D virtual tabletop server, always-on."
+"%NSSM%" set DnDServer DisplayName "DnD-App-v3 server"
+"%NSSM%" set DnDServer Description "Local D&D virtual tabletop server (v3), always-on."
 "%NSSM%" set DnDServer AppStdout "%~dp0server\data\service.log"
 "%NSSM%" set DnDServer AppStderr "%~dp0server\data\service.log"
 "%NSSM%" set DnDServer AppRotateFiles 1

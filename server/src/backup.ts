@@ -345,6 +345,7 @@ const importSessionRows = db.transaction(
         let memory:unknown[]=[];
         try{const value=JSON.parse(String(explored.token_memory??'[]'));if(Array.isArray(value))memory=value;}catch{}
         const remapped=memory.flatMap((item:any)=>{
+          if(item?.cleared)return [];
           const t=item?.token,id=newRef(t?.id,tokIds),ref=newRef(t?.refId,t?.kind==='pc'?charIds:monIds);
           if(!id||!ref||t.mapId!==explored.map_id)return [];
           return [{token:{...t,id,mapId:map,refId:ref},...(item.monster?{monster:{...item.monster,id:ref}}:{})}];

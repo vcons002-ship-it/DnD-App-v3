@@ -1,4 +1,4 @@
-import {setSharedPartyVision,setExplorationMode,getToken} from './sessions.js';
+import {setSharedPartyVision,setExplorationMode,getToken,setCondition,clearCondition} from './sessions.js';
 import {recordWalkingMove,walkingRoute} from './walking.js';
 import {describe,it,expect,vi} from 'vitest';
 import {db} from './db.js';
@@ -89,16 +89,66 @@ describe('persistent shared party terrain memory',()=>{
   expect(contains(f.snap('explorer-b').exploredTerrain,900,100)).toBe(true);
   expect(f.snap('explorer-b').tokens.some(t=>t.id===f.enemy.id)).toBe(false);
  });
- it('persists through cache loss, reclaim and map switching; DM-only prep does not explore',()=>{
+ it('persists through cache loss, reclaim and map switching; active maps always remember while inactive prep maps do not',async()=>{
   const f=fixture();
+  const staged=createMap(f.s.id,{name:'Staged prep map'});
+  const stagedTok=createToken({mapId:staged.id,kind:'pc',refId:f.a.id,x:100,y:100});
+  buildSnapshot(f.s.id,'dm',staged.id,'dm',null,true);
+  const stagedMoved=moveToken(stagedTok.id,800,100)!;
+  await recordWalkingMove(stagedTok,stagedMoved,true);
+  expect(db.prepare('SELECT count(*) n FROM explored_terrain WHERE map_id=?').get(staged.id)).toEqual({n:0});
   buildSnapshot(f.s.id,'dm',f.map.id);
-  expect(db.prepare('SELECT count(*) n FROM explored_terrain WHERE map_id=?').get(f.map.id)).toEqual({n:0});
+  expect(db.prepare('SELECT count(*) n FROM explored_terrain WHERE map_id=?').get(f.map.id)).toEqual({n:1});
   moveToken(f.ta.id,800,100);f.snap();moveToken(f.ta.id,100,100);
   clearExplorationCache();claimCharacter(f.a.id,'reconnected');
   const second=createMap(f.s.id,{name:'Second map'});setActiveMap(f.s.id,second.id);
   expect(f.snap('reconnected').exploredTerrain).toEqual([]);
   setActiveMap(f.s.id,f.map.id);
   expect(contains(f.snap('reconnected').exploredTerrain,900,100)).toBe(true);
+ });
+
+ it('DM teleport relocates players without exploring the rooms in between',async()=>{
+  const f=fixture();
+  updateMapEnvironment(f.s.id,f.map.id,{enabled:true,lighting:'dungeon',heavyDarkness:true,lights:[]});
+  resetExploration(f.s.id,f.map.id);
+  buildSnapshot(f.s.id,'dm',f.map.id,'dm',null,true);
+  expect(contains(buildSnapshot(f.s.id,'dm',f.map.id,'dm',null,true)!.partyView!.exploredTerrain,100,100)).toBe(true);
+  expect(contains(buildSnapshot(f.s.id,'dm',f.map.id,'dm',null,true)!.partyView!.exploredTerrain,1100,100)).toBe(false);
+  const before=getToken(f.ta.id)!;
+  const teleported=moveToken(f.ta.id,2100,100,false,true)!;
+  expect(teleported.teleportedAt).toBeDefined();
+  await recordWalkingMove(before,teleported,true,true);
+  const afterView=buildSnapshot(f.s.id,'dm',f.map.id,'dm',null,true)!.partyView!;
+  expect(contains(afterView.exploredTerrain,100,100)).toBe(true);
+  expect(contains(afterView.exploredTerrain,1100,100)).toBe(false);
+  expect(contains(afterView.exploredTerrain,2100,100)).toBe(true);
+ });
+
+ it('blind players have no vision, do not remember map terrain, and do not reveal creatures',async()=>{
+  const s=createSession('Blind exploration'),map=createMap(s.id,{name:'Blind test'});
+  setActiveMap(s.id,map.id);
+  updateMapEnvironment(s.id,map.id,{enabled:true,lighting:'dungeon',heavyDarkness:true,lights:[]});
+  const pc=createCharacter(s.id,{name:'Blind Hero'});claimCharacter(pc.id,'blind-player');
+  const tok=createToken({mapId:map.id,kind:'pc',refId:pc.id,x:100,y:100});
+  const m=instantiateMonster(createMonsterTemplate(s.id,{name:'Lurker',maxHp:10}).id)!;
+  const enemy=createToken({mapId:map.id,kind:'monster',refId:m.id,x:150,y:100});
+  setCondition('pc',pc.id,{id:'blind-1',label:'Blinded',aura:'red',isConcentration:false});
+  const snap1=buildSnapshot(s.id,'player',null,'blind-player')!;
+  expect(snap1.playerVision?.origins).toEqual([]);
+  expect(snap1.exploredTerrain).toEqual([]);
+  expect(snap1.tokens.some(t=>t.id===enemy.id)).toBe(false);
+  expect(snap1.tokens.some(t=>t.id===tok.id)).toBe(true);
+  const from=getToken(tok.id)!;
+  const moved=moveToken(tok.id,1500,100,true)!;
+  await recordWalkingMove(from,moved,true);
+  const snap2=buildSnapshot(s.id,'player',null,'blind-player')!;
+  expect(snap2.exploredTerrain).toEqual([]);
+  clearCondition('pc',pc.id,'blind-1');
+  const snap3=buildSnapshot(s.id,'player',null,'blind-player')!;
+  expect(snap3.playerVision?.origins).toHaveLength(1);
+  expect(contains(snap3.exploredTerrain,1500,100)).toBe(true);
+  expect(contains(snap3.exploredTerrain,800,100)).toBe(false);
+  expect(contains(snap3.exploredTerrain,100,100)).toBe(false);
  });
  it('manual map fog blocks both learning and displaying memories but token fog is not a terrain curtain',()=>{
   const f=fixture();moveToken(f.ta.id,800,100);

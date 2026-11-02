@@ -1,5 +1,5 @@
 import clipping from 'polygon-clipping';
-import {createPlayerVision,lightCoverage,type PlayerVision} from './playerVision.js';
+import {createPlayerVision,lightCoverage,TOKEN_TARGETABLE_FRACTION,tokenFootprintPoints,type PlayerVision} from './playerVision.js';
 import {wallVisibilityPolygon,SIGHT_EXTENT} from './mapWalls.js';
 import type {ExploredTerrain} from './exploration.js';
 import type {MapState,Token} from './types.js';
@@ -64,13 +64,13 @@ export type WalkSightJob={walkSight:{map:MapState;tokens:Token[];owned?:string[]
 export function walkingTerrain({walkSight:{map,tokens,owned:ownedIds,tokenId,from,to}}:WalkSightJob,onCache?:TerrainCacheObserver){
  const count=Math.min(128,Math.max(2,Math.ceil(Math.hypot(to.x-from.x,to.y-from.y)/Math.max(1,map.gridSizePx/2))));
  const steps=count%2?Math.min(128,count+1):count,cache=terrainCacheFor(map.walls);
- const owned=new Set(ownedIds??tokens.filter(t=>t.kind==='pc'&&!t.isHidden).map(t=>t.refId));
+ const owned=new Set(ownedIds??tokens.filter(t=>t.kind==='pc'&&!t.isHidden&&!t.blind).map(t=>t.refId));
  const combine=(parts:ExploredTerrain[])=>parts.length===1?parts[0]:unionTerrain(parts);
  const polygon=(point:{x:number;y:number},radius:number,share=false)=>{
   const key=`${point.x},${point.y}:${radius}`;let shape=cache.get(key);
   if(!shape){shape=markQuantized([[wallVisibilityPolygon(point,map.walls??[],radius).map(p=>[Math.round(p.x*64)/64,Math.round(p.y*64)/64])]]);cache.set(key,shape);if(share)onCache?.(cachedWallKey,key,shape);}return shape;
  };
- const fallbackOrigins=(at:Token[])=>at.filter(t=>t.kind==='pc'&&owned.has(t.refId)&&!t.isHidden).map(t=>({id:t.id,x:t.x,y:t.y}));
+ const fallbackOrigins=(at:Token[])=>at.filter(t=>t.kind==='pc'&&owned.has(t.refId)&&!t.isHidden&&!t.blind).map(t=>({id:t.id,x:t.x,y:t.y}));
  const dynamicLanterns=tokens.some(t=>t.carriedLantern&&!t.isHidden&&(t.kind!=='pc'||!owned.has(t.refId)));
  const baseAt=tokens.map(token=>token.id===tokenId?{...token,x:from.x,y:from.y}:token);
  const baseVision=!dynamicLanterns?(createPlayerVision(map,baseAt,owned)??{rangeFt:60 as const,radius:60*map.gridSizePx/map.feetPerSquare,heavy:false,origins:fallbackOrigins(baseAt),lights:[],daylight:true}):undefined;
@@ -142,4 +142,34 @@ export function walkingTerrain({walkSight:{map,tokens,owned:ownedIds,tokenId,fro
  };
  const half=sweep(0,steps/2),seen=sweep(steps/2+1,steps,half),fog=map.mapFogEnabled?fogTerrain(map):undefined;
  return {seen:fog?clipping.intersection(quantizeTerrain(seen),quantizeTerrain(fog)):seen,half:fog?clipping.intersection(quantizeTerrain(half),quantizeTerrain(fog)):half,samples:steps+1};
+}
+function pointInRing(ring:[number,number][],x:number,y:number):boolean{
+ let inside=false;
+ for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+  const xi=ring[i][0],yi=ring[i][1],xj=ring[j][0],yj=ring[j][1];
+  const dx=xj-xi,dy=yj-yi,len2=dx*dx+dy*dy;
+  if(len2>0){
+   const t=Math.max(0,Math.min(1,((x-xi)*dx+(y-yi)*dy)/len2));
+   if(Math.hypot(x-(xi+t*dx),y-(yi+t*dy))<=1e-3)return true;
+  }
+  if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))inside=!inside;
+ }
+ return inside;
+}
+export function pointInExploredTerrain(shape:ExploredTerrain|undefined|null,x:number,y:number):boolean{
+ if(!shape?.length)return false;
+ for(const poly of shape){
+  if(!poly.length||!pointInRing(poly[0],x,y))continue;
+  let inHole=false;
+  for(let h=1;h<poly.length;h++)if(pointInRing(poly[h],x,y)){inHole=true;break;}
+  if(!inHole)return true;
+ }
+ return false;
+}
+export function tokenInExploredTerrain(shape:ExploredTerrain|undefined|null,x:number,y:number,radiusPx:number):boolean{
+ if(!shape?.length)return false;
+ const pts=tokenFootprintPoints(x,y,radiusPx);
+ let seen=0;
+ for(const p of pts)if(pointInExploredTerrain(shape,p.x,p.y))seen++;
+ return seen/pts.length>=TOKEN_TARGETABLE_FRACTION;
 }

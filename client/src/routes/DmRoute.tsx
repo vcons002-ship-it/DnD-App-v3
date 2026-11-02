@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { SessionSummary } from '../../../shared/types';
 import { useStore, loadSavedSession } from '../state/socket';
+import { useHasSnapshot } from '../store/useGameStore';
 import { DmView } from './DmView';
 
 const fmtDate = (ms: number) =>
@@ -16,7 +17,7 @@ const fmtDate = (ms: number) =>
 export function DmRoute() {
   const [params] = useSearchParams();
   const status = useStore((s) => s.status);
-  const snapshot = useStore((s) => s.snapshot);
+  const hasSnapshot = useHasSnapshot();
   const error = useStore((s) => s.error);
   const connect = useStore((s) => s.connect);
   const [code, setCode] = useState(params.get('code') ?? '');
@@ -223,7 +224,7 @@ export function DmRoute() {
   };
 
   // Hold the game view through a reconnect blip (keep the last snapshot).
-  if (status === 'connected' || (status === 'reconnecting' && snapshot)) {
+  if (status === 'connected' || (status === 'reconnecting' && hasSnapshot)) {
     return <DmView />;
   }
 

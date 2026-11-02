@@ -61,6 +61,7 @@ import type {
 import { playHit, playMiss, playHeal, playSkill } from '../lib/sfx';
 import { safeSetItem } from '../lib/storage';
 import { refreshMiniatureCatalog } from '../lib/miniatures';
+import { useGameStore } from '../store/useGameStore';
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -105,6 +106,8 @@ type Store = {
   skipLiveDice: () => void;
   teleportCast:AbilityRollPayload|null;
   clearTeleportCast:()=>void;
+  teleportingTokenIds:string[];
+  setTeleportingTokens:(ids:string[])=>void;
   spellAreaPreviews:Record<string,import('../../../shared/types').SpellAreaPreview>;
   shareSpellArea:(payload:import('../../../shared/types').SpellAreaPreviewIntent|null)=>void;
   areaCast:{payload:AbilityRollPayload;spec:SpellArea;name:string;repeat?:import('../../../shared/types').SpellRepeatPayload}|null;
@@ -313,7 +316,7 @@ type Store = {
     x: number,
     y: number,
   ) => void;
-  moveToken: (tokenId: string, x: number, y: number, placed?: (p: {x:number;y:number}) => void) => void;
+  moveToken: (tokenId: string, x: number, y: number, placed?: (p: {x:number;y:number}) => void, movement?: 'walk' | 'relocate') => void;
   resizeToken: (tokenId: string, widthFt: number) => void;
   resizeMiniature: (tokenId: string, widthFt: number) => void;
   setTokenShape: (tokenId: string, shape: TokenShape) => void;
@@ -554,6 +557,8 @@ export const useStore = create<Store>((set, get) => ({
   },
   teleportCast:null,
   clearTeleportCast:()=>set({teleportCast:null}),
+  teleportingTokenIds:[],
+  setTeleportingTokens:(ids)=>set({teleportingTokenIds:ids}),
   spellAreaPreviews:{},
   shareSpellArea:payload=>get().socket?.emit('spell:areaPreview',payload),
   areaCast:null,
@@ -935,6 +940,7 @@ export const useStore = create<Store>((set, get) => ({
       rollSfxReady = true;
       for (const timer of dragGhostTimers.values()) clearTimeout(timer);
       dragGhostTimers.clear();
+      useGameStore.getState().applySnapshot(snapshot, wireRevision);
       set((st) => (Object.keys(st.dragGhosts).length ? { snapshot, dragGhosts: {} } : { snapshot }));
       explainLethargy(snapshot);
     };
@@ -1132,6 +1138,7 @@ export const useStore = create<Store>((set, get) => ({
             // visibilitychange). rollSfxReady stays true so later rolls still cue.
             seenRollIds = new Set((ack.snapshot.rollLog ?? []).map((e) => e.id));
             rollSfxReady = true;
+            useGameStore.getState().applySnapshot(ack.snapshot, 0);
             set({ status: 'connected', snapshot: ack.snapshot, error: null, chatAccessToken: ack.chatAccessToken ?? null });
             explainLethargy(ack.snapshot);
             // The server resets the DM's viewed map to the active one on join;
@@ -1176,6 +1183,7 @@ export const useStore = create<Store>((set, get) => ({
     get().socket?.disconnect();
     heldHpFx.clear();set({preparedHpFx:[]});
     clearQueuedHpFx();
+    useGameStore.getState().reset();
     queuedRollFx.length=0;set({ liveDice:null,resolvingDice:null, skippedLiveDiceId:null, socket: null, status: 'idle', snapshot: null, chatAccessToken: null, weaponAttackOptions: {}, rollFx: null, hpFx: [], hurtFx: null });
   },
 
@@ -1245,8 +1253,8 @@ export const useStore = create<Store>((set, get) => ({
     get().socket?.emit('fog:cover', { mapId, layer }),
   spawnToken: (mapId, kind, refId, x, y) =>
     get().socket?.emit('token:spawn', { mapId, kind, refId, x, y }),
-  moveToken: (tokenId, x, y, placed) =>
-    get().socket?.emit('token:move', { tokenId, x, y }, placed ?? (() => {})),
+  moveToken: (tokenId, x, y, placed, movement) =>
+    get().socket?.emit('token:move', { tokenId, x, y, ...(movement ? { movement } : {}) }, placed ?? (() => {})),
   resizeMiniature: (tokenId, widthFt) => get().socket?.emit('token:resize', { tokenId, widthFt, miniature: true }),
   resizeToken: (tokenId, widthFt) =>
     get().socket?.emit('token:resize', { tokenId, widthFt }),

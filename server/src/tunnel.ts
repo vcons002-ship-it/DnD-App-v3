@@ -66,8 +66,10 @@ function attemptQuickTunnel(timeoutMs: number): Promise<string> {
  */
 export async function startTunnel(): Promise<string> {
   // Case A: an external tunnel is managed elsewhere (PUBLIC_URL set, nothing to
-  // run here) — just trust the configured URL and don't spawn anything.
-  if (config.publicUrl && !config.cfTunnelName && !config.cfTunnelToken) {
+  // run here) or PUBLIC_URL is an explicit localhost/127.0.0.1 preview override —
+  // just trust the configured URL and don't spawn anything.
+  const isLocalOverride = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(config.publicUrl);
+  if (isLocalOverride || (config.publicUrl && !config.cfTunnelName && !config.cfTunnelToken && !process.env.CF_TUNNEL_CONFIG)) {
     currentPublicUrl = config.publicUrl;
     return currentPublicUrl;
   }
@@ -79,6 +81,16 @@ export async function startTunnel(): Promise<string> {
         '  or set PUBLIC_URL in .env to use another tunnel. Falling back to localhost.\n',
     );
     return publicUrl();
+  }
+
+  if (process.env.CF_TUNNEL_CONFIG) {
+    const proc = spawn('cloudflared', ['--config', process.env.CF_TUNNEL_CONFIG, 'tunnel', 'run']);
+    proc.on('error', () =>
+      console.warn('  Failed to start config tunnel; falling back to localhost.'),
+    );
+    currentPublicUrl = config.publicUrl || publicUrl();
+    console.log(`  Cloudflare tunnel (${process.env.CF_TUNNEL_CONFIG}) started → ${currentPublicUrl}`);
+    return currentPublicUrl;
   }
 
   // Case B1: a remotely-managed named tunnel (created in the Zero Trust

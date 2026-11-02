@@ -3,6 +3,7 @@ import { RestMenu } from './RestMenu';
 import { useNavigate } from 'react-router-dom';
 import type { StateSnapshot } from '../../../shared/types';
 import { useStore } from '../state/socket';
+import { useCombatState, useCreature, useToken } from '../store/useGameStore';
 import { SettingsModal } from './SettingsModal';
 import { GuideModal } from './GuideModal';
 import { RulebookViewer } from './RulebookViewer';
@@ -28,17 +29,24 @@ export function TopToolbar({ snapshot, compactDm = false }: { snapshot: StateSna
   const openRulebook = useStore((s) => s.openRulebook);
   const endTurn = useStore((s) => s.endTurn);
   const mySocketId = useStore((s) => s.socket?.id);
+  const combatState = useCombatState();
+  const activeTurnTokenId = snapshot.activeTurnTokenId ?? combatState.activeTurnTokenId;
+  const activeTurnToken = useToken(activeTurnTokenId);
+  const activeTurnCreature = useCreature(activeTurnToken?.kind === 'pc' ? activeTurnToken.refId : null);
   const isDm = snapshot.role === 'dm';
 
   // A player may end their own turn: true when the active combatant is a PC
   // token claimed by this player. (The server enforces the same rule.)
   const myTurn =
     !isDm &&
-    snapshot.round > 0 &&
-    !!snapshot.activeTurnTokenId &&
+    (snapshot.round || combatState.round) > 0 &&
+    !!activeTurnTokenId &&
     (() => {
-      const tok = snapshot.tokens.find((t) => t.id === snapshot.activeTurnTokenId);
+      const tok = activeTurnToken ?? snapshot.tokens.find((t) => t.id === activeTurnTokenId);
       if (!tok || tok.kind !== 'pc') return false;
+      if (activeTurnCreature && 'claimedBy' in activeTurnCreature) {
+        return activeTurnCreature.claimedBy === mySocketId;
+      }
       return snapshot.characters.some(
         (c) => c.id === tok.refId && c.claimedBy === mySocketId,
       );

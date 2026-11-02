@@ -1,7 +1,7 @@
 import {visionContains,visionInSight} from '../../shared/playerVision.js';
 import {deliverState,resetDelivery} from './stateDelivery.js';
 import {spellAreaFlashes} from '../../shared/spellImpact.js';
-import {fogVisionContains,usesTokenVision} from '../../shared/playerVision.js';
+import {fogVisionContains,fogVisionIntersectsToken,tokenRadiusPx,usesTokenVision} from '../../shared/playerVision.js';
 import {randomBytes} from 'node:crypto';
 import {isLiveCommand,afterRollCommit} from './liveRollContext.js';
 import { tokenVisibleAt } from '../../shared/fog.js';
@@ -184,7 +184,7 @@ export function broadcastSnapshots(io: IOServer, sessionId: string): void {
     // A flashing spell lights itself, so line of sight is enough in darkness.
     const revealed = snapshot.map?.mapFogEnabled ? new Set(snapshot.map.mapFogRevealed) : null, grid = snapshot.map?.gridSizePx ?? 50;
     const visible = hpFx.filter((e) => {
-      if (!e.areaPosition) return snapshot.tokens.some((t) => !t.sharedSightOnly && t.kind === e.kind && t.refId === e.refId);
+      if (!e.areaPosition) return snapshot.tokens.some((t) => !t.sharedSightOnly && !t.partiallyRevealed && t.kind === e.kind && t.refId === e.refId);
       if (snapshot.map?.id !== e.areaPosition.mapId) return false;
       if (conn.role === 'dm') return true;
       const sees = spellAreaFlashes(e) ? visionInSight : visionContains;
@@ -194,7 +194,7 @@ export function broadcastSnapshots(io: IOServer, sessionId: string): void {
       // The destination can be visible while its caster is behind a wall.
       // Do not reveal that hidden origin through projectile coordinates.
       const source=original.sourcePosition;
-      const event=source&&conn.role!=='dm'&&(!snapshot.tokens.some(t=>!t.sharedSightOnly&&!t.isHidden&&t.kind===original.kind&&t.refId===original.refId)||!visionContains(snapshot.playerVision,source.x,source.y)||(original.weaponAttack&&!snapshot.tokens.some(t=>!t.sharedSightOnly&&!t.isHidden&&t.mapId===source.mapId&&Math.hypot(t.x-source.x,t.y-source.y)<1)))
+      const event=source&&conn.role!=='dm'&&(!snapshot.tokens.some(t=>!t.sharedSightOnly&&!t.partiallyRevealed&&!t.isHidden&&t.kind===original.kind&&t.refId===original.refId)||!visionContains(snapshot.playerVision,source.x,source.y)||(original.weaponAttack&&!snapshot.tokens.some(t=>!t.sharedSightOnly&&!t.partiallyRevealed&&!t.isHidden&&t.mapId===source.mapId&&Math.hypot(t.x-source.x,t.y-source.y)<1)))
         ? (({sourcePosition,...rest})=>rest)(original):original;
       const visibleImpact=!event.impact||publicRolls.has(event.impact.id);
       if ((!event.rollId || visibleRolls.has(event.rollId))&&visibleImpact) return event;
@@ -243,7 +243,8 @@ export function broadcastTokenDrag(
     if (token.mapId !== viewMapId) continue;
     const personal=conn.role==='dm'?undefined:lastSent.get(socketId)??(build===undefined?(build=createSnapshotBuilder(sessionId)):build)?.(conn.role,null,socketId,conn.playerId);
     if(personal&&!personal.tokens.some(t=>t.id===token.id))continue;
-    const visible = (px: number, py: number) => fogVisionContains(personal?.playerVision,px,py,usesTokenVision(map)) && tokenVisibleAt({ role: conn.role,
+    const radiusPx = tokenRadiusPx(token, map);
+    const visible = (px: number, py: number) => fogVisionIntersectsToken(personal?.playerVision,px,py,radiusPx,usesTokenVision(map)) && tokenVisibleAt({ role: conn.role,
       hidden: token.isHidden, owned: owner === socketId, foe, mapFog, tokenFog, grid, x: px, y: py });
     // Never reveal an unknown token merely because its preview crosses open ground.
     if (!visible(token.x, token.y)) continue;
