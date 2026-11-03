@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-title DnD-App-v2 Installer
+title DnD-App-v3 Installer
 
 REM ============================================================
 REM   DnD-App-v2  -  one-click Windows installer
@@ -10,13 +10,13 @@ REM   launch the app. Safe to re-run any time to update.
 REM ============================================================
 
 REM ----- Settings you can edit -----
-set "REPO_URL=https://github.com/vcons002-ship-it/DnD-App-v2.git"
+set "REPO_URL=https://github.com/vcons002-ship-it/DnD-App-v3.git"
 set "BRANCH=claude/Main"
-set "INSTALL_DIR=%USERPROFILE%\DnD-App-v2"
+set "INSTALL_DIR=%USERPROFILE%\DnD-App-v3"
 REM ---------------------------------
 
 echo ============================================
-echo    DnD-App-v2  -  one-click installer
+echo    DnD-App-v3  -  one-click installer
 echo ============================================
 echo.
 
