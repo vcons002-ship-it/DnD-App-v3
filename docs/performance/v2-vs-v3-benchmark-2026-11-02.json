@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02T11:21:13.037Z",
+  "generatedAt": "2026-11-03T07:07:04.333Z",
   "environment": {
     "nodeVersion": "v24.16.0",
     "platform": "win32",
@@ -8,26 +8,26 @@
   "stateAndSubscribers": {
     "scenario": "500 single-token movement ticks (60 tokens, 64 walls, 16 lights, 68 subscribed UI/canvas nodes)",
     "v2": {
-      "totalMs": 33.373,
-      "meanMs": 0.0667,
-      "medianMs": 0.0725,
-      "p95Ms": 0.1035,
-      "p99Ms": 0.2081,
+      "totalMs": 34.099,
+      "meanMs": 0.0682,
+      "medianMs": 0.0747,
+      "p95Ms": 0.1007,
+      "p99Ms": 0.1627,
       "subscriberReEvaluations": 34000,
       "avgSubscribersPerTick": 68,
       "digest": 224
     },
     "v3": {
-      "totalMs": 7.367,
-      "meanMs": 0.0147,
-      "medianMs": 0.0124,
-      "p95Ms": 0.02,
-      "p99Ms": 0.0665,
+      "totalMs": 4.14,
+      "meanMs": 0.0083,
+      "medianMs": 0.0064,
+      "p95Ms": 0.0129,
+      "p99Ms": 0.0345,
       "subscriberReEvaluations": 971,
       "avgSubscribersPerTick": 1.94,
       "digest": 114
     },
-    "speedupFactor": 4.54,
+    "speedupFactor": 8.22,
     "reRenderReductionPct": 97.14
   },
   "visionAndShadows": [
@@ -36,72 +36,72 @@
       "frames": 160,
       "originsAndLights": 10,
       "v2CpuPolygonRaycast": {
-        "totalMs": 370.802,
-        "meanMs": 2.3175,
-        "medianMs": 2.2015,
-        "p95Ms": 3.2936,
-        "p99Ms": 3.6675,
+        "totalMs": 352.586,
+        "meanMs": 2.2037,
+        "medianMs": 2.0956,
+        "p95Ms": 2.6964,
+        "p99Ms": 3.7025,
         "totalVerticesProduced": 113170
       },
       "v3GpuShadowStencilPass": {
-        "totalMs": 3.259,
-        "meanMs": 0.0204,
-        "medianMs": 0.0178,
-        "p95Ms": 0.096,
-        "p99Ms": 0.2452,
+        "totalMs": 3.113,
+        "meanMs": 0.0195,
+        "medianMs": 0.0177,
+        "p95Ms": 0.0867,
+        "p99Ms": 0.1284,
         "stencilDraws": 80,
         "cacheHits": 80,
         "wallUploads": 1
       },
-      "speedupFactor": 113.6
+      "speedupFactor": 113.01
     },
     {
       "wallCount": 128,
       "frames": 160,
       "originsAndLights": 10,
       "v2CpuPolygonRaycast": {
-        "totalMs": 407.77,
-        "meanMs": 2.5486,
-        "medianMs": 2.463,
-        "p95Ms": 3.0264,
-        "p99Ms": 3.5256,
+        "totalMs": 397.5,
+        "meanMs": 2.4844,
+        "medianMs": 2.4282,
+        "p95Ms": 2.8544,
+        "p99Ms": 3.2592,
         "totalVerticesProduced": 113644
       },
       "v3GpuShadowStencilPass": {
-        "totalMs": 1.859,
-        "meanMs": 0.0116,
-        "medianMs": 0.0168,
-        "p95Ms": 0.0267,
-        "p99Ms": 0.0323,
+        "totalMs": 1.966,
+        "meanMs": 0.0123,
+        "medianMs": 0.0174,
+        "p95Ms": 0.03,
+        "p99Ms": 0.0372,
         "stencilDraws": 80,
         "cacheHits": 80,
         "wallUploads": 1
       },
-      "speedupFactor": 219.71
+      "speedupFactor": 201.98
     },
     {
       "wallCount": 256,
       "frames": 160,
       "originsAndLights": 10,
       "v2CpuPolygonRaycast": {
-        "totalMs": 409.19,
-        "meanMs": 2.5574,
-        "medianMs": 2.5252,
-        "p95Ms": 2.8393,
-        "p99Ms": 3.1573,
+        "totalMs": 407.461,
+        "meanMs": 2.5466,
+        "medianMs": 2.5247,
+        "p95Ms": 2.8276,
+        "p99Ms": 3.0325,
         "totalVerticesProduced": 113644
       },
       "v3GpuShadowStencilPass": {
-        "totalMs": 2.366,
-        "meanMs": 0.0148,
-        "medianMs": 0.0226,
-        "p95Ms": 0.0328,
-        "p99Ms": 0.0477,
+        "totalMs": 2.394,
+        "meanMs": 0.015,
+        "medianMs": 0.0222,
+        "p95Ms": 0.0338,
+        "p99Ms": 0.0533,
         "stencilDraws": 80,
         "cacheHits": 80,
         "wallUploads": 1
       },
-      "speedupFactor": 172.8
+      "speedupFactor": 169.77
     }
   ],
   "frameScheduler": {
@@ -120,11 +120,11 @@
   },
   "combatRulePipeline": {
     "iterations": 5000,
-    "totalMs": 7.733,
+    "totalMs": 7.642,
     "meanMs": 0.0015,
     "medianMs": 0.001,
     "p95Ms": 0.0024,
-    "p99Ms": 0.0059,
+    "p99Ms": 0.0047,
     "avgMicrosecondsPerEvaluation": 1.5,
     "totalModifierEffectsApplied": 1000
   }
