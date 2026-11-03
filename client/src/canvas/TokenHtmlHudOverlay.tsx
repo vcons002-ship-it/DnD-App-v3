@@ -4,6 +4,7 @@ import {
   buildTokenHudPills,
   VIEWPORT_LAYER_Z_INDEX,
 } from '../../../shared/tokenHudProjection';
+import { useGameStore } from '../store/useGameStore';
 
 type Props = {
   snapshot: StateSnapshot;
@@ -15,9 +16,8 @@ type Props = {
 
 /**
  * Lightweight GPU-transformed (`translate3d`) HTML overlay layer for token HUD
- * pills (HP bars, death-save pips, condition badges, carried lantern indicator).
- * Uses `pointer-events: none` so all pointer interactions pass straight through
- * to the unified tabletop scene.
+ * pills (death-save pips). Uses normalized `charactersById` / `monstersById` from
+ * `useGameStore` and emits DOM elements only when a token has active overlay content.
  */
 export const TokenHtmlHudOverlay = memo(function TokenHtmlHudOverlay({
   snapshot,
@@ -26,6 +26,9 @@ export const TokenHtmlHudOverlay = memo(function TokenHtmlHudOverlay({
   groundScaleY = 1,
   isVisibleAt,
 }: Props) {
+  const charactersById = useGameStore((s) => s.charactersById);
+  const monstersById = useGameStore((s) => s.monstersById);
+
   const pills = useMemo(
     () =>
       buildTokenHudPills({
@@ -34,8 +37,11 @@ export const TokenHtmlHudOverlay = memo(function TokenHtmlHudOverlay({
         pxPerFoot,
         groundScaleY,
         isVisibleAt,
+        charactersById: Object.keys(charactersById).length ? charactersById : undefined,
+        monstersById: Object.keys(monstersById).length ? monstersById : undefined,
+        onlyWithOverlayContent: true,
       }),
-    [snapshot, view, pxPerFoot, groundScaleY, isVisibleAt],
+    [snapshot, view, pxPerFoot, groundScaleY, isVisibleAt, charactersById, monstersById],
   );
 
   if (!pills.length) return null;

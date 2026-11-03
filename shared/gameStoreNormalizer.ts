@@ -64,6 +64,25 @@ export type NormalizedGameState = {
   mapVisionById: Record<string, NormalizedMapVision>;
 };
 
+type LastSnapshotRefs = {
+  characters: StateSnapshot['characters'];
+  monsters: StateSnapshot['monsters'];
+  tokens: StateSnapshot['tokens'];
+  maps: StateSnapshot['maps'];
+  map: StateSnapshot['map'];
+  measurements: StateSnapshot['measurements'];
+  annotations: StateSnapshot['annotations'];
+  mapImages: StateSnapshot['mapImages'];
+  pingsCount: number;
+  spellEffectsCount: number;
+  mapImagesCount: number;
+  doorsCount: number;
+  wallsCount: number;
+  lightsCount: number;
+};
+
+const snapshotRefsByState = new WeakMap<NormalizedGameState, LastSnapshotRefs>();
+
 const EMPTY_COMBAT_STATE: NormalizedCombatState = {
   round: 0,
   activeTurnTokenId: null,
@@ -106,7 +125,7 @@ function stabilizeRecordById<T extends { id: string }>(
   prevIds: string[],
   items: readonly T[],
 ): { byId: Record<string, T>; ids: string[] } {
-  let recordChanged = Object.keys(prevRecord).length !== items.length;
+  let recordChanged = prevIds.length !== items.length;
   let orderChanged = prevIds.length !== items.length;
   const nextRecord: Record<string, T> = {};
   const nextIds: string[] = new Array(items.length);
@@ -134,9 +153,10 @@ function stabilizeRecordById<T extends { id: string }>(
 
 function stabilizeSimpleRecord<T extends { id: string }>(
   prevRecord: Record<string, T>,
+  prevCount: number,
   items: readonly T[],
 ): Record<string, T> {
-  let changed = Object.keys(prevRecord).length !== items.length;
+  let changed = prevCount !== items.length;
   const nextRecord: Record<string, T> = {};
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -149,6 +169,27 @@ function stabilizeSimpleRecord<T extends { id: string }>(
     }
   }
   return changed ? nextRecord : prevRecord;
+}
+
+function sameInitiativeInputs(
+  prevTokensById: Record<string, Token>,
+  prevTokenIds: string[],
+  nextTokens: readonly Token[],
+): boolean {
+  if (prevTokenIds.length !== nextTokens.length) return false;
+  for (let i = 0; i < nextTokens.length; i++) {
+    const next = nextTokens[i];
+    if (prevTokenIds[i] !== next.id) return false;
+    const prev = prevTokensById[next.id];
+    if (
+      !prev ||
+      prev.initiative !== next.initiative ||
+      !!prev.inCombatEffective !== !!next.inCombatEffective
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function computeInitiativeOrder(tokens: readonly Token[]): string[] {
@@ -175,19 +216,31 @@ function extractVisionSlice(map: MapState): NormalizedMapVision {
 }
 
 /**
- * Normalize a `StateSnapshot` into fine-grained entity records while preserving
- * exact object/array references (`===`) for every slice whose data has not changed.
- */
+  * Normalize a `StateSnapshot` into fine-grained entity records while preserving
+  * exact object/array references (`===`) for every slice whose data has not changed.
+  */
 export function normalizeSnapshot(
   prev: NormalizedGameState,
   snapshot: StateSnapshot,
   seq?: number,
 ): NormalizedGameState {
   const nextSeq = seq !== undefined ? seq : prev.seq + 1;
+  const prevRefs = prev.hasSnapshot ? snapshotRefsByState.get(prev) : undefined;
 
-  const chars = stabilizeRecordById(prev.charactersById, prev.characterIds, snapshot.characters ?? []);
-  const mons = stabilizeRecordById(prev.monstersById, prev.monsterIds, snapshot.monsters ?? []);
-  const toks = stabilizeRecordById(prev.tokensById, prev.tokenIds, snapshot.tokens ?? []);
+  const chars =
+    prevRefs && prevRefs.characters === snapshot.characters
+      ? { byId: prev.charactersById, ids: prev.characterIds }
+      : stabilizeRecordById(prev.charactersById, prev.characterIds, snapshot.characters ?? []);
+
+  const mons =
+    prevRefs && prevRefs.monsters === snapshot.monsters
+      ? { byId: prev.monstersById, ids: prev.monsterIds }
+      : stabilizeRecordById(prev.monstersById, prev.monsterIds, snapshot.monsters ?? []);
+
+  const toks =
+    prevRefs && prevRefs.tokens === snapshot.tokens
+      ? { byId: prev.tokensById, ids: prev.tokenIds }
+      : stabilizeRecordById(prev.tokensById, prev.tokenIds, snapshot.tokens ?? []);
 
   let creaturesById = prev.creaturesById;
   if (
@@ -198,73 +251,113 @@ export function normalizeSnapshot(
     creaturesById = { ...chars.byId, ...mons.byId };
   }
 
-  const rawMaps = (snapshot.maps ?? []).map((m) =>
-    snapshot.map && snapshot.map.id === m.id ? snapshot.map : m,
-  );
-  if (snapshot.map && !rawMaps.some((m) => m.id === snapshot.map!.id)) {
-    rawMaps.push(snapshot.map);
-  }
-  const maps = stabilizeRecordById(prev.mapsById, prev.mapIds, rawMaps);
-
+  let maps = { byId: prev.mapsById, ids: prev.mapIds };
   let doorsById = prev.doorsById;
   let wallsById = prev.wallsById;
   let lightsById = prev.lightsById;
   let mapVisionById = prev.mapVisionById;
+  let doorsCount = prevRefs?.doorsCount ?? Object.keys(prev.doorsById).length;
+  let wallsCount = prevRefs?.wallsCount ?? Object.keys(prev.wallsById).length;
+  let lightsCount = prevRefs?.lightsCount ?? Object.keys(prev.lightsById).length;
 
-  if (!prev.hasSnapshot || maps.byId !== prev.mapsById) {
-    const rawDoors: NormalizedDoor[] = [];
-    const rawWalls: NormalizedWall[] = [];
-    const rawLights: NormalizedLight[] = [];
-    const nextVisionById: Record<string, NormalizedMapVision> = {};
-    let visionChanged = Object.keys(prev.mapVisionById).length !== rawMaps.length;
+  const sameMapsRef =
+    !!prevRefs && prevRefs.maps === snapshot.maps && prevRefs.map === snapshot.map;
 
-    for (const m of rawMaps) {
-      for (const w of m.walls ?? []) {
-        const wallWithMap: NormalizedWall = { ...w, mapId: m.id };
-        rawWalls.push(wallWithMap);
-        if (w.door) {
-          rawDoors.push(wallWithMap);
+  if (!sameMapsRef) {
+    const rawMaps = (snapshot.maps ?? []).map((m) =>
+      snapshot.map && snapshot.map.id === m.id ? snapshot.map : m,
+    );
+    if (snapshot.map && !rawMaps.some((m) => m.id === snapshot.map!.id)) {
+      rawMaps.push(snapshot.map);
+    }
+    maps = stabilizeRecordById(prev.mapsById, prev.mapIds, rawMaps);
+
+    if (!prev.hasSnapshot || maps.byId !== prev.mapsById) {
+      const rawDoors: NormalizedDoor[] = [];
+      const rawWalls: NormalizedWall[] = [];
+      const rawLights: NormalizedLight[] = [];
+      const nextVisionById: Record<string, NormalizedMapVision> = {};
+      let visionChanged = prev.mapIds.length !== rawMaps.length;
+
+      for (const m of rawMaps) {
+        for (const w of m.walls ?? []) {
+          const wallWithMap: NormalizedWall = { ...w, mapId: m.id };
+          rawWalls.push(wallWithMap);
+          if (w.door) {
+            rawDoors.push(wallWithMap);
+          }
+        }
+        for (const l of m.environment?.lights ?? []) {
+          rawLights.push({ ...l, mapId: m.id });
+        }
+        const nextVis = extractVisionSlice(m);
+        const prevVis = prev.mapVisionById[m.id];
+        if (prevVis && equal(prevVis, nextVis)) {
+          nextVisionById[m.id] = prevVis;
+        } else {
+          nextVisionById[m.id] = nextVis;
+          visionChanged = true;
         }
       }
-      for (const l of m.environment?.lights ?? []) {
-        rawLights.push({ ...l, mapId: m.id });
-      }
-      const nextVis = extractVisionSlice(m);
-      const prevVis = prev.mapVisionById[m.id];
-      if (prevVis && equal(prevVis, nextVis)) {
-        nextVisionById[m.id] = prevVis;
-      } else {
-        nextVisionById[m.id] = nextVis;
-        visionChanged = true;
-      }
-    }
 
-    doorsById = stabilizeSimpleRecord(prev.doorsById, rawDoors);
-    wallsById = stabilizeSimpleRecord(prev.wallsById, rawWalls);
-    lightsById = stabilizeSimpleRecord(prev.lightsById, rawLights);
-    mapVisionById = visionChanged ? nextVisionById : prev.mapVisionById;
+      doorsById = stabilizeSimpleRecord(prev.doorsById, doorsCount, rawDoors);
+      wallsById = stabilizeSimpleRecord(prev.wallsById, wallsCount, rawWalls);
+      lightsById = stabilizeSimpleRecord(prev.lightsById, lightsCount, rawLights);
+      doorsCount = rawDoors.length;
+      wallsCount = rawWalls.length;
+      lightsCount = rawLights.length;
+      mapVisionById = visionChanged ? nextVisionById : prev.mapVisionById;
+    }
   }
 
-  const pingsById = stabilizeSimpleRecord(prev.pingsById, snapshot.measurements ?? []);
-  const spellEffectsById = stabilizeSimpleRecord(prev.spellEffectsById, snapshot.annotations ?? []);
-  const mapImagesById = stabilizeSimpleRecord(prev.mapImagesById, snapshot.mapImages ?? []);
+  const rawMeas = snapshot.measurements ?? [];
+  const pingsCount = prevRefs?.pingsCount ?? Object.keys(prev.pingsById).length;
+  const pingsById =
+    prevRefs && prevRefs.measurements === snapshot.measurements
+      ? prev.pingsById
+      : stabilizeSimpleRecord(prev.pingsById, pingsCount, rawMeas);
 
-  const nextCombatState: NormalizedCombatState = {
-    round: snapshot.round ?? 0,
-    activeTurnTokenId: snapshot.activeTurnTokenId ?? null,
-    initiativePending: !!snapshot.initiativePending,
-    hideDmRolls: !!snapshot.hideDmRolls,
-  };
-  const combatState = equal(prev.combatState, nextCombatState)
-    ? prev.combatState
-    : nextCombatState;
+  const rawAnns = snapshot.annotations ?? [];
+  const spellEffectsCount =
+    prevRefs?.spellEffectsCount ?? Object.keys(prev.spellEffectsById).length;
+  const spellEffectsById =
+    prevRefs && prevRefs.annotations === snapshot.annotations
+      ? prev.spellEffectsById
+      : stabilizeSimpleRecord(prev.spellEffectsById, spellEffectsCount, rawAnns);
 
-  const computedOrder = computeInitiativeOrder(snapshot.tokens ?? []);
-  const initiativeOrder = equal(prev.initiativeOrder, computedOrder)
-    ? prev.initiativeOrder
-    : computedOrder;
+  const rawImgs = snapshot.mapImages ?? [];
+  const mapImagesCount = prevRefs?.mapImagesCount ?? Object.keys(prev.mapImagesById).length;
+  const mapImagesById =
+    prevRefs && prevRefs.mapImages === snapshot.mapImages
+      ? prev.mapImagesById
+      : stabilizeSimpleRecord(prev.mapImagesById, mapImagesCount, rawImgs);
 
-  return {
+  const round = snapshot.round ?? 0;
+  const activeTurnTokenId = snapshot.activeTurnTokenId ?? null;
+  const initiativePending = !!snapshot.initiativePending;
+  const hideDmRolls = !!snapshot.hideDmRolls;
+  const combatState =
+    prev.hasSnapshot &&
+    prev.combatState.round === round &&
+    prev.combatState.activeTurnTokenId === activeTurnTokenId &&
+    prev.combatState.initiativePending === initiativePending &&
+    prev.combatState.hideDmRolls === hideDmRolls
+      ? prev.combatState
+      : { round, activeTurnTokenId, initiativePending, hideDmRolls };
+
+  let initiativeOrder = prev.initiativeOrder;
+  if (
+    !prev.hasSnapshot ||
+    (toks.byId !== prev.tokensById &&
+      !sameInitiativeInputs(prev.tokensById, prev.tokenIds, snapshot.tokens ?? []))
+  ) {
+    const computedOrder = computeInitiativeOrder(snapshot.tokens ?? []);
+    initiativeOrder = equal(prev.initiativeOrder, computedOrder)
+      ? prev.initiativeOrder
+      : computedOrder;
+  }
+
+  const nextState: NormalizedGameState = {
     hasSnapshot: true,
     seq: nextSeq,
     sessionCode: snapshot.sessionCode ?? null,
@@ -291,4 +384,23 @@ export function normalizeSnapshot(
     initiativeOrder,
     mapVisionById,
   };
+
+  snapshotRefsByState.set(nextState, {
+    characters: snapshot.characters,
+    monsters: snapshot.monsters,
+    tokens: snapshot.tokens,
+    maps: snapshot.maps,
+    map: snapshot.map,
+    measurements: snapshot.measurements,
+    annotations: snapshot.annotations,
+    mapImages: snapshot.mapImages,
+    pingsCount: rawMeas.length,
+    spellEffectsCount: rawAnns.length,
+    mapImagesCount: rawImgs.length,
+    doorsCount,
+    wallsCount,
+    lightsCount,
+  });
+
+  return nextState;
 }

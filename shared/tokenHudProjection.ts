@@ -44,6 +44,8 @@ export function projectTokenHudTransform(params: {
 
 /**
  * Build lightweight HTML HUD pill descriptors for visible tokens on the current map.
+ * Accepts optional normalized `charactersById` / `monstersById` lookup records from
+ * `useGameStore` to avoid `O(N)` Map allocations on every render.
  */
 export function buildTokenHudPills(params: {
   snapshot: StateSnapshot;
@@ -51,26 +53,53 @@ export function buildTokenHudPills(params: {
   pxPerFoot: number;
   groundScaleY?: number;
   isVisibleAt?: (id: string, x: number, y: number) => boolean;
+  charactersById?: Readonly<Record<string, Character>>;
+  monstersById?: Readonly<Record<string, Monster | MonsterPublic>>;
+  onlyWithOverlayContent?: boolean;
 }): TokenHudPillDescriptor[] {
-  const { snapshot, view, pxPerFoot, groundScaleY = 1, isVisibleAt } = params;
-  const charsById = new Map<string, Character>(
-    (snapshot.characters ?? []).map((c) => [c.id, c]),
-  );
-  const monsById = new Map<string, Monster | MonsterPublic>(
-    (snapshot.monsters ?? []).map((m) => [m.id, m]),
-  );
+  const {
+    snapshot,
+    view,
+    pxPerFoot,
+    groundScaleY = 1,
+    isVisibleAt,
+    charactersById,
+    monstersById,
+    onlyWithOverlayContent = false,
+  } = params;
+  const charsById = charactersById
+    ? null
+    : new Map<string, Character>((snapshot.characters ?? []).map((c) => [c.id, c]));
+  const monsById = monstersById
+    ? null
+    : new Map<string, Monster | MonsterPublic>((snapshot.monsters ?? []).map((m) => [m.id, m]));
 
   const pills: TokenHudPillDescriptor[] = [];
 
   for (const token of snapshot.tokens ?? []) {
     if (token.isHidden && snapshot.role !== 'dm') continue;
     if (token.partiallyRevealed) continue;
-    if (isVisibleAt && !isVisibleAt(token.id, token.x, token.y)) continue;
+    if (onlyWithOverlayContent && token.kind !== 'pc') continue;
 
     const entity =
-      token.kind === 'pc' ? charsById.get(token.refId) : monsById.get(token.refId);
+      token.kind === 'pc'
+        ? charactersById
+          ? charactersById[token.refId]
+          : charsById!.get(token.refId)
+        : monstersById
+          ? monstersById[token.refId]
+          : monsById!.get(token.refId);
     if (!entity) continue;
     if ('objectKind' in entity && entity.objectKind) continue;
+
+    const curHp = 'curHp' in entity && typeof entity.curHp === 'number' ? entity.curHp : undefined;
+    const isPcDown =
+      token.kind === 'pc' &&
+      curHp === 0 &&
+      'deathSaves' in entity &&
+      !!entity.deathSaves;
+    if (onlyWithOverlayContent && !isPcDown) continue;
+    if (isVisibleAt && !isVisibleAt(token.id, token.x, token.y)) continue;
 
     const radiusPx = (token.widthFt * pxPerFoot) / 2;
     const projected = projectTokenHudTransform({
@@ -81,7 +110,6 @@ export function buildTokenHudPills(params: {
       groundScaleY,
     });
 
-    const curHp = 'curHp' in entity && typeof entity.curHp === 'number' ? entity.curHp : undefined;
     const maxHp =
       'maxHp' in entity && typeof entity.maxHp === 'number' && entity.maxHp > 0
         ? entity.maxHp
@@ -90,12 +118,6 @@ export function buildTokenHudPills(params: {
       curHp !== undefined && maxHp !== undefined
         ? Math.max(0, Math.min(1, curHp / maxHp))
         : null;
-
-    const isPcDown =
-      token.kind === 'pc' &&
-      curHp === 0 &&
-      'deathSaves' in entity &&
-      !!entity.deathSaves;
 
     pills.push({
       tokenId: token.id,
