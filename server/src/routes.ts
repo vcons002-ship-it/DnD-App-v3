@@ -54,6 +54,7 @@ import {
   frameMapPrompt,
   DEFAULT_MAP_NEGATIVE,
 } from './ai/comfy.js';
+import { abilityKey } from '../../shared/hitFeatures.js';
 import { searchSpells, getSpell, getAllSpells } from './spells/srd.js';
 import { searchFeatures, getFeature } from './features/srd.js';
 import { searchRaceTraits, getRaceTrait } from './races/srd.js';
@@ -708,7 +709,7 @@ export function createApiRouter(io: IOServer): Router {
     res.json({
       results: [
         ...searchSpells(q),
-        ...searchFeatures(q),
+        ...searchFeatures(q).filter((f) => !searchSpells(q).some((s) => abilityKey(s) === abilityKey(f))),
         // Racial traits are their own source, not feats — a Half-Orc's Savage
         // Attacks is a different rule from the Savage Attacker feat.
         ...searchRaceTraits(q),

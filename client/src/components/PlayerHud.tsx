@@ -19,7 +19,7 @@ import { resourceSigilPresentation } from '../../../shared/resourceSigils';
 import { multiclassClassSummary } from '../../../shared/multiclass';
 import { PlayerConditionControl } from './PlayerConditionControl';
 import { DamageHealControls } from './DamageHealControls';
-import { DeathSaves } from './DeathSaves';
+
 import { HudIcon } from './HudIcon';
 import type { ResourceLayout } from '../lib/usePlayerLayout';
 import './orb-identity.css';
@@ -337,9 +337,9 @@ function PlayerHudInner({
         </div>
         {inDarkness&&lanternToken&&<div className="hud-lantern-footer"><CarriedLanternControl token={lanternToken} orb/></div>}
       </div>
-      {character.curHp <= 0 && (
+      {false && (
         <div className="hud-death fantasy-window">
-          <DeathSaves character={character} editable />
+          {null}
         </div>
       )}
       {vitals && (
