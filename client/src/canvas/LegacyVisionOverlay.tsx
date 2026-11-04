@@ -44,8 +44,8 @@ function pathHtml(key:string,values:string[]){
  * the existing pixels/paths, so panning cannot expose ground behind the mask. */
 export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function LegacyVisionOverlay(props,ref){
  const atlasMask=useRef<RasterPlaneHandle>(null),atlasTerrain=useRef<RasterPlaneHandle>(null),baseTerrain=useRef<RasterPlaneHandle>(null),motion=useRef(props.motion);motion.current=props.motion;
- const gradeSvg=useRef<SVGSVGElement>(null);
- const svg=useRef<SVGSVGElement>(null),maskRoot=useRef<HTMLDivElement>(null),tileWorld=useRef<HTMLDivElement>(null),edges=useRef<(HTMLDivElement|null)[]>([]),paintCamera=useRef<(view:BattlefieldView)=>void>(()=>{});
+ const gradeBaseCanvas=useRef<HTMLCanvasElement>(null),gradeColorCanvas=useRef<HTMLCanvasElement>(null),tileImgs=useRef<(HTMLImageElement|null)[]>([]);
+ const svg=useRef<SVGSVGElement>(null),maskRoot=useRef<HTMLDivElement>(null),tileWorld=useRef<HTMLDivElement>(null),edges=useRef<(HTMLDivElement|null)[]>([]),paintCamera=useRef<(view:BattlefieldView)=>void>(()=>{}),paintTerrain=useRef<(view?:BattlefieldView)=>void>(()=>{});
  const latest=useRef(props),previousView=useRef(props.view),imperativeView=useRef<BattlefieldView|null>(null);
  const placedView=useRef(props.view);
  // Publish server mask and token positions in the same React commit; only the
@@ -83,11 +83,52 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
  const clipBounds=useMemo(()=>worldBounds(frame.terrain,localVision),[frame.terrain,localVision]);
  const paths=useMemo(()=>{if(frame.presentation)return {sight:[],near:[],lights:[]};const raw=suppliedGeometry!==undefined?suppliedGeometry??{sight:[],near:[],lights:[]}:geometry(localVision,frame.mapFogOfWar);return {...raw,sight:boundedPaths(raw.sight,clipBounds)};},[frame.presentation,suppliedGeometry,localVision,frame.mapFogOfWar,geometry,clipBounds]);
  const memory=useMemo(()=>frame.presentation?[]:boundedPaths(suppliedGeometry!==undefined?suppliedGeometry?.memory??[]:(localMemory??[]).map(p=>p.map(r=>legacyPath(r.map(([x,y])=>({x,y})))).join('')),clipBounds),[frame.presentation,suppliedGeometry,localMemory,clipBounds]);
+ const activeTerrainPaths=useRef<{sight:string;lights:string}>({sight:paths.sight.join(''),lights:paths.lights.join('')});
+ if(!frame.presentation)activeTerrainPaths.current={sight:paths.sight.join(''),lights:paths.lights.join('')};
  const markup=useRef(new WeakMap<Element,string>()),drawn=useRef<{vision:PlayerVision;memory:ExploredTerrain|undefined}>(),drawnServer=useRef<LegacyGeometry|null|undefined>();
  const memoryPaths=useRef<{source:ExploredTerrain|undefined;paths:string[]}>();
+ paintTerrain.current=(view=latest.current.view)=>{
+  if(!localGrading)return;
+  const tiles=frame.terrain?.tiles??[],w=Math.max(1,frame.width),h=Math.max(1,frame.height);
+  const base=gradeBaseCanvas.current;
+  if(base){
+   if(base.width!==w)base.width=w;
+   if(base.height!==h)base.height=h;
+   const ctx=base.getContext('2d');
+   if(ctx){
+    ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,w,h);
+    ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y);
+    for(let i=0;i<tiles.length;i++){
+     const img=tileImgs.current[i];
+     if(img&&img.complete&&img.naturalWidth>0)ctx.drawImage(img,tiles[i].x,tiles[i].y,tiles[i].w,tiles[i].h);
+    }
+   }
+  }
+  const color=gradeColorCanvas.current;
+  if(color){
+   if(color.width!==w)color.width=w;
+   if(color.height!==h)color.height=h;
+   const ctx=color.getContext('2d');
+   if(ctx){
+    ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,w,h);
+    const {sight:sightD,lights:lightsD}=activeTerrainPaths.current;
+    if(lightsD&&(!frame.mapFogOfWar||sightD)){
+     ctx.save();
+     ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y);
+     if(frame.mapFogOfWar&&sightD)ctx.clip(new Path2D(sightD),'nonzero');
+     ctx.clip(new Path2D(lightsD),'nonzero');
+     for(let i=0;i<tiles.length;i++){
+      const img=tileImgs.current[i];
+      if(img&&img.complete&&img.naturalWidth>0)ctx.drawImage(img,tiles[i].x,tiles[i].y,tiles[i].w,tiles[i].h);
+     }
+     ctx.restore();
+    }
+   }
+  }
+ };
  paintLocal.current=(now=performance.now())=>{
-  if(!frame.presentation||(!svg.current&&!gradeSvg.current))return;
-  const nodes=[svg.current,gradeSvg.current].flatMap(root=>root?[...root.querySelectorAll<SVGElement>('[data-legacy-paths]')]:[]);
+  if(!frame.presentation||(!svg.current&&!gradeBaseCanvas.current))return;
+  const nodes=svg.current?[...svg.current.querySelectorAll<SVGElement>('[data-legacy-paths]')]:[];
   const ready=nodes.length>0&&nodes.every(n=>markup.current.has(n));
   if(suppliedGeometry!==undefined){
    const m=motion.current,index=m?.frames?.length?legacyMotionIndex(now,m.start,m.durationMs,m.frames.length):undefined;
@@ -98,11 +139,13 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
    drawnServer.current=serverGeom;
    const bounds=worldBounds(frame.terrain,frame.vision);
    const values={sight:boundedPaths(serverGeom.sight,bounds),near:serverGeom.near,lights:serverGeom.lights,memory:boundedPaths(serverGeom.memory??[],bounds)};
+   activeTerrainPaths.current={sight:values.sight.join(''),lights:values.lights.join('')};
    for(const node of nodes){
     const key=node.dataset.legacyPaths as keyof typeof values;
     const html=pathHtml(key,values[key]);
     if(markup.current.get(node)!==html){node.innerHTML=html;markup.current.set(node,html);}
    }
+   paintTerrain.current();
    return;
   }
   if(svg.current?.hasAttribute('data-frame'))svg.current?.removeAttribute('data-frame');
@@ -115,6 +158,7 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
   if(!memoryPaths.current||memoryPaths.current.source!==explored)memoryPaths.current={source:explored,paths:(explored??[]).map(p=>p.map(r=>legacyPath(r.map(([x,y])=>({x,y})))).join(''))};
   const bounds=worldBounds(frame.terrain,vision);
   const values={...paths,sight:boundedPaths(paths.sight,bounds),memory:boundedPaths(memoryPaths.current.paths,bounds)};
+  activeTerrainPaths.current={sight:values.sight.join(''),lights:values.lights.join('')};
   // Only the small SVG sight paths change during local movement. Camera and
   // map pixels stay retained; the shared token clock supplies the exact pose.
   for(const node of nodes){
@@ -122,9 +166,10 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
    const html=pathHtml(key,values[key]);
    if(markup.current.get(node)!==html){node.innerHTML=html;markup.current.set(node,html);}
   }
+  paintTerrain.current();
  };
- useLayoutEffect(()=>{drawn.current=undefined;drawnServer.current=undefined;paintLocal.current();},[suppliedGeometry,localGrading,frame.mapFogOfWar,frame.vision,frame.explored,frame.presentation,props.motion,clipBounds]);
- const id=useId().replace(/:/g,''),sight=`legacy-sight-${id}`,lit=`legacy-lit-${id}`,cover=`legacy-cover-${id}`;
+ useLayoutEffect(()=>{drawn.current=undefined;drawnServer.current=undefined;paintLocal.current();paintTerrain.current(latest.current.view);},[suppliedGeometry,localGrading,frame.mapFogOfWar,frame.vision,frame.explored,frame.presentation,props.motion,clipBounds,frame.width,frame.height]);
+ const id=useId().replace(/:/g,''),sight=`legacy-sight-${id}`,cover=`legacy-cover-${id}`;
  const transform=`translate(${frame.view.x} ${frame.view.y}) scale(${frame.view.scale})`;
  // Local and server-motion groups are owned by paintLocal when presentation is active.
  // Joining single-ring visibility polygons into one path with nonzero winding
@@ -142,40 +187,23 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
  const bounds=atlas?.bounds??tiles?.bounds??raster;
  paintCamera.current=view=>{
   const root=svg.current??maskRoot.current;if(root){for(const [key,value] of Object.entries({cameraX:view.x,cameraY:view.y,cameraScale:view.scale}))if(root.dataset[key]!==String(value))root.dataset[key]=String(value);}
-  const same=(a:BattlefieldView,b:BattlefieldView)=>a.x===b.x&&a.y===b.y&&a.scale===b.scale;
-  if(same(placedView.current,view)&&same(frame.view,view))return;
   placedView.current=view;
   const transform=`translate(${view.x} ${view.y}) scale(${view.scale})`;
-  for(const root of [svg.current,gradeSvg.current])root?.querySelectorAll('[data-legacy-world]').forEach(g=>g.setAttribute('transform',transform));
+  svg.current?.querySelectorAll('[data-legacy-world]').forEach(g=>g.setAttribute('transform',transform));
   for(const plane of [atlasMask.current,atlasTerrain.current,baseTerrain.current])plane?.camera(view);
+  paintTerrain.current(view);
   if(tileWorld.current)tileWorld.current.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.scale})`;
   if(bounds)rasterCover(bounds,view,frame.width,frame.height).forEach((rect,i)=>{const edge=edges.current[i];if(edge)for(const [key,value] of Object.entries(rect))edge.style.setProperty(key,`${value}px`);});
  };
- // clipPath requires direct shape children; a nested <g> produces an empty
- // clip in browsers and suppresses the lit-color cutout. Transform the clip itself.
- const gradeSight=`${sight}-grade`,gradeMask=`${lit}-grade`,gradeReveal=`${cover}-grade`,gridId=`legacy-grid-${id}`;
  const dimFill=frame.vision.daylight?'black':localGrading?'#141414':frame.vision.heavy?'#999999':'#4d4d4d';
  const terrain=terrainAsset&&terrainBounds?<div data-testid="legacy-terrain" data-grading="server" data-motion-layout={atlas?.base?'shared-base':'full'} style={{position:'absolute',inset:0,zIndex:0,pointerEvents:'none',overflow:'hidden'}}>
   {atlas?.base&&<LegacyRasterPlane ref={baseTerrain} asset={atlas.base} bounds={atlas.base} view={frame.view} testId="legacy-motion-base"/>}
   <LegacyRasterPlane ref={atlasTerrain} asset={terrainAsset} bounds={terrainBounds} view={frame.view} columns={atlas?.columns} frameWidth={atlas?.terrainBounds?.width??atlas?.frameWidth} frameHeight={atlas?.terrainBounds?.height??atlas?.frameHeight} testId={atlas?'legacy-motion-terrain':undefined}/>
- </div>:localGrading?<svg ref={gradeSvg} data-testid="legacy-terrain" data-grading="local" width={frame.width} height={frame.height} style={{position:'absolute',inset:0,zIndex:0,pointerEvents:'none',background:'#050608'}} aria-hidden="true">
-  <defs>
-   <clipPath id={gradeSight} data-legacy-paths="sight" data-legacy-world="" transform={transform}>{shapes('sight',paths.sight)}</clipPath>
-   <clipPath id={gradeMask} data-legacy-paths="lights" data-legacy-world="" transform={transform}>{shapes('lights',paths.lights)}</clipPath>
-   {!all&&<mask id={gradeReveal} maskUnits="userSpaceOnUse" x="0" y="0" width={frame.width} height={frame.height}>
-    <g data-legacy-paths="memory" data-legacy-world="" transform={transform} fill="white">{shapes('memory',memory)}</g>
-    {frame.vision.heavy?<g data-legacy-paths="near" data-legacy-world="" transform={transform} fill="white">{shapes('near',paths.near)}</g>:<g data-legacy-paths="sight" data-legacy-world="" transform={transform} fill="white">{shapes('sight',paths.sight)}</g>}
-    <g clipPath={frame.mapFogOfWar?`url(#${gradeSight})`:undefined}><g data-legacy-paths="lights" data-legacy-world="" transform={transform} fill="white">{shapes('lights',paths.lights)}</g></g>
-   </mask>}
-   {frame.terrain?.grid&&<pattern id={gridId} patternUnits="userSpaceOnUse" x={frame.terrain.grid.x} y={frame.terrain.grid.y} width={frame.terrain.grid.size} height={frame.terrain.grid.size}><path d={`M ${frame.terrain.grid.size} 0 L 0 0 0 ${frame.terrain.grid.size}`} fill="none" stroke="#fff" strokeOpacity=".15" strokeWidth="1"/></pattern>}
-  </defs>
-  <g mask={all?undefined:`url(#${gradeReveal})`}><g data-legacy-world="" transform={transform}>
-   {frame.terrain!.tiles.map((t,i)=><g key={`${t.url}:${i}`}><image href={t.url} x={t.x} y={t.y} width={t.w} height={t.h} preserveAspectRatio="none" style={{filter:'grayscale(1) brightness(.78)'}}/>{frame.terrain?.grid&&<rect x={t.x} y={t.y} width={t.w} height={t.h} fill={`url(#${gridId})`}/>}</g>)}
-  </g></g>
-  <g clipPath={frame.mapFogOfWar?`url(#${gradeSight})`:undefined}><g clipPath={`url(#${gradeMask})`}><g data-legacy-world="" transform={transform}>
-   {frame.terrain!.tiles.map((t,i)=><image key={`color:${t.url}:${i}`} href={t.url} x={t.x} y={t.y} width={t.w} height={t.h} preserveAspectRatio="none"/>)}
-  </g></g></g>
- </svg>:null;
+ </div>:localGrading?<div data-testid="legacy-terrain" data-grading="local" style={{position:'absolute',inset:0,zIndex:0,pointerEvents:'none',overflow:'hidden',background:'#050608'}} aria-hidden="true">
+  {frame.terrain!.tiles.map((t,i)=><img key={`${t.url}:${i}`} ref={el=>{tileImgs.current[i]=el;}} src={t.url} alt="" draggable={false} onLoad={()=>paintTerrain.current(latest.current.view)} style={{display:'none'}}/>)}
+  <canvas ref={gradeBaseCanvas} width={frame.width} height={frame.height} style={{position:'absolute',inset:0,width:frame.width,height:frame.height,filter:'grayscale(1) brightness(.78)'}}/>
+  {!frame.vision.daylight&&<canvas ref={gradeColorCanvas} width={frame.width} height={frame.height} style={{position:'absolute',inset:0,width:frame.width,height:frame.height}}/>}
+ </div>:null;
  if((tiles||raster&&picture)&&!localGrading){
   const cover=rasterCover(bounds!,frame.view,frame.width,frame.height);
   return <>{terrain}<div ref={maskRoot} data-testid="legacy-vision" data-geometry-source="server" data-render-source="server-raster" data-raster-key={tiles?.key??raster!.key} data-mask-tiles={tiles?Object.keys(tiles.tiles).length:undefined} data-draw-count={drawCount} data-wall-count={frame.vision.walls?.length??0} data-origin-count={frame.vision.origins.length} data-heavy={String(frame.vision.heavy)} style={{position:'absolute',inset:0,zIndex:2,pointerEvents:'none',overflow:'hidden'}} aria-hidden="true">
@@ -186,12 +214,12 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
  return <>{terrain}<svg key={suppliedGeometry===undefined?'client':'server'} ref={svg} data-testid="legacy-vision" data-geometry-source={suppliedGeometry===undefined?'client':suppliedGeometry===null?'pending':'server'} data-draw-count={drawCount} data-wall-count={frame.vision.walls?.length??0} data-origin-count={frame.vision.origins.length} data-heavy={String(frame.vision.heavy)}
    width={frame.width} height={frame.height} style={{position:'absolute',inset:0,zIndex:2,pointerEvents:'none'}} aria-hidden="true">
    <defs>
-     <clipPath id={sight} data-legacy-paths="sight" data-legacy-world="" transform={transform}>{shapes('sight',paths.sight)}</clipPath>
+     <clipPath id={sight} data-legacy-paths="sight">{shapes('sight',paths.sight)}</clipPath>
      <mask id={cover} maskUnits="userSpaceOnUse" x="0" y="0" width={frame.width} height={frame.height}>
        <rect width="100%" height="100%" fill="white"/>
        <g data-legacy-paths="memory" data-legacy-world="" transform={transform} fill={frame.keepRevealed?'black':localGrading?'#ccc':'#aaa'}>{shapes('memory',memory)}</g>
        {all?<rect width={frame.width} height={frame.height} fill={dimFill}/>:frame.vision.heavy?<g data-legacy-paths="near" data-legacy-world="" transform={transform} fill={dimFill}>{shapes('near',paths.near)}</g>:<g data-legacy-paths="sight" data-legacy-world="" transform={transform} fill={dimFill}>{shapes('sight',paths.sight)}</g>}
-       {!frame.vision.daylight&&<g clipPath={frame.mapFogOfWar?`url(#${sight})`:undefined}><g data-legacy-paths="lights" data-legacy-world="" transform={transform} fill="black">{shapes('lights',paths.lights)}</g></g>}
+       {!frame.vision.daylight&&<g data-legacy-world="" transform={transform}><g clipPath={frame.mapFogOfWar?`url(#${sight})`:undefined} data-legacy-paths="lights" fill="black">{shapes('lights',paths.lights)}</g></g>}
      </mask>
    </defs>
    <rect data-testid="legacy-fog-cover" width="100%" height="100%" fill="#050608" mask={`url(#${cover})`}/>

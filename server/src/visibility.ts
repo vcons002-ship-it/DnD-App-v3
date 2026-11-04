@@ -566,7 +566,7 @@ export function createSnapshotBuilder(
       if(!sharedPartyVision&&map){
         const groups=[...personalMemories].map(([id,vision])=>{
           const sees=(t:Token)=>manualVisible(t)&&fogVisionContainsToken(vision,t.x,t.y,tokenRadiusPx(t,map),usesTokenVision(map))&&(!isInvisible(monById.get(t.refId)!)||data.tokens.some(o=>o.kind==='pc'&&!o.blind&&o.refId===id&&seesInvisible(charById.get(id)!,tokenDistanceFt(o,t,map))));
-          return rememberFigures(map!,data.mapImages,data.tokens,sees,(x,y)=>fogVisionContains(playerVision,x,y,usesTokenVision(map)),t=>{const m=monById.get(t.refId);return m?getPlayerMonster(m):undefined;},readOnly,id,true);
+          return rememberFigures(map!,data.mapImages,data.tokens,sees,(x,y,tok)=>fogVisionContainsToken(playerVision,x,y,tokenRadiusPx(tok,map),usesTokenVision(map)),t=>{const m=monById.get(t.refId);return m?getPlayerMonster(m):undefined;},readOnly,id,true);
         });
         rememberedById=new Map(mergePersonalFigures(groups).map(r=>[r.token.id,r]));
       }else if (!preview && map) {
@@ -574,13 +574,13 @@ export function createSnapshotBuilder(
         if (!byRo) loaded.rememberedByReadonly = byRo = new Map();
         let cachedRem = byRo.get(readOnly);
         if (!cachedRem) {
-          const remembered = rememberFigures(map, data.mapImages, data.tokens, partySees, (x, y) => fogVisionContains(partyVision, x, y, usesTokenVision(map)), t => { const m = monById.get(t.refId); return m ? getPlayerMonster(m) : undefined; }, readOnly);
+          const remembered = rememberFigures(map, data.mapImages, data.tokens, partySees, (x, y, tok) => fogVisionContainsToken(partyVision, x, y, tokenRadiusPx(tok, map), usesTokenVision(map)), t => { const m = monById.get(t.refId); return m ? getPlayerMonster(m) : undefined; }, readOnly);
           cachedRem = new Map(remembered.map(r => [r.token.id, r]));
           byRo.set(readOnly, cachedRem);
         }
         rememberedById = cachedRem;
       } else {
-        const remembered=map?rememberFigures(map,data.mapImages,data.tokens,partySees,(x,y)=>fogVisionContains(partyVision,x,y,usesTokenVision(map)),t=>{const m=monById.get(t.refId);return m?getPlayerMonster(m):undefined;},readOnly):[];
+        const remembered=map?rememberFigures(map,data.mapImages,data.tokens,partySees,(x,y,tok)=>fogVisionContainsToken(partyVision,x,y,tokenRadiusPx(tok,map),usesTokenVision(map)),t=>{const m=monById.get(t.refId);return m?getPlayerMonster(m):undefined;},readOnly):[];
         rememberedById=new Map(remembered.map(r=>[r.token.id,r]));
       }
       const retainedDisplays=new Map<string,MonsterPublic>();
@@ -623,13 +623,13 @@ export function createSnapshotBuilder(
         const partial=():Token[]=>personalVis === 'partial'
           ?[{...t,partiallyRevealed:true,initiative:null,combatRole:null,revealTag:undefined,markLabels:undefined}]:[];
         if(!sharedPartyVision){
-          const part=partial();
-          return part.length?part:retain();
+          const kept=retain();
+          return kept.length?kept:partial();
         }
         // Party positions are always known. Explicit DM hiding still wins.
         if(t.kind==='pc')return [{...t,sharedSightOnly:true,...(map?.explorationMode!=='off'?{revealedOnly:true}:{})}];
-        const part=partial();if(part.length)return part;
         const kept=retain();if(kept.length)return kept;
+        const part=partial();if(part.length)return part;
 
         if(monById.get(t.refId)?.objectKind || !party.size || sameAsParty)return [];
         let partyVisible: boolean | undefined;

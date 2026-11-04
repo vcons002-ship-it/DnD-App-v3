@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import { doorInteractionArea } from '../../../shared/doorInteraction';
 import { doorSegmentApproachPoints, type MapWall } from '../../../shared/mapWalls';
@@ -180,7 +181,29 @@ export function WallAndDoorKonvaGroup({
           )}
         </Group>
       )}
-      {doors.filter(doorVisible).map((d) => {
+      {useMemo(() => {
+        const wallVis = usesTokenVision(map);
+        return doors.filter(doorVisible).map((d) => {
+          let visibleFaces: Set<number> | null = null;
+          if (renderPlayerVision && !wallActive && !d.open) {
+            let baseFaces: number[][];
+            if (d.kind === 'rectangle' && !d.rotation) {
+              const x0 = Math.min(d.ax, d.bx), x1 = Math.max(d.ax, d.bx), y0 = Math.min(d.ay, d.by), y1 = Math.max(d.ay, d.by);
+              baseFaces = x1 - x0 >= y1 - y0 ? [[x0, y0 - 2, x1, y0 - 2], [x0, y1 + 2, x1, y1 + 2]] : [[x0 - 2, y0, x0 - 2, y1], [x1 + 2, y0, x1 + 2, y1]];
+            } else {
+              baseFaces = wallBoundarySegments(d).map(({ a, b }) => [a.x, a.y, b.x, b.y]);
+            }
+            visibleFaces = new Set<number>();
+            baseFaces.forEach((points, i) => {
+              if (doorSegmentApproachPoints({ x: points[0], y: points[1] }, { x: points[2], y: points[3] }, d).some((p) => fogVisionContains(snapshot.playerVision, p.x, p.y, wallVis))) {
+                visibleFaces!.add(i);
+              }
+            });
+          }
+          return { d, visibleFaces };
+        });
+      }, [doors, doorVisible, renderPlayerVision, wallActive, snapshot.playerVision, map]).map(({ d, visibleFaces }) => {
+        const doorFaceVisible = (_door: MapWall, faceIndex: number) => !visibleFaces || visibleFaces.has(faceIndex);
         const doorSnapshot = actualDm ? sourceSnapshot : snapshot;
         const token = doorSnapshot.tokens.find((t) => t.id === d.tokenId);
         const object = doorSnapshot.monsters.find((m) => m.id === token?.refId);
@@ -264,11 +287,11 @@ export function WallAndDoorKonvaGroup({
             />
             {faces
               .filter(
-                (points) =>
+                (_points, faceIndex) =>
                   !renderPlayerVision ||
                   wallActive ||
                   d.open ||
-                  doorSegmentApproachPoints({ x: points[0], y: points[1] }, { x: points[2], y: points[3] }, d).some((p) => fogVisionContains(snapshot.playerVision, p.x, p.y, usesTokenVision(map))),
+                  doorFaceVisible(d, faceIndex),
               )
               .map((points, i) => (
                 <Line
