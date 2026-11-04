@@ -133,8 +133,8 @@ export function visionHasDarkvision(vision:PlayerVision|undefined|null,x:number,
  return !!vision?.origins.some(o=>Math.hypot(x-o.x,y-o.y)<=vision.radius+1e-6);
 }
 /** Dim-light darkvision shows affinity; heavy-darkness affinity needs actual light. */
-export function visionShowsAffinity(vision:PlayerVision|undefined|null,x:number,y:number):boolean{
- return visionLit(vision,x,y)||(!vision?.heavy&&visionHasDarkvision(vision,x,y));
+export function visionShowsAffinity(vision:PlayerVision|undefined|null,x:number,y:number,radiusPx=0):boolean{
+ return visionLit(vision,x,y)||(radiusPx>0&&tokenFootprintPoints(x,y,radiusPx).some(p=>visionLit(vision,p.x,p.y)))||(!vision?.heavy&&(visionHasDarkvision(vision,x,y)||(radiusPx>0&&tokenFootprintPoints(x,y,radiusPx).some(p=>visionHasDarkvision(vision,p.x,p.y)))));
 }
 export function visionLit(vision:PlayerVision|undefined|null,x:number,y:number):boolean{
  return !vision||!!vision.daylight||vision.lights.some(l=>lightCoverage(Math.hypot(x-l.x,y-l.y),l)>.10&&(!(vision.walls?.length)||sightCache.visible(`l:${l.id}:${x},${y}`,l,{x,y},vision.walls)));
