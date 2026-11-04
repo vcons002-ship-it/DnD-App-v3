@@ -124,7 +124,6 @@ export function Spellbook({
           </label>}
         </div>
         <div className="spellbook-list">
-          {renderCast&&<p className="spellbook-cast-note">Browse and Add do not cast or spend slots. Use Cast for a learned spell to choose its slot and targets.</p>}
           {groups.length === 0 && <p className="muted">No spells match.</p>}
           {groups.map(([lvl, spells]) => (
             <div key={lvl} className="spellbook-group">

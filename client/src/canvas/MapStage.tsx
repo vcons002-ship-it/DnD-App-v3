@@ -1095,7 +1095,10 @@ function MapStageInner({
       for (const child of groundLayer.getChildren()) {
         if (!(child instanceof Konva.Group) || !child.hasName('token') || !child.isVisible() || child.getAbsoluteOpacity() <= 0) continue;
         const hud = child.findOne<Konva.Group>('.token-upright-hud');
-        if (hud && hud.isVisible()) hud.drawScene(canvas, undefined, buffer);
+        if (hud && hud.isVisible()) {
+          (hud as unknown as { _clearSelfAndDescendantCache?: (attr: string) => void })._clearSelfAndDescendantCache?.('absoluteTransform');
+          hud.drawScene(canvas, undefined, buffer);
+        }
       }
     };
     const syncOverlay = () => overlayLayer.batchDraw();
