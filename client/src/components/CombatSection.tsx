@@ -16,6 +16,7 @@ import { AbilityButtons } from './AbilityButtons';
 import { AbilityToggles, hasToggle } from './AbilityToggles';
 import { AdvantageToggle } from './AdvantageToggle';
 import { CharacterResources } from './CharacterResources';
+import { DeathSaves } from './DeathSaves';
 import { WeaponButtons } from './WeaponButtons';
 import { effectiveSheetAbility, isCanonicalHasteProfile } from '../../../shared/spellExecution';
 import { spellCombatSupport } from '../../../shared/spellSupport';
@@ -216,6 +217,7 @@ export function CombatSection({
 
   return (
     <div className={`attack-controls${compactPlayer ? ' compact-player-combat' : ''}`}>
+      {'deathSaves' in caster && <DeathSaves character={caster} editable />}
       <ActiveSpellActions caster={caster} kind={kind} ownTurn={ownTurn} targetTokenId={effectiveTargetId||undefined} />
       <HasteExtraAction caster={caster} kind={kind} ownTurn={ownTurn} attackArmed={hasteAttackArmed} onArmAttack={setHasteAttackArmed} />
       {actionBlock === 'Hold Person paralysis' && <div className="spell-action-block" role="status">

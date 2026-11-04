@@ -671,7 +671,8 @@ export function migrateActiveMarks(): void {
           changed=true;
           return {...a,mark:{kind:target.kind,refId:target.ref_id,tokenId:target.id,active:true,expiresAt:Number.MAX_SAFE_INTEGER}};
         });
-        if(changed) db.prepare(`UPDATE ${table} SET sheet_abilities=? WHERE id=?`).run(JSON.stringify(upgraded),row.id);
+        const deduped=upgraded.filter((a,idx)=>{if(!markSpell(a))return true;const dupes=upgraded.map((x,i)=>({x,i})).filter(({x})=>markSpell(x)&&abilityKey(x)===abilityKey(a)&&(x.sourceClass??'')===(a.sourceClass??''));if(dupes.length<=1)return true;const keep=(dupes.find(({x})=>x.mark?.active)??dupes.find(({x})=>x.mark)??dupes.find(({x})=>x.stance?.active)??dupes[0]).i;if(idx!==keep)changed=true;return idx===keep;});
+        if(changed) db.prepare(`UPDATE ${table} SET sheet_abilities=? WHERE id=?`).run(JSON.stringify(deduped),row.id);
       } catch { /* Keep malformed legacy entries untouched. */ }
     }
   }

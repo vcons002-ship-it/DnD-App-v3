@@ -162,7 +162,7 @@ export function AbilityButtons({
         <button className="btn" disabled={!invisTargets.length||invisTargets.length>invisLevel-1||selection(invisAbility).unavailable} onClick={()=>{cast(invisAbility,undefined,invisTargets);setInvisAbility(null);}}>Cast Invisibility · {costText(invisAbility)}</button>
         <button className="btn" onClick={()=>setInvisAbility(null)}>Cancel</button>
       </div>}
-      {abilities.filter(a=>!hitFeature(a)).map((a) => {
+      {abilities.filter((a,idx,arr)=>!hitFeature(a)&&(!markSpell(a)||arr.findIndex(x=>markSpell(x)&&abilityKey(x)===abilityKey(a)&&(x.sourceClass??'')===(a.sourceClass??''))===idx)).map((a) => {
         const cost=selection(a),spell=isCastSpell(a),restriction=spell?spellCastRestriction(a):undefined;
         const level = upcastable(a) ? cost.level : undefined;
         const base=spellSlotBaseLevel(a);
@@ -176,10 +176,10 @@ export function AbilityButtons({
         const selfSpell=linkedSpellProfile(a)&&['mirror image','flame blade'].includes(spellKey(a.name));
         const area=spellAreaFor(a,level);
         const summon=!!execution.summon&&!manualCast;
-        const targetStep=['invisibility','dispel magic'].includes(advancedSpell(a)??'')||isCommandSpell(a);
+
+
         const choosing=dispelAbility?.id===a.id||invisAbility?.id===a.id||commandAbility?.id===a.id;
-        const placement=!!area||partySpell(a)==='misty step';
-        const timing=placement?'Choose placement next; no slot is spent until you confirm on the map.':targetStep?'Choose targets or options next; no slot is spent until the final Cast button.':'Cast happens when you press this button and the server accepts it.';
+
           const workflow = area ? 'Place the measured spell area, review affected bases, then confirm. Saves roll together; damage applies automatically. Ongoing or manual effects stay with the DM.' : selfSpell ? spellKey(a.name)==='mirror image' ? 'Create three duplicates of yourself.' : 'Create the blade, then attack using its Active spell actions button.' : manualCast ? 'Record this casting and spend its spell slot; resolve its effects manually.' : multiple
           ? execution.roll?.kind === 'attack' ? 'Cast once, then choose a target for each separate spell attack.' : saveOnly ? 'Cast, then choose targets to roll saving throws.' : 'Roll once, then apply to targets on the map.'
           : execution.roll?.healTarget === 'self' ? 'Restore your own health.'
@@ -217,7 +217,7 @@ export function AbilityButtons({
         return (
           <div key={a.id} className="combat-ability-row" style={damageTypes.length ? { flexWrap: 'wrap' } : undefined}>
             {choosing?null:btn}
-            {spell&&<small className="spell-cast-summary">{restriction??(cost.unavailable?`No ${cost.label.toLowerCase()} remaining. Choose another slot.`:[cost.remaining,choosing?'Use the final Cast button in the target selection above.':timing,manualCast?'Effects are resolved with the DM; casting records the spell and its cost.':''].filter(Boolean).join(' · '))}</small>}
+
             <SpellCombatSupportBadge ability={a} />
             <RechargeChip ability={a} kind={kind} refId={caster.id} />
             {damageTypeSelect}

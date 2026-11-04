@@ -9,7 +9,7 @@ import { CharacterResources } from './CharacterResources';
 import { CarriedLanternControl } from './CarriedLanternControl';
 import { CharacterSpells } from './CharacterSpells';
 import { CharacterItems } from './CharacterItems';
-import { DeathSaves } from './DeathSaves';
+
 import { SheetImportExport } from './SheetImportExport';
 import { LibraryCharacterDialog } from './LibraryCharacterDialog';
 import { MiniatureSizeControl } from './MiniatureSizeControl';
@@ -140,7 +140,7 @@ export function CharacterSheet({
           <CharacterModifiers character={character} editable={editable} />
         </details>
       )}
-      <DeathSaves character={character} editable={editable} />
+
       {editable && role === 'player' && (miniatureToken ?? placedToken) && (
         <details className="sheet-exploration">
           <summary>Exploration</summary>

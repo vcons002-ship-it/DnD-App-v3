@@ -1,5 +1,5 @@
 import {confirmAction} from '../lib/dialogs';
-import { hitFeature, markSpell } from '../../../shared/hitFeatures';
+import { hitFeature, markSpell, abilityKey } from '../../../shared/hitFeatures';
 import { RechargeChip } from './RechargeChip';
 import { isOnHitManeuver } from '../../../shared/maneuvers';
 import { applyRulesUpdate, isOutdated } from '../../../shared/rulesUpdate';
@@ -265,6 +265,7 @@ export function CharacterSpells({
 
   const add = (e: SpellHit) => {
     const sourceClass = e.sourceClass ?? (addClass || (classRoster?.length === 1 ? classRoster[0].className : undefined));
+    if (e.source !== 'custom' && character.sheetAbilities.some((a) => abilityKey(a) === abilityKey(e) && (a.sourceClass ?? '') === (sourceClass ?? ''))) { notify(`"${e.name}" is already on this sheet.`); setAdding(false); setQ(''); return; }
     if ((e.type === 'spell' || e.useCounter) && (classRoster?.length ?? 0) > 1 && !sourceClass) {
       notify('Choose the class that learns this spell or feature before adding it.');
       return;

@@ -77,7 +77,7 @@ import {useEnvironmentEditor} from '../lib/useEnvironmentEditor';
 import {DEFAULT_MAP_ENVIRONMENT} from '../../../shared/mapEnvironment';
 import type {EnvironmentPreviewSettings} from './battlefieldEnvironment';
 import { TokenHoverCard } from '../components/TokenHoverCard';
-import { TokenHtmlHudOverlay } from './TokenHtmlHudOverlay';
+
 import { DecalPopup } from '../components/DecalPopup';
 import { RollLogOverlay } from '../components/RollLogOverlay';
 import { DiceButtonOverlay } from '../components/DiceButtonOverlay';
@@ -2170,7 +2170,7 @@ function MapStageInner({
                 pxPerFoot={pxPerFoot}
               />}
               {/* Live "laser pointers" for everyone else on this map. */}
-              {!legacy&&showCursors && (
+              {showCursors && (
                 <CursorPointers currentMapId={map?.id} scale={view.scale} />
               )}
             </Layer>
@@ -2203,7 +2203,7 @@ function MapStageInner({
           {renderVisionLayer&&activeVision&&(legacy?<LegacyVisionOverlay terrain={legacyTerrainSpec} ref={visionRef} presentation={presentation} terrainRaster={legacyServerTerrain?snapshot.terrainRaster:undefined} motion={legacyMovement.playback} tiles={sceneVision?undefined:snapshot.visionTiles} raster={sceneVision?undefined:snapshot.visionRaster} geometry={sceneVision?undefined:snapshot.legacyGeometry} vision={activeVision} view={view} width={size.w} height={size.h} mapFogOfWar={!sceneVision&&usesMapVision(map)} explored={map?.explorationMode==='off'?[]:snapshot.exploredTerrain} keepRevealed={map?.explorationMode!=='off'&&!!activeVision.daylight}/>:<PlayerVisionOverlay serverGeometry={snapshot.legacyGeometry??(sourceViewSnapshot.legacyMotion?.membershipOnly?sourceViewSnapshot.legacyGeometry:undefined)} spellLighting={!spellColorOverlay} ref={visionRef} presentation={presentation} vision={activeVision} keepRevealed={map?.explorationMode!=='off'&&!!activeVision.daylight} mapFogOfWar={usesMapVision(map)} view={view} tilt={tiltDegrees} rotation={rotationDegrees} width={size.w} height={size.h}
             terrain={{environment:map?.environment,explored:map?.explorationMode==='off'?[]:snapshot.exploredTerrain,tiles:terrainTiles,bounds:{x:extX0,y:extY0,w:imgW,h:imgH},grid:map?.gridHidden?undefined:{size:grid,x:map?.gridOffsetX??0,y:map?.gridOffsetY??0}}}/>)}
           <WallAndDoorHud wallActive={wallActive} wallTool={wallTool} setWallTool={setWallTool} setWallAnchor={setWallAnchor} wallThickness={wallThickness} setWallThickness={setWallThickness} selectedWall={selectedWall} featureSelection={featureSelection} deleteFeatures={deleteFeatures} map={map} doorDragPreview={doorDragPreview} doors={doors} activeDoorControls={activeDoorControls} dismissDoorControls={dismissDoorControls} actualDm={actualDm} sourceSnapshot={sourceSnapshot} snapshot={snapshot} onSelectToken={onSelectToken} operateDoor={operateDoor} />
-          <TokenHtmlHudOverlay snapshot={snapshot} view={view} pxPerFoot={pxPerFoot} groundScaleY={groundScaleY} isVisibleAt={tokenVisibleAtPosition} />
+
           <DecalPopup snapshot={actualDm?sourceSnapshot:snapshot} />
           {hover && !menu && (
             <TokenHoverCard

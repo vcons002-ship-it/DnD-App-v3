@@ -4,7 +4,7 @@ import { useStore } from '../state/socket';
 import { playInitiative, playRest, playYourTurn } from '../lib/sfx';
 import {CounterspellPrompt} from './CounterspellPrompt';
 import {ShieldReactionPrompt} from './ShieldReactionPrompt';
-import {CommandTurnPrompt} from './CommandTurnPrompt';
+import {CommandTurnPrompt,DeathSaveTurnPrompt} from './CommandTurnPrompt';
 
 /** Live announcements only: mounting/reconnecting never replays an old turn. */
 export function CombatMoments() {
@@ -126,6 +126,7 @@ export function CombatMoments() {
     <ShieldReactionPrompt/>
     <CounterspellPrompt/>
     <CommandTurnPrompt/>
+    <DeathSaveTurnPrompt/>
     {(mine || dmWaiting) && !initiativeSubmitted && !liveDice && !rollFx && <div className={`combat-moment combat-moment-initiative initiative-persistent ${animate ? '' : 'no-motion'}`}
       role="region" aria-label="Initiative roll request">
       <span className="combat-moment-kicker">Combat is starting</span>
