@@ -1118,9 +1118,6 @@ export function CharacterSpells({
             </div>
           );
         })()}
-      {rollsElsewhere && character.sheetAbilities.some((a) => effectiveSheetAbility(a).roll || spellCombatSupport(a)?.manualCastOnly || a.smite || hitFeature(a)) && (
-        <p className="muted spell-tag">Use Cast beside any spell to choose its slot and targets. On-hit spells are offered after a qualifying hit.</p>
-      )}
       {!rollsElsewhere && snapshot && attackerToken && (hasAttackSpell || hasHealSpell || character.sheetAbilities.some(a=>a.stance?.targeted)) && <ShowDeadTargets/>}
       {!rollsElsewhere && hasAttackSpell && (
         <div className="dice-row">

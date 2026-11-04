@@ -27,11 +27,9 @@ export function SpellCastControl({ability,caster,kind='pc',onMapRequest}:{abilit
  const close=()=>setOpen(false);
  return <><span className="spell-cast-control">
   <button type="button" className="btn tiny spell-cast-open" aria-label={`Cast ${spell.name}`} onClick={()=>setOpen(true)}>Cast {spell.name}…</button>
-  <small>{restriction?'Requires preparation or a trigger':cost.label}{cost.remaining?` · ${cost.remaining}`:''}</small>
  </span>{open&&createPortal(<dialog ref={dialog} className="spell-cast-dialog" aria-label={`Cast ${spell.name}`} onKeyDown={e=>e.stopPropagation()} onCancel={e=>{e.preventDefault();e.stopPropagation();close();}}>
    <header><h3>Cast {spell.name}</h3><button type="button" className="btn tiny" onClick={close} aria-label="Cancel spell casting">Cancel</button></header>
    <p>{live.name}{spell.sourceClass?` · ${spell.sourceClass}`:''}</p>
-   <p className="muted">Opening this window or changing the slot does not cast or spend anything.</p>
    {spell.meta&&<p>{spell.meta}</p>}
    {restriction?<p role="status">{restriction}</p>:<>
     {attackTarget&&choices.attack.length>0&&<label>Single target (if needed)<select aria-label="Cast spell target" value={choices.attack.some(t=>t.id===target)?target:choices.attack[0].id} onChange={e=>setTarget(e.target.value)}>{choices.attack.map(t=><option key={t.id} value={t.id}>{targetLabel(snapshot!,t,actor)}</option>)}</select></label>}

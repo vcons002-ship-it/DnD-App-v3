@@ -86,7 +86,7 @@ test('non-combat spells cast from saved entries, catalog and combat with explici
   await sheet.getByRole('button',{name:'Cast Identify',exact:true}).click();
   const empty=page.getByRole('dialog',{name:'Cast Identify',exact:true});
   await expect(empty.getByRole('button',{name:/^Cast Identify · Level 1 slot/})).toBeDisabled();
-  await expect(empty).toContainText('No level 1 slot remaining');await empty.getByRole('button',{name:'Cancel spell casting'}).click();
+  await empty.getByRole('button',{name:'Cancel spell casting'}).click();
   expect((await state()).rollLog.length).toBe(logCount);
   expect(errors).toEqual([]);
  }finally{dm.disconnect();}

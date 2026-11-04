@@ -57,8 +57,8 @@ export function createMiniatureNameLayer(scene:Scene,depth:DepthTexture,resoluti
       for(const id of labels.keys())if(!rendered.has(id))remove(id);
       return rendered;
     },
-    renderForeground(renderer:WebGLRenderer,camera:Camera){
-      if(![...labels.values()].some(e=>e.mesh.layers.isEnabled(MINIATURE_NAME_LAYER)))return;
+    renderForeground(renderer:WebGLRenderer,camera:Camera,hasExtra=false){
+      if(!hasExtra&&![...labels.values()].some(e=>e.mesh.layers.isEnabled(MINIATURE_NAME_LAYER)))return;
       const layers=camera.layers.mask,autoClear=renderer.autoClear,pending=renderer.shadowMap.needsUpdate;
       try{
         camera.layers.set(MINIATURE_NAME_LAYER);renderer.autoClear=false;renderer.shadowMap.needsUpdate=false;

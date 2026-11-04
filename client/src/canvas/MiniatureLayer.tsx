@@ -685,7 +685,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const flashes=useComposite&&sightFrame?.enabled&&sightFrame.grade?.heavy?impactLights.filter(l=>l.revealsTerrain).map(l=>({source:l,
           polygon:battlefield?.lighting.wallPolygon(l.id)??FLASH_CIRCLE.map(v=>({x:l.x+v.x*spellLightReach(l),y:l.y+v.y*spellLightReach(l)}))})):NO_FLASHES;
         visionComposite?.render(!!props.personalVision&&useComposite,sightFrame,camera,flashes,battlefield?.memoryTexture);
-        if(deferNames)names.renderForeground(renderer,camera);
+        if(deferNames)names.renderForeground(renderer,camera,[...instances.values()].some(i=>i.root.visible&&i.hunterMark.visible));
         if(deferSpells){
           if(useComposite){
             // Drawn above terrain fog, so clip to the live sight cover here.
@@ -1146,6 +1146,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const hunterMark=new Sprite(new SpriteMaterial({map:new CanvasTexture(markCanvas),transparent:true,depthTest:true,depthWrite:false,toneMapped:false}));
         const headY=new Box3().setFromObject(model).max.y-definition.baseCenter[1];
         hunterMark.name='hunters-mark-sigil';hunterMark.scale.setScalar(definition.baseDiameter*.6);
+        hunterMark.layers.set(MINIATURE_NAME_LAYER);hunterMark.renderOrder=10;
         hunterMark.position.set(0,headY+definition.baseDiameter*.42,0);hunterMark.visible=false;root.add(hunterMark);
         const badgeCanvas=document.createElement('canvas');badgeCanvas.width=badgeCanvas.height=128;
         const badgeTexture=new CanvasTexture(badgeCanvas);

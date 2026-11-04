@@ -146,7 +146,6 @@ export function AbilityButtons({
           {snapshot?.tokens.filter(t=>!t.sharedSightOnly&&!t.partiallyRevealed).map(t=>{const e=t.kind==='pc'?snapshot.characters.find(c=>c.id===t.refId):snapshot.monsters.find(m=>m.id===t.refId);return <option key={t.id} value={t.id}>{e?.name??'Creature'}{t.revealTag?` ${t.revealTag}`:''}</option>;})}
           {snapshot?.measurements.filter(m=>m.spellName==='Spike Growth').map(m=><option key={m.id} value={`effect:${m.id}`}>Spike Growth area</option>)}
         </select>
-        <p>{costText(dispelAbility)} · spent when this cast is accepted.</p>
         <button className="btn" disabled={!dispelChoice||selection(dispelAbility).unavailable} onClick={()=>{const target=dispelChoice.startsWith('effect:')?{effectId:dispelChoice.slice(7),mapId:snapshot!.map!.id}:{tokenId:dispelChoice};cast(dispelAbility,undefined,undefined,target);setDispelAbility(null);}}>Cast Dispel Magic · {costText(dispelAbility)}</button>
         <button className="btn" onClick={()=>setDispelAbility(null)}>Cancel</button>
       </div>}
@@ -158,7 +157,6 @@ export function AbilityButtons({
           const e=t.kind==='pc'?snapshot.characters.find(c=>c.id===t.refId):snapshot.monsters.find(m=>m.id===t.refId);
           return me&&e&&(!('curHp'in e)||e.curHp>0)&&(!('objectKind'in e)||!e.objectKind)&&(!('disposition'in e)||e.disposition==='friendly')&&!t.sharedSightOnly&&!t.partiallyRevealed&&tokenDistanceFt(me,t,snapshot.map)<=5;
         }).map(t=>{const e=t.kind==='pc'?snapshot.characters.find(c=>c.id===t.refId):snapshot.monsters.find(m=>m.id===t.refId);return <label key={t.id}><input type="checkbox" checked={invisTargets.includes(t.id)} onChange={event=>setInvisTargets(ids=>event.target.checked?[...ids,t.id]:ids.filter(id=>id!==t.id))}/>{e?.name}</label>;})}
-        <p>{costText(invisAbility)} · no slot is spent until you cast below.</p>
         <button className="btn" disabled={!invisTargets.length||invisTargets.length>invisLevel-1||selection(invisAbility).unavailable} onClick={()=>{cast(invisAbility,undefined,invisTargets);setInvisAbility(null);}}>Cast Invisibility · {costText(invisAbility)}</button>
         <button className="btn" onClick={()=>setInvisAbility(null)}>Cancel</button>
       </div>}
@@ -260,7 +258,6 @@ export function AbilityButtons({
           {customWords&&<button className="btn" aria-pressed={chosenCommand==='Custom'} onClick={()=>setChosenCommand('Custom')}>Custom word</button>}</div>
         <p>{commandInstruction(chosenCommand)}</p>
         {chosenCommand==='Custom'&&<label>One word <input aria-label="Custom Command word" maxLength={32} value={customWord} onChange={e=>setCustomWord(e.target.value)}/><small>The DM interprets and resolves this command.</small></label>}
-        <p>{costText(commandAbility)} · no slot is spent until you cast below.</p>
         <button className="btn" disabled={selection(commandAbility).unavailable||chosenCommand==='Custom'&&!commandWord(customWord)} onClick={()=>{const a=commandAbility;setCommandAbility(null);cast(a,chosenCommand==='Custom'?commandWord(customWord):chosenCommand);}}>Cast Command · {costText(commandAbility)}</button>
       </div></div>}
     </>
