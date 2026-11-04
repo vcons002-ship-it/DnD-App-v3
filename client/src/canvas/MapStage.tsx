@@ -798,12 +798,12 @@ function MapStageInner({
   // Reset to fit when the map changes; otherwise refit on resize until the
   // user zooms/pans, after which we preserve their view.
   useEffect(() => {
-    userAdjusted.current = false;
+    userAdjusted.current = false; pendingViewRef.current = null;
     setView(fit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map?.id, mapImageReady]);
   useEffect(() => {
-    if (!userAdjusted.current) setView(fit);
+    if (!userAdjusted.current) { pendingViewRef.current = null; setView(fit); }
   }, [fit]);
 
   // Map each token to its 1-based position in initiative order (highest first).
@@ -846,7 +846,7 @@ function MapStageInner({
   }, [view, size, groundScaleY]);
 
   const doors=useMemo(()=>(map?.walls??[]).filter(w=>w.door),[map?.walls]);
-  const doorVisible=(door:typeof doors[number])=>(isDm||wallActive)||((!door.tokenId||snapshot.tokens.some(t=>t.id===door.tokenId&&!t.sharedSightOnly))&&doorApproachPoints(door).some(p=>fogVisionContains(snapshot.playerVision,p.x,p.y,usesTokenVision(map))&&tokenVisibleAt({role:snapshot.role,hidden:false,owned:false,foe:true,mapFog:mapFogEnabled?mapRevealed:null,tokenFog:tokenFogEnabled?tokenRevealed:null,grid,x:p.x,y:p.y})));
+  const visibleDoorIds=useMemo(()=>new Set(doors.filter(door=>(isDm||wallActive)||((!door.tokenId||snapshot.tokens.some(t=>t.id===door.tokenId&&!t.sharedSightOnly))&&doorApproachPoints(door).some(p=>fogVisionContains(snapshot.playerVision,p.x,p.y,usesTokenVision(map))&&tokenVisibleAt({role:snapshot.role,hidden:false,owned:false,foe:true,mapFog:mapFogEnabled?mapRevealed:null,tokenFog:tokenFogEnabled?tokenRevealed:null,grid,x:p.x,y:p.y})))).map(d=>d.id)),[isDm,wallActive,doors,snapshot.tokens,snapshot.playerVision,snapshot.role,map,mapFogEnabled,mapRevealed,tokenFogEnabled,tokenRevealed,grid]); const doorVisible=useCallback((door:typeof doors[number])=>visibleDoorIds.has(door.id),[visibleDoorIds]);
   const nearbyDoors=doors.filter(d=>doorVisible(d)&&(actualDm?d.id===selectedDoor||sourceSnapshot.tokens.some(t=>t.id===doorApproachTokenId&&!doors.some(door=>door.tokenId===t.id)&&doorInReach(t,d,pxPerFoot)):snapshot.tokens.some(t=>t.kind==='pc'&&!t.isHidden&&snapshot.characters.some(c=>c.id===t.refId&&c.claimedBy===mySocketId)&&doorInReach(t,d,pxPerFoot))));
   const nearbyDoorKey=nearbyDoors.map(d=>d.id).sort().join('|');
   useEffect(()=>{
@@ -857,12 +857,14 @@ function MapStageInner({
   const activeDoorControls=nearbyDoors.filter(d=>!dismissedDoors.includes(d.id));
   const dismissDoorControls=()=>{setDismissedDoors(old=>[...new Set([...old,...nearbyDoors.map(d=>d.id)])]);if(actualDm)setSelectedDoor(null);};
   const operateDoor=(id:string,open:boolean)=>{if(map)useStore.getState().socket?.emit('map:setDoor',{mapId:map.id,doorId:id,open});};
+  const rememberedPositionsRef = useRef(new Map<string, string>());
   const miniatureVisibleAt = useMemo(() => {
     const ownerId = useStore.getState().socket?.id;
     const owned = new Set(snapshot.characters.filter(c => c.claimedBy === ownerId).map(c => c.id));
     const friendly = new Set(snapshot.monsters.filter(m => m.disposition === 'friendly').map(m => m.id));
     const tokens = new Map(snapshot.tokens.map(t => [t.id, { x:t.x, y:t.y, kind:t.kind, hidden: t.isHidden, sharedSightOnly: t.sharedSightOnly, revealedOnly:t.revealedOnly, partiallyRevealed:t.partiallyRevealed, radiusPx:tokenRadiusPx(t,snapshot.map),
-      owned: t.kind === 'pc' && owned.has(t.refId), foe: t.kind === 'monster' && !friendly.has(t.refId) }]));
+      owned: t.kind === 'pc' && owned.has(t.refId), foe: t.kind === 'monster' && !friendly.has(t.refId), wasNamedAtSamePos: !t.sharedSightOnly && !t.partiallyRevealed && rememberedPositionsRef.current.get(t.id) === `${t.x},${t.y}` }]));
+    rememberedPositionsRef.current = new Map(snapshot.tokens.filter(t => !t.partiallyRevealed).map(t => [t.id, `${t.x},${t.y}`]));
     return (id: string, x: number, y: number) => {
       const token = tokens.get(id);
       // Accepted Legacy positions have already passed per-viewer server filtering.
@@ -871,8 +873,8 @@ function MapStageInner({
       // Area art is pixel-clipped to the player's sight and revealed fog in the 3D layer,
       // so it plays wherever any part of it is in view (the server already checked).
       if(!token&&(id.startsWith('area:')||id.startsWith('spike-area:')))return true;
-      return !!token && (token.sharedSightOnly ? (token.kind==='pc' || (token.revealedOnly?fogVisionContainsToken(presentation.personalVision(),x,y,token.radiusPx,false)&&tokenVisibleAt({...token,role:snapshot.role,mapFog:mapFogEnabled?mapRevealed:null,tokenFog:tokenFogEnabled?tokenRevealed:null,grid,x,y}):fogVisionContainsToken(presentation.partyVision(),x,y,token.radiusPx,usesTokenVision(snapshot.map)))) :
-        (token.owned || fogVisionIntersectsToken(presentation.personalVision(),x,y,token.radiusPx,usesTokenVision(snapshot.map))) && tokenVisibleAt({ ...token, role: snapshot.role,
+      return !!token && (token.sharedSightOnly ? (token.kind==='pc' || (token.revealedOnly?tokenVisibleAt({...token,role:snapshot.role,mapFog:mapFogEnabled?mapRevealed:null,tokenFog:tokenFogEnabled?tokenRevealed:null,grid,x,y}):fogVisionContainsToken(presentation.partyVision(),x,y,token.radiusPx,usesTokenVision(snapshot.map)))) :
+        (token.owned || token.wasNamedAtSamePos || fogVisionIntersectsToken(presentation.personalVision(),x,y,token.radiusPx,usesTokenVision(snapshot.map))) && tokenVisibleAt({ ...token, role: snapshot.role,
         mapFog: mapFogEnabled ? mapRevealed : null, tokenFog: tokenFogEnabled ? tokenRevealed : null, grid, x, y }));
     };
   }, [legacy,snapshot, mapFogEnabled, tokenFogEnabled, mapRevealed, tokenRevealed, grid]);
@@ -884,7 +886,7 @@ function MapStageInner({
     const socket=useStore.getState().socket;if(!socket?.connected){done(null);return;}
     socket.timeout(1500).emit('token:preview',{tokenId:token.id,x,y},(error,result)=>done(error?null:result));
   },[]);
-  const legacyAffinity=useMemo(()=>new Set(snapshot.legacyGeometry?.affinity??[]),[snapshot.legacyGeometry?.affinity]);
+  const legacyAffinity=useMemo(()=>snapshot.serverRendering?.enabled&&snapshot.legacyGeometry!==undefined?new Set(snapshot.legacyGeometry?.affinity??[]):new Set(snapshot.tokens.filter(t=>!t.sharedSightOnly&&!t.partiallyRevealed&&visionShowsAffinity(snapshot.playerVision,t.x,t.y,tokenRadiusPx(t,snapshot.map))).map(t=>t.id)),[snapshot.serverRendering?.enabled,snapshot.legacyGeometry,snapshot.tokens,snapshot.playerVision,snapshot.map]);
 
   // One RAF drives all anchors, including stationary enemies becoming visible.
   // Keeping this above individual layers also survives a 2D -> 3D or shared-sight
@@ -954,7 +956,7 @@ function MapStageInner({
       combatRole: !dead && !token.sharedSightOnly && !token.partiallyRevealed && token.kind==='monster'&&!monster?.objectKind?token.combatRole:undefined,
       hunterMarked: !dead && !token.partiallyRevealed && !!token.markLabels?.some(label=>/hunter.s mark/i.test(label)),
       conditionColors: dead || token.sharedSightOnly || token.partiallyRevealed ? [] : presentAuras(display.conditions.filter(c=>!c.id.startsWith("spell-mark:") || !/hunter.s mark/i.test(c.label))).map(a=>AURA_HEX[a]),
-      outline: token.sharedSightOnly || token.partiallyRevealed || (snapshot.serverRendering?.enabled&&snapshot.legacyGeometry!==undefined?!legacyAffinity.has(token.id):!visionShowsAffinity(snapshot.playerVision,token.x,token.y,tokenRadiusPx(token,snapshot.map))) || monster?.objectKind ? undefined : monster ? DISPOSITION_HEX[monster.disposition] : DISPOSITION_HEX.friendly,
+      outline: token.sharedSightOnly || token.partiallyRevealed || !legacyAffinity.has(token.id) || monster?.objectKind ? undefined : monster ? DISPOSITION_HEX[monster.disposition] : DISPOSITION_HEX.friendly,
       tint: !dead && monster ? monsterTint(monster) : undefined,
       shade: !dead && monster && !monster.objectKind ? monsterVariation(productionFamily(monster), token.refId).shade : undefined,
       activeTurn: !token.sharedSightOnly && !token.partiallyRevealed && token.id === activeTurnTokenId,
@@ -1016,11 +1018,11 @@ function MapStageInner({
     }
   },[]);
 
-  const viewRef = useRef(view), prevViewProp = useRef(view);
-  if (prevViewProp.current !== view) { prevViewProp.current = view; viewRef.current = view; }
+  const viewRef = useRef(view), prevViewProp = useRef(view), pendingViewRef = useRef<View | null>(null);
+  if (prevViewProp.current !== view) { prevViewProp.current = view; if (!pendingViewRef.current || (pendingViewRef.current.x === view.x && pendingViewRef.current.y === view.y && pendingViewRef.current.scale === view.scale)) { pendingViewRef.current = null; viewRef.current = view; } }
   const drawnViewRef = useRef({ x: view.x, y: view.y, scale: view.scale, sy: groundScaleY });
   const paintView = useStableCallback((nextView: View) => {
-    viewRef.current = nextView;
+    pendingViewRef.current = nextView; viewRef.current = nextView;
     visionRef.current?.camera({ view: nextView });
     const prev = drawnViewRef.current;
     if (prev.x !== nextView.x || prev.y !== nextView.y || prev.scale !== nextView.scale || prev.sy !== groundScaleY) {
@@ -1058,7 +1060,7 @@ function MapStageInner({
   }, [view, groundScaleY]);
   const paintPan = useStableCallback((position:Pt) => {
     const nextView = { ...viewRef.current, ...position };
-    viewRef.current = nextView;
+    pendingViewRef.current = nextView; viewRef.current = nextView;
     drawnViewRef.current = { x: position.x, y: position.y, scale: nextView.scale, sy: groundScaleY };
     visionRef.current?.camera({ view: nextView });
     for (const layer of [layerRef.current, legacyFootstepsLayerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
@@ -1318,7 +1320,7 @@ function MapStageInner({
     const touches = (e.evt as TouchEvent).touches;
     if (touches && touches.length >= 2) {
       e.evt.preventDefault();
-      pinchRef.current = pinchData(touches);
+      pinchRef.current = pinchData(touches); panFrames.cancel(); for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current]) if (layer?.isDragging()) { layer.stopDrag(); layer.position({ x: viewRef.current.x, y: viewRef.current.y }); }
       setPinching(true);
       return;
     }
@@ -1460,7 +1462,7 @@ function MapStageInner({
     const touches = (e.evt as TouchEvent).touches;
     if (touches && touches.length >= 2 && pinchRef.current) {
       e.evt.preventDefault();
-      const next = pinchData(touches);
+      const next = pinchData(touches); panFrames.cancel(); for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current]) if (layer?.isDragging()) { layer.stopDrag(); layer.position({ x: viewRef.current.x, y: viewRef.current.y }); }
       zoomAtPoint(next.dist / pinchRef.current.dist, next.cx, next.cy);
       pinchRef.current = next;
       return;
@@ -1683,7 +1685,7 @@ function MapStageInner({
   // Pan by dragging empty canvas (disabled while placing or painting fog).
   const panning = !placingLight && !onPlaceAt && !fogActive && !measureActive && !pinching;
   const handleLayerDragMove = (e: KonvaEventObject<DragEvent>) => {
-    if (e.target.getClassName() !== 'Layer') return;
+    if (e.target.getClassName() !== 'Layer' || pinchRef.current) return;
     const position={x:e.target.x(),y:e.target.y()};
     // Legacy's precomputed mask/terrain only need cheap DOM transforms here.
     // Keep them aligned immediately; defer the canvas redraws to one RAF.
@@ -1692,7 +1694,7 @@ function MapStageInner({
   };
   const handleLayerDragEnd = (e: KonvaEventObject<DragEvent>) => {
     // dragend bubbles; only react to the layer itself panning, not token drags.
-    if (e.target.getClassName() !== 'Layer') return;
+    if (e.target.getClassName() !== 'Layer' || pinchRef.current) return;
     panFrames.push({x:e.target.x(),y:e.target.y()});panFrames.flush();
     // Pan synchronizes several layers, while Konva's release paint refreshes
     // only the directly dragged layer. Retained hit maps skipped paints during
@@ -1708,7 +1710,7 @@ function MapStageInner({
 
   const resetView = () => {
     paintView(fit);
-    userAdjusted.current = false;
+    userAdjusted.current = false; pendingViewRef.current = null;
     setView(fit);
   };
 
@@ -1810,7 +1812,7 @@ function MapStageInner({
         pxPerFoot={pxPerFoot}
         miniatureReady={miniatures}
         miniaturePending={!miniatures && !miniaturesUnavailable && !failedMiniatures.has(t.id) && miniatureIds.has(t.id)}
-        hideAffinity={!!t.sharedSightOnly || (snapshot.serverRendering?.enabled&&snapshot.legacyGeometry!==undefined?!legacyAffinity.has(t.id):!visionShowsAffinity(snapshot.playerVision,t.x,t.y,tokenRadiusPx(t,snapshot.map)))}
+        hideAffinity={!!t.sharedSightOnly || !legacyAffinity.has(t.id)}
         viewRotation={rotationDegrees}
         miniatureDiameterFt={miniatureBaseWidthFt(t, t.kind === 'monster' ? entities.monsters.get(t.refId) : { name: d.name })}
         movementWalls={actualDm?undefined:movementWalls}

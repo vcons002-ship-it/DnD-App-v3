@@ -99,5 +99,21 @@ describe('keep revealed fog',()=>{
   // Explorer (pc) moves to (800, 600) and sees the spot is now empty, then moves back to (100, 600).
   moveToken(f.pc.id,800,600);partyView();moveToken(f.pc.id,100,600);
   expect(partyView().tokens.some(t=>t.id===f.enemy.id)).toBe(false);
+  for(const shared of [true,false]){
+   const g=fixture('heavy');setSharedPartyVision(g.s.id,g.map.id,shared);
+   editMapWalls(g.s.id,g.map.id,{removeId:'wall'});
+   expect(g.snap().tokens.find(t=>t.id===g.enemy.id)?.sharedSightOnly).toBeUndefined();
+   moveToken(g.pc.id,-200,200);
+   expect(g.snap().tokens.find(t=>t.id===g.enemy.id)).toMatchObject({x:500,y:200,sharedSightOnly:true,revealedOnly:true});
+   moveToken(g.pc.id,-115,200);
+   const duringApproach=g.snap().tokens.find(t=>t.id===g.enemy.id)!;
+   expect(duringApproach).toMatchObject({x:500,y:200,sharedSightOnly:true,revealedOnly:true});
+   expect(duringApproach.partiallyRevealed).toBeUndefined();
+   moveToken(g.pc.id,-90,200);
+   const targetable=g.snap().tokens.find(t=>t.id===g.enemy.id)!;
+   expect(targetable.sharedSightOnly).toBeUndefined();
+   expect(targetable.revealedOnly).toBeUndefined();
+   expect(targetable.partiallyRevealed).toBeUndefined();
+  }
  });
 });

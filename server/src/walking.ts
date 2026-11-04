@@ -29,7 +29,7 @@ function rememberWalkingFigures(map:MapState,tiles:MapImage[],seen:ExploredTerra
   if(!m||!manualVisible(t)||!tokenInExploredTerrain(seen,t.x,t.y,tokenRadiusPx(t,map)))return false;
   return !isInvisible(m)||tokens.some(o=>o.kind==='pc'&&!o.blind&&party.has(o.refId)&&!!charById.get(o.refId)&&seesInvisible(charById.get(o.refId)!,tokenDistanceFt(o,t,map)));
  };
- rememberFigures(map,tiles,tokens,sees,(x,y)=>pointInExploredTerrain(seen,x,y),t=>{const m=monById.get(t.refId);return m?toPlayerMonster(m):undefined;},false,characterId);
+ rememberFigures(map,tiles,tokens,sees,(x,y,tok)=>tokenInExploredTerrain(seen,x,y,tokenRadiusPx(tok,map)),t=>{const m=monById.get(t.refId);return m?toPlayerMonster(m):undefined;},false,characterId);
 }
 /** Preview messages and teleport/relocation commands never call this function. */
 export async function recordWalkingMove(previous:Token,next:Token,persist:boolean,relocate=false){

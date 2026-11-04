@@ -128,7 +128,7 @@ const sameRememberedState=(a:RevealedFigure,token:Token,monster?:MonsterPublic)=
  a.token.shape===token.shape&&a.token.miniatureWidthFt===token.miniatureWidthFt&&JSON.stringify(a.monster)===JSON.stringify(monster);
 /** Only true party sightings update these frozen display records. No unseen
  * movement, HP, conditions, or appearance changes are sent to players. */
-export function rememberFigures(map:MapState,tiles:MapImage[],tokens:Token[],seen:(token:Token)=>boolean,seenPoint:(x:number,y:number)=>boolean,display:(token:Token)=>MonsterPublic|undefined,readOnly=false,characterId?:string,includeCleared=false):RevealedFigure[]{
+export function rememberFigures(map:MapState,tiles:MapImage[],tokens:Token[],seen:(token:Token)=>boolean,seenPoint:(x:number,y:number,token:Token)=>boolean,display:(token:Token)=>MonsterPublic|undefined,readOnly=false,characterId?:string,includeCleared=false):RevealedFigure[]{
  if(map.explorationMode==='off')return [];
  const key=explorationKey(map,tiles),store=memoryStore(map.id,characterId);
  const row=store.read();
@@ -146,7 +146,7 @@ export function rememberFigures(map:MapState,tiles:MapImage[],tokens:Token[],see
    const monster=display(token);
    const updatedAt=old&&sameRememberedState(old,token,monster)&&old.updatedAt?old.updatedAt:nextFigureTimestamp();
    records.set(token.id,{token:{...token},monster,updatedAt});
-  }else if(old&&!old.cleared&&seenPoint(old.token.x,old.token.y)){
+  }else if(old&&!old.cleared&&seenPoint(old.token.x,old.token.y,old.token)){
    if(characterId)records.set(token.id,{...old,cleared:true,updatedAt:nextFigureTimestamp()});
    else records.delete(token.id);
   }
