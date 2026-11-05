@@ -1,6 +1,7 @@
 import type {StateSnapshot} from '../../../shared/types';
 import type {LegacyMotion,LegacyMotionFrame} from '../../../shared/legacyMotion';
 import {equal} from '../../../shared/stateDelta';
+import {facingAfterMove} from '../../../shared/tokenFacing';
 
 /** A plan is already authorized by the server. Share immutable appearance
  * records across its frames, including legacy servers sending inline records.
@@ -12,11 +13,20 @@ export function createMotionSnapshots(source:StateSnapshot,plan:LegacyMotion){
    if(previous)return previous;variants.push(item);values.set(item.id,variants);return item;};
  };
  const token=pool(source.tokens),monster=pool(source.monsters);
- const normalizeToken=(value:StateSnapshot['tokens'][number])=>token(plan.moves[value.id]?{...value,...plan.moves[value.id].to}:value);
- const entityTokens=plan.entities?.tokens.map(normalizeToken);
- const entityMonsters=plan.entities?.monsters.map(monster);
  const baseTokensById=new Map(source.tokens.map(t=>[t.id,t]));
  const baseMonstersById=new Map(source.monsters.map(m=>[m.id,m]));
+
+
+ const normalizeToken=(value:StateSnapshot['tokens'][number])=>{
+  const move=plan.moves[value.id];if(!move)return token(value);
+  const base=baseTokensById.get(value.id);
+  const facing=base?base.facing:facingAfterMove(move.from.x,move.from.y,move.to.x,move.to.y,value.facing);
+  return token({...value,...move.to,...(facing!==undefined||value.facing!==undefined?{facing}:{})});
+ };
+ const entityTokens=plan.entities?.tokens.map(normalizeToken);
+ const entityMonsters=plan.entities?.monsters.map(monster);
+
+
  const sameList=<T>(a:T[]|undefined,b:T[]|undefined)=>a===b||(!!a&&!!b&&a.length===b.length&&a.every((v,i)=>v===b[i]));
  const sameFrameEntities=(a:LegacyMotionFrame,b:LegacyMotionFrame)=>
   sameList(a.tokenIds,b.tokenIds)&&

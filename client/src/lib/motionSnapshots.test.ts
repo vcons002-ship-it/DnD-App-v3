@@ -3,7 +3,7 @@ import type {StateSnapshot} from '../../../shared/types';
 import {compactMotionEntities,type LegacyMotion,motionFrameTokens,motionFrameMonsters} from '../../../shared/legacyMotion';
 import {createMotionSnapshots} from './motionSnapshots';
 
-const pc={id:'pc',kind:'pc',refId:'hero',x:300,y:100};
+const pc={id:'pc',kind:'pc',refId:'hero',x:300,y:100,facing:Math.PI/2};
 const guard={id:'guard',kind:'monster',refId:'goblin',x:200,y:100};
 const monster={id:'goblin',name:'Guard',conditions:[]};
 const source=()=>({role:'player',tokens:[pc],monsters:[],characters:[]} as unknown as StateSnapshot);
@@ -44,7 +44,7 @@ it.each([false,true])('shares unchanged frame records and arrays, without leakin
 it('retains raster geometry and sprite appearance while normalizing moving records to the destination',()=>{
  const input=source(),motion=plan();motion.membershipOnly=false;
  const geometry={sight:['path'],near:[],lights:[],memory:[],affinity:['pc']};
- motion.frames[0]={...motion.frames[0],tokens:[{...pc,x:100} as StateSnapshot['tokens'][number]],legacyGeometry:geometry};
+ motion.frames[0]={...motion.frames[0],tokens:[{...pc,x:100,facing:0} as StateSnapshot['tokens'][number]],legacyGeometry:geometry};
  const frames=createMotionSnapshots(input,compactMotionEntities(motion));
  expect(frames[0].tokens[0]).toBe(input.tokens[0]);expect(frames[0].legacyGeometry).toBe(geometry);
  expect(motion.frames[0].tokens?.[0].x).toBe(100);

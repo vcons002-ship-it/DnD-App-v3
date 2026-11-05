@@ -452,7 +452,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     const atmosphereAnimated = !!environment?.enabled && !reducedMotion.matches &&
       ((environment.particles&&environment.particles!=='none'&&(environment.particleIntensity??.5)>0&&(environment.particleScale??1)>0) || (environment.groundWetness??0)>0 || environment.lightning || (environment.mist&&environment.mistQuality!=='off') || (!!environment.weather && environment.weather!=='none' && (environment.weatherIntensity??.5)>0) || !!environment.lights?.some(light=>light.flicker));
     const animated = !reducedMotion.matches && [...instances.values()].some((instance) => instance.mixer || instance.fx || instance.turnRing.visible || instance.selectionRing.visible);
-    const settling = [...moves.values()].some((move) => Number.isFinite(move.until));
+    const settling = moves.size > 0;
     const casting = [...instances.entries()].filter(([, instance]) => instance.lightning?.active(now / 1000));
     const fading=[...opacityFades.values()].some(f=>now-f.start<850);
     const fastAnimation=settling||casting.length>0||spellImpacts.active||fading||localShadows.pending;
@@ -474,7 +474,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         if (!instance) continue;
         const move = moves.get(token.id);
         if (move && move.until < now) moves.delete(token.id);
-        const position = {...(moves.get(token.id) ?? token),...props.visualPosition?.(token.id)};
+        const position = {...(moves.get(token.id) ?? token),...props.visualPosition?.(token.id),...(preview?.id===token.id?{facing:preview.root.rotation.y}:{})};
         const wasVisible = instance.root.visible;
         instance.root.visible = props.isVisibleAt?.(token.id, position.x, position.y) ?? true;
         if (battlefield && (wasVisible !== instance.root.visible || instance.root.position.x !== position.x || instance.root.position.z !== position.y || instance.root.rotation.y !== (position.facing ?? 0) || (animated && instance.shadowAnimated))) renderer.shadowMap.needsUpdate = true;
@@ -804,7 +804,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     const appearanceChanged=appearanceKey!==instance.appearanceKey;
     instance.appearanceKey=appearanceKey;
     const factor = token.diameter / token.definition.baseDiameter;
-    const position = {...(moves.get(token.id) ?? token),...props.visualPosition?.(token.id)};
+    const position = {...(moves.get(token.id) ?? token),...props.visualPosition?.(token.id),...(preview?.id===token.id?{facing:preview.root.rotation.y}:{})};
     const visible=props.isVisibleAt?.(token.id,position.x,position.y) ?? true;
     if(battlefield && (instance.root.visible!==visible || instance.root.scale.x!==factor))renderer.shadowMap.needsUpdate=true;
     instance.root.scale.setScalar(factor);

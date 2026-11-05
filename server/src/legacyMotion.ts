@@ -25,7 +25,7 @@ const formatMemory=formatExploredMemory;
 // lists would recreate every unchanged token object in a slow client's React tree.
 function fields(s:StateSnapshot,at:number,endpoint:StateSnapshot,moves:LegacyMotion['moves']):LegacyMotionFrame{
  const endTokens=new Map(endpoint.tokens.map(t=>[t.id,t])),endMonsters=new Map(endpoint.monsters.map(m=>[m.id,m]));
- const tokens=s.tokens.filter(t=>!equal(moves[t.id]?{...t,...moves[t.id].to}:t,endTokens.get(t.id)));
+ const tokens=s.tokens.filter(t=>!equal(moves[t.id]?{...t,...moves[t.id].to,facing:endTokens.get(t.id)?.facing??t.facing}:t,endTokens.get(t.id)));
  const monsters=s.monsters.filter(m=>!equal(m,endMonsters.get(m.id)));
  const tokenSprites=Object.fromEntries(Object.entries(s.tokenSprites??{}).filter(([id,pair])=>!equal(pair,endpoint.tokenSprites?.[id])));
  return {at,tokenIds:s.tokens.map(t=>t.id),...(tokens.length?{tokens}:{}),...(monsters.length?{monsters}:{}),...(Object.keys(tokenSprites).length?{tokenSprites}:{}),legacyGeometry:s.legacyGeometry,visionRaster:s.visionRaster,visionTiles:s.visionTiles};
@@ -55,7 +55,7 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
  }
  const work=(async():Promise<LegacyMotion|undefined>=>{
   const current=new Map(listTokens(after.map!.id).map(t=>[t.id,t]));
-  const first={...before,tokens:before.tokens.filter(t=>current.has(t.id)&&(after.role==='dm'||!current.get(t.id)!.isHidden)),partyView:undefined,legacyMotion:undefined};
+  const first={...before,tokens:before.tokens.filter(t=>current.has(t.id)&&(after.role==='dm'||!current.get(t.id)!.isHidden)).map(t=>moves[t.id]?{...t,facing:current.get(t.id)!.facing}:t),partyView:undefined,legacyMotion:undefined};
   const rawViews:StateSnapshot[]=[];
   // Exploration changes only at the route's halfway and final poses. Reuse
   // these unions rather than clipping the same remembered terrain 13 times.
@@ -154,7 +154,7 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
      const changedTokens=view.tokens.filter(t=>{
       const endTok=endById.get(t.id);if(!endTok)return true;
       if(!!t.sharedSightOnly!==!!endTok.sharedSightOnly||!!t.partiallyRevealed!==!!endTok.partiallyRevealed||viewAffinity.has(t.id)!==endAffinity.has(t.id))return true;
-      if(!equal(moves[t.id]?{...t,...moves[t.id].to}:t,endTok))return true;
+      if(!equal(moves[t.id]?{...t,...moves[t.id].to,facing:endTok.facing}:t,endTok))return true;
       return t.kind==='monster'&&!equal(viewMonsters.get(t.refId),endMonsters.get(t.refId));
      });
      view.tokenSprites=changedTokens.length?await tokenSprites(id,{...view,tokens:changedTokens},true):{};

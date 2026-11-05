@@ -92,7 +92,7 @@ type Props = {
   /** Private to this browser. A null point removes the planning figure. */
   onDragPreview?: (token: Token, point: {x:number;y:number;facing:number} | null) => void;
   /** Local WebGL position, without a React render or network throttle. */
-  onVisualMove?: (token: Token, x: number, y: number, finished: boolean) => void;
+  onVisualMove?: (token: Token, x: number, y: number, finished: boolean, facing?: number) => void;
   /** Keep the whole token/HUD concealed when its live anchor enters fog. */
   isVisibleAt?: (id: string, x: number, y: number) => boolean;
 };
@@ -189,6 +189,7 @@ function TokenShapeInner({
     tokenNode.current?.stopDrag();
     clearPreview();
     tokenNode.current?.position(committed.current);
+    onVisualMove?.(token,committed.current.x,committed.current.y,true,token.facing);
     tokenNode.current?.getLayer()?.batchDraw();
   };
 
@@ -218,7 +219,7 @@ function TokenShapeInner({
       pose.current=p;node.position(p);
       const live=latest.current;
       node.opacity(live.isVisibleAt?.(token.id,p.x,p.y)===false ? 0 : live.token.isHidden ? .45 : 1);
-      live.onVisualMove?.(live.token,p.x,p.y,t===1);
+      live.onVisualMove?.(live.token,p.x,p.y,t===1,facingAfterMove(from.x,from.y,destination.x,destination.y,live.token.facing));
       node.getLayer()?.batchDraw();
       motion.current=t<1 ? requestAnimationFrame(paint) : 0;
     };
@@ -241,6 +242,9 @@ function TokenShapeInner({
   const paintDrag = (cx: number, cy: number) => {
     const origin=committed.current;
     tokenArt.current?.position({x:origin.x-cx,y:origin.y-cy});
+    const pointerFacing=facingAfterMove(origin.x,origin.y,cx,cy,token.facing);
+    previewArrow.current?.rotation(-pointerFacing*180/Math.PI);
+    onVisualMove?.(token,origin.x,origin.y,true,pointerFacing);
     if(onServerPreview){
       // Keep the pointer responsive, but delegate collision, terrain cost and sight.
       const state=serverPreview.current;state.x=cx;state.y=cy;
@@ -252,6 +256,7 @@ function TokenShapeInner({
           if(!result||!dragging.current||serverPreview.current.serial!==requestSerial)return;
           state.valid=true;
           const facing=facingAfterMove(origin.x,origin.y,result.x,result.y,token.facing);
+          onVisualMove?.(token,origin.x,origin.y,true,facing);
           onDragPreview?.(token,result.visible?{x:result.x,y:result.y,facing}:null);
           previewBase.current?.position(result);previewBase.current?.visible(result.visible);
           previewArrow.current?.rotation(-facingAfterMove(origin.x,origin.y,result.x,result.y,token.facing)*180/Math.PI);
@@ -305,6 +310,7 @@ function TokenShapeInner({
     // No optimistic teleport: wait for the accepted position. A rejected move
     // simply leaves the token here, so no stale acknowledgement can move it.
     e.target.position(committed.current);
+    onVisualMove?.(token,committed.current.x,committed.current.y,true,facingAfterMove(committed.current.x,committed.current.y,x,y,token.facing));
     e.target.getLayer()?.batchDraw();
     const relocate = !!(e.evt && 'altKey' in e.evt && e.evt.altKey);
     onMove(token, x, y, undefined, relocate ? 'relocate' : undefined);
