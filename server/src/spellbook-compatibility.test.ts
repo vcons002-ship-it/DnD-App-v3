@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { spellCombatSupport } from '../../shared/spellSupport.js';
+import { spellCombatSupport, spellCastSummary } from '../../shared/spellSupport.js';
 import { effectiveSheetAbility } from '../../shared/spellExecution.js';
 import { abilityKey } from '../../shared/hitFeatures.js';
 import { withDiceSource, type PhysicalDiceInfo } from '../../shared/dice.js';
@@ -73,6 +73,27 @@ describe('Spellbook capabilities cover the actual catalogue without promising un
       if (support!.manualCastOnly) expect(support!.status, entry.name).toBe('manual');
     }
     expect(spellCombatSupport({ name: 'Second Wind', type: 'ability' })).toBeNull();
+    for (const entry of spells) {
+      const summary = spellCastSummary(entry);
+      expect(summary, entry.name).not.toBeNull();
+      expect(summary!.text.length, entry.name).toBeGreaterThan(0);
+    }
+    expect(spellCastSummary(spell('Fireball'))).toEqual({
+      text: 'DEX save (half) · 8d6 (+1d6/lvl) fire · 20ft sphere',
+      needsEdit: false,
+    });
+    expect(spellCastSummary(spell('Aid'))).toEqual({
+      text: 'No roll · cast only',
+      needsEdit: true,
+    });
+    expect(spellCastSummary({
+      ...spell('Aid'),
+      executionProfile: 'manual',
+      roll: { kind: 'heal', dice: '1d4', healingBonus: 'none' },
+    })).toEqual({
+      text: 'Heal 1d4 · 1 ally',
+      needsEdit: false,
+    });
   });
   it.each([
     'Aid', 'Armor of Agathys', 'True Strike',

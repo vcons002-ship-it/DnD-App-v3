@@ -319,3 +319,143 @@ export function spellCombatSupport(input: SpellInput): SpellCombatSupport | null
   if (!matchesReviewed && !manual.length) manual.push('Area/target eligibility, additional effects, and duration need DM adjudication; only the configured roll is automated.');
   return result(matchesReviewed && !manual.length ? 'ready' : 'partial');
 }
+
+export type SpellCastSummary = {
+  text: string;
+  /** True when casting only records the slot/area without an automated roll or effect. */
+  needsEdit: boolean;
+};
+
+function formatArea(area: NonNullable<ReturnType<typeof spellAreaFor>>): string {
+  const count = area.count && area.count > 1 ? ` ×${area.count}` : '';
+  const size = area.sizeFt >= 5280 && area.sizeFt % 5280 === 0 ? `${area.sizeFt / 5280}mi` : `${area.sizeFt}ft`;
+  return `${size} ${area.kind}${count}`;
+}
+
+const UPCAST_EXTRA_TARGET_SPELLS = new Set([
+  'hold person', 'command', 'hold monster', 'banishment', 'charm person',
+  'blindness/deafness', 'fly', 'invisibility',
+]);
+
+/** Compact, human-readable summary of a spell's current cast mechanics (dice, save/attack/heal, targeting) for the spellbook window. */
+export function spellCastSummary(input: SpellInput): SpellCastSummary | null {
+  const ability: SheetAbility = { id: 'cast-summary', description: '', ...input };
+  if (ability.type !== 'spell' && !markSpell(ability) && !hitFeature(ability)) return null;
+  const key = abilityKey(ability);
+  const advanced = advancedSpell(ability);
+  if (advanced === 'invisibility') return { text: 'Touch buff · Invisible · 1 ally (+1/lvl)', needsEdit: false };
+  if (advanced === 'spike growth') return { text: '2d4 piercing/5ft · 20ft sphere', needsEdit: false };
+  if (advanced === 'dispel magic') return { text: 'Dispel effect · 1 target/area', needsEdit: false };
+  if (advanced === 'counterspell') return { text: 'Reaction · CON save · 1 target', needsEdit: false };
+
+  const party = partySpell(ability);
+  if (party === 'shield') return { text: 'Reaction · +5 AC · self', needsEdit: false };
+  if (party === 'misty step') return { text: 'Teleport 30ft · self', needsEdit: false };
+  if (party === 'pass without trace') return { text: '+10 Stealth · 30ft emanation', needsEdit: false };
+  if (party === 'hypnotic pattern') return { text: 'WIS save · 30ft cube', needsEdit: false };
+
+  if (isCommandSpell(ability)) return { text: 'WIS save · command · 1 target (+1/lvl)', needsEdit: false };
+
+  const linked = linkedSpellProfile(ability);
+  if (linked) {
+    if (key === 'mirror image') return { text: '3 duplicates · self', needsEdit: false };
+    if (key === 'ice knife') return { text: 'Attack 1d10 piercing + DEX save 2d6 cold · 1 target + 5ft', needsEdit: false };
+    if (key === 'ice storm') return { text: 'DEX save (half) · 2d8 bludg + 4d6 cold · 20ft cylinder', needsEdit: false };
+    if (key === 'flame strike') return { text: 'DEX save (half) · 4d6 fire + 4d6 radiant · 10ft cylinder', needsEdit: false };
+    if (key === 'meteor swarm') return { text: 'DEX save (half) · 20d6 fire + 20d6 bludg · 40ft sphere ×4', needsEdit: false };
+    if (key === 'spiritual weapon') return { text: 'Summon + Attack 1d8+mod (+1d8/lvl) force · 1 target', needsEdit: false };
+    if (key === 'flame blade') return { text: 'Blade · Attack 3d6+mod (+1d6/lvl) fire · 1 target', needsEdit: false };
+  }
+
+  const effective = effectiveSheetAbility(ability);
+  const support = spellCombatSupport(ability);
+
+  if (effective.smite) {
+    const smite = effective.smite;
+    const scale = smite.scaleDice ? ` (+${smite.scaleDice}/lvl)` : '';
+    return { text: `On-hit smite · ${smite.dice}${scale} ${smite.damageType} · 1 target`, needsEdit: false };
+  }
+  const hf = hitFeature(ability);
+  if (hf) {
+    if (hf === 'hail of thorns') return { text: 'On-hit · DEX save (half) · 1d10 (+1d10/lvl) piercing · 5ft sphere', needsEdit: false };
+    if (hf === 'searing smite') return { text: 'On-hit · 1d6 (+1d6/lvl) fire · 1 target', needsEdit: false };
+    if (hf === 'thunderous smite') return { text: 'On-hit · 2d6 thunder + STR save · 1 target', needsEdit: false };
+    if (hf === 'wrathful smite') return { text: 'On-hit · 1d6 psychic + WIS save · 1 target', needsEdit: false };
+    if (hf === 'ensnaring strike') return { text: 'On-hit · STR save · 1d6 (+1d6/lvl) piercing · 1 target', needsEdit: false };
+    return { text: 'On-hit rider · 1 target', needsEdit: false };
+  }
+  const mark = markSpell(ability);
+  if (mark) return { text: `Bonus mark · +1d6 ${mark} on hit · 1 target`, needsEdit: false };
+  if (isCanonicalHasteProfile(ability)) return { text: 'Buff (+2 AC, 2× speed) · 1 ally', needsEdit: false };
+
+  if (support?.manualCastOnly) {
+    const area = spellAreaFor(effective);
+    return { text: area ? `No roll · ${formatArea(area)}` : 'No roll · cast only', needsEdit: true };
+  }
+  if (effective.summon) {
+    return { text: `Summon token (${effective.summon.name?.trim() || ability.name})`, needsEdit: false };
+  }
+  if (!effective.roll) {
+    const area = spellAreaFor(effective);
+    return { text: area ? `No roll · ${formatArea(area)}` : 'No roll · cast only', needsEdit: true };
+  }
+
+  const roll = effective.roll;
+  const dice = (roll.dice ?? '').trim();
+  const hasDice = Boolean(dice && dice !== '0');
+  const isCantrip = (effective.level ?? 0) === 0;
+  const scalePart = roll.scaleDice ? (isCantrip ? ' (cantrip scale)' : ` (+${roll.scaleDice}/lvl)`) : '';
+  const instancesPart = roll.instanceScaling === 'cantrip'
+    ? ' ×1–4'
+    : roll.instances && roll.instances > 1
+      ? ` ×${roll.instances}${roll.scaleInstances ? ` (+${roll.scaleInstances}/lvl)` : ''}`
+      : '';
+  const dmgType = roll.damageType && roll.damageType !== 'healing'
+    ? ` ${roll.damageType}`
+    : roll.damageTypeChoices?.length
+      ? ' choice type'
+      : '';
+  const explicitSingle = ability.roll?.targetMode === 'single';
+  const area = explicitSingle ? undefined : spellAreaFor(effective);
+  const upcastTargets = !explicitSingle && !roll.targetMode && UPCAST_EXTRA_TARGET_SPELLS.has(key);
+  const targetPart = area
+    ? formatArea(area)
+    : roll.kind === 'heal'
+      ? roll.healTarget === 'self'
+        ? 'self'
+        : roll.targetMode === 'multiple'
+          ? 'multi-target'
+          : '1 ally'
+      : (roll.instances && roll.instances > 1) || roll.instanceScaling === 'cantrip' || roll.targetMode === 'multiple'
+        ? 'multi-target'
+        : upcastTargets
+          ? '1 target (+1/lvl)'
+          : '1 target';
+
+  if (roll.kind === 'attack') {
+    const mod = roll.damageBonus === 'spellcasting' ? '+mod' : '';
+    const body = hasDice ? `${dice}${mod}${scalePart}${dmgType}${instancesPart}` : 'no dmg';
+    return { text: `Attack · ${body} · ${targetPart}`, needsEdit: !hasDice };
+  }
+  if (roll.kind === 'save') {
+    const saveName = `${(roll.save ?? 'DEX').toUpperCase()}${roll.dc ? ` DC ${roll.dc}` : ''} save`;
+    if (!hasDice) return { text: `${saveName} · no dmg · ${targetPart}`, needsEdit: false };
+    const onSave = (roll.saveDamage ?? 'half') === 'half' ? ' (half)' : ' (negates)';
+    return { text: `${saveName}${onSave} · ${dice}${scalePart}${dmgType}${instancesPart} · ${targetPart}`, needsEdit: false };
+  }
+  if (roll.kind === 'heal') {
+    if (!hasDice) return { text: `No roll · ${targetPart}`, needsEdit: true };
+    const prefix = roll.healingMode === 'temporary' ? 'Temp HP' : 'Heal';
+    const mod = roll.healingMode === 'temporary' || roll.healingBonus === 'none'
+      ? ''
+      : roll.healingBonus === 'fighterLevel'
+        ? '+lvl'
+        : '+mod';
+    const scale = roll.scaleDice ? ` (+${roll.scaleDice}/lvl)` : '';
+    return { text: `${prefix} ${dice}${mod}${scale} · ${targetPart}`, needsEdit: false };
+  }
+  if (!hasDice) {
+    return { text: area ? `No roll · ${formatArea(area)}` : 'No roll · cast only', needsEdit: true };
+  }
+  return { text: `Damage · ${dice}${scalePart}${dmgType}${instancesPart} · ${targetPart}`, needsEdit: false };
+}

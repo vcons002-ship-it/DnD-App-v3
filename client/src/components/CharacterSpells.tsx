@@ -38,7 +38,7 @@ import { Spellbook } from './Spellbook';
 import {SpellCastControl} from './SpellCastControl';
 import { isCanonicalHasteProfile, effectiveSheetAbility, isMultiTargetSpell, spellDamageTypeChoices } from '../../../shared/spellExecution';
 import { spellCombatSupport } from '../../../shared/spellSupport';
-import { SpellCombatSupportBadge, SpellCombatSupportDetails } from './SpellCombatSupport';
+import { SpellCombatSupportBadge } from './SpellCombatSupport';
 import { spellActionBlock, spellActionBlockMessage } from '../../../shared/spellBuffs';
 
 const manualRiderNote = (ability: SheetAbility): string | undefined => {
@@ -525,7 +525,7 @@ export function CharacterSpells({
               </span>
             )}
             {tagFor(a) && <span className="muted spell-tag">{tagFor(a)}</span>}
-            <SpellCombatSupportBadge ability={a} />
+            {editable && <SpellCombatSupportBadge ability={a} />}
           </button>
           <RechargeChip ability={a} kind={kind} refId={character.id} editable={editable} />
           {canCast&&directSpell&&<SpellCastControl ability={a} caster={character} kind={kind} onMapRequest={onCombatRequest}/>}
@@ -743,7 +743,7 @@ export function CharacterSpells({
         </div>
         {open[a.id] && (
           <div className="spell-body">
-            <SpellCombatSupportDetails ability={a} />
+
             {editable && a.type === 'spell' && (classRoster?.length ?? 0) > 1 && <label className="action-type-edit muted">Spell class<select aria-label={`${a.name} spell class`} value={a.sourceClass ?? ''} onChange={event => {
               const sourceClass = (event.target.value || undefined) as CoreClass | undefined;
               setSheetAbility(kind, character.id, { ...a, sourceClass, ...(a.roll && sourceClass ? { roll: { ...a.roll, castingAbility: spellcastingAbilityForClass(sourceClass) ?? a.roll.castingAbility } } : {}) });

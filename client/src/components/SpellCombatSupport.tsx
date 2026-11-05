@@ -1,27 +1,19 @@
-import { spellCombatSupport } from '../../../shared/spellSupport';
+import { spellCastSummary } from '../../../shared/spellSupport';
 import './spell-combat-support.css';
 
-type Spell = Parameters<typeof spellCombatSupport>[0];
+type Spell = Parameters<typeof spellCastSummary>[0];
 
-/** Describe the actions the app can execute without promising every spell rule. */
+/** Compact summary of current cast functionality (dice, save/attack/heal, targeting) for the spellbook window. */
 export function SpellCombatSupportBadge({ ability }: { ability: Spell }) {
-  const support = spellCombatSupport(ability);
-  if (!support) return null;
-  const detail = [
-    support.automated.length ? `App handles: ${support.automated.join('; ')}` : '',
-    support.manual.length ? `You handle: ${support.manual.join('; ')}` : '',
-  ].filter(Boolean).join('\n');
-  return <span className={`spell-support-badge spell-support-${support.status}`}
-    data-spell-support={support.status} title={detail}>
-    {support.label}
-  </span>;
-}
-
-export function SpellCombatSupportDetails({ ability }: { ability: Spell }) {
-  const support = spellCombatSupport(ability);
-  if (!support) return null;
-  return <div className="spell-support-details" aria-label={`${ability.name} combat support`}>
-    <p><strong>App handles:</strong> {support.automated.join('; ') || 'No automatic combat action.'}</p>
-    {support.manual.length > 0 && <p><strong>You handle:</strong> {support.manual.join('; ')}</p>}
-  </div>;
+  const summary = spellCastSummary(ability);
+  if (!summary) return null;
+  return (
+    <span
+      className={`spell-support-badge ${summary.needsEdit ? 'spell-cast-manual' : 'spell-cast-active'}`}
+      data-spell-cast-summary={summary.needsEdit ? 'manual' : 'active'}
+      title={`Current cast functionality: ${summary.text}`}
+    >
+      {summary.text}
+    </span>
+  );
 }

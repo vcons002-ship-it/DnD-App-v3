@@ -23,7 +23,7 @@ import { spellCombatSupport } from '../../../shared/spellSupport';
 import { spellSlotOptions, selectSpellSlot, type SpellSlotPool } from '../../../shared/spellSlotPools';
 import { confirmConcentration, spellBaseLevel, upcastable,isCastSpell } from '../lib/spellcasting';
 import {SpellCastControl} from './SpellCastControl';
-import { SpellCombatSupportBadge } from './SpellCombatSupport';
+
 import { activeHasteCondition, spellActionBlock, spellActionBlockMessage } from '../../../shared/spellBuffs';
 import {ActiveSpellActions} from './ActiveSpellActions';
 import { HasteExtraAction } from './HasteExtraAction';
@@ -306,7 +306,7 @@ export function CombatSection({
             >
               {a.summon?.icon || '✋'} Summon {a.summon?.name?.trim() || a.name}
             </button>
-            <SpellCombatSupportBadge ability={a} />
+
             {upcastable(a) && <select aria-label={`${a.name} summon level`} className="spell-level" value={summonLevel(a)} onChange={event => setSummonLevels(values => ({ ...values, [a.id]: Number(event.target.value) }))}>
               {Array.from({ length: 10 - spellBaseLevel(a) }, (_, index) => spellBaseLevel(a) + index).map(level => <option key={level} value={level}>L{level}</option>)}
             </select>}
