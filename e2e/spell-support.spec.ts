@@ -71,44 +71,38 @@ async function fixture(request: APIRequestContext, page: Page, names: string[], 
   return { socket, snapshot, characterId, ready, abilities, openSheet, entry, clickToken };
 }
 
-test('Saved and catalog spells show support, filters, and accessible cast setup', async ({ page, request }) => {
+test('Saved and catalog spells show compact cast functionality and accessible cast setup', async ({ page, request }) => {
   const f = await fixture(request, page, ['Magic Missile', 'Hold Person', 'Shield', 'Mage Hand', 'Divine Smite', 'Hail of Thorns', 'Conjure Animals']);
   await f.openSheet();
-  await expect(f.entry('Magic Missile').locator('[data-spell-support]')).toHaveAttribute('data-spell-support', 'ready');
-  await expect(f.entry('Hold Person').locator('[data-spell-support]')).toHaveAttribute('data-spell-support', 'ready');
-  await expect(f.entry('Shield').locator('[data-spell-support]')).toHaveAttribute('data-spell-support', 'ready');
+  await expect(f.entry('Magic Missile').locator('[data-spell-cast-summary]')).toHaveText('Damage · 1d4+1 force ×3 (+1/lvl) · multi-target');
+  await expect(f.entry('Hold Person').locator('[data-spell-cast-summary]')).toHaveText('WIS save · no dmg · 1 target (+1/lvl)');
+  await expect(f.entry('Shield').locator('[data-spell-cast-summary]')).toHaveText('Reaction · +5 AC · self');
+  await expect(f.entry('Conjure Animals').locator('[data-spell-cast-summary]')).toHaveText('No roll · 30ft cube');
   for (const name of ['Mage Hand', 'Divine Smite']) await expect(f.entry(name).getByRole('button', { name: 'Look up mechanics', exact: true })).toHaveCount(0);
   await expect(f.entry('Hail of Thorns').getByRole('button', { name: 'Cast manually', exact: true })).toHaveCount(0);
   await expect(f.entry('Conjure Animals').getByRole('button', { name: /Summon/ })).toHaveCount(0);
   await f.entry('Hold Person').locator('.spell-toggle').click();
-  await expect(f.entry('Hold Person').getByLabel('Hold Person combat support')).toContainText('paralysis');
-  await expect(f.entry('Hold Person').getByLabel('Hold Person combat support')).toContainText('App handles:');
-  await expect(f.entry('Hold Person').getByLabel('Hold Person combat support')).not.toContainText('You handle:');
-  await f.entry('Hold Person').getByLabel('Hold Person combat support').scrollIntoViewIfNeeded();
   await page.screenshot({ path: test.info().outputPath('saved-spell-support.png'), fullPage: true });
   await f.entry('Hold Person').getByRole('button', { name: 'Cast Hold Person', exact: true }).click();
-  const setup=page.getByRole('dialog',{name:'Cast Hold Person',exact:true});await expect(setup).toBeVisible();
-  await expect(setup).toContainText('does not cast or spend');await setup.getByRole('button',{name:'Cancel spell casting'}).click();
-  await page.getByRole('button',{name:'Close character window',exact:true}).click();
+  const setup = page.getByRole('dialog', { name: 'Cast Hold Person', exact: true });
+  await expect(setup).toBeVisible();
+  await setup.getByRole('button', { name: 'Cancel spell casting' }).click();
+  await page.getByRole('button', { name: 'Close character window', exact: true }).click();
   await expect(page.locator('.character-window')).toHaveCount(0);
   await expect(page.locator('.compact-player-combat').getByRole('button', { name: /Hold Person/ })).toBeVisible();
+  await expect(page.locator('.compact-player-combat [data-spell-cast-summary]')).toHaveCount(0);
 
   await f.openSheet();
   await page.getByRole('button', { name: /Add spell or ability/ }).click();
   await page.locator('.spell-add input').fill('False Life');
-  await expect(page.locator('.suggest-row').filter({ hasText: 'False Life' }).locator('[data-spell-support]')).toHaveAttribute('data-spell-support', 'ready');
+  await expect(page.locator('.suggest-row').filter({ hasText: 'False Life' }).locator('[data-spell-cast-summary]')).toHaveText('Temp HP 2d4+4 (+5/lvl) · self');
   await page.getByRole('button', { name: /Browse spellbook/ }).click();
   const book = page.locator('.spellbook');
-  for (const status of ['ready', 'partial', 'manual']) {
-    await book.getByRole('combobox', { name: 'Filter by combat support', exact: true }).selectOption(status);
-    await expect(book.locator('.spellbook-row')).not.toHaveCount(0);
-    expect(await book.locator('[data-spell-support]').evaluateAll(nodes => [...new Set(nodes.map(node => node.getAttribute('data-spell-support')))])).toEqual([status]);
-  }
+  await expect(book.locator('[data-spell-cast-summary]')).not.toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
-  await book.getByRole('combobox', { name: 'Filter by combat support', exact: true }).selectOption('ready');
   await book.locator('.spellbook-search').fill('Hold Person');
+  await expect(book.locator('[data-spell-cast-summary]')).toHaveText('WIS save · no dmg · 1 target (+1/lvl)');
   await book.locator('.spell-toggle').click();
-  await expect(book.getByLabel('Hold Person combat support')).toBeVisible();
   const bounds = await book.boundingBox();
   expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
   expect(bounds!.y).toBeGreaterThanOrEqual(0); expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(844);
@@ -134,8 +128,10 @@ test('Manual spells record casting and slots without fake healing, damage, or le
   const enemy = f.ready.tokens.find(t => t.kind === 'monster')!;
   await f.clickToken(pc.id); await f.clickToken(enemy.id, 'right');
   await page.locator('.floating-menu').getByRole('button', { name: /^Cast Conjure Animals/ }).click();
-  const area=page.getByRole('region',{name:'Place spell area'});await expect(area).toBeVisible();
-  await f.clickToken(enemy.id);await area.getByRole('button',{name:/Confirm area/}).click();
+  const area = page.getByRole('region', { name: 'Place spell area' });
+  await expect(area).toBeVisible();
+  await f.clickToken(enemy.id);
+  await area.getByRole('button', { name: /Confirm area/ }).click();
   await expect.poll(async () => (await f.snapshot()).characters.find(c => c.id === f.characterId)!.spellSlots.L3.used).toBe(1);
   const after = await f.snapshot();
   expect(after.tokens.length).toBe(f.ready.tokens.length);
@@ -149,17 +145,17 @@ test('Supported summons use real tokens and the selected Pact slot pool', async 
     spellSlots: { L1: { max: 3, used: 0 }, P2: { max: 2, used: 0 } },
   });
   const combat = page.locator('.compact-player-combat');
-  await combat.getByRole('button',{name:'Cast Mage Hand',exact:true}).click();
-  await page.getByRole('dialog',{name:'Cast Mage Hand',exact:true}).getByRole('button',{name:/^Cast Mage Hand · Cantrip/}).click();
+  await combat.getByRole('button', { name: 'Cast Mage Hand', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Cast Mage Hand', exact: true }).getByRole('button', { name: /^Cast Mage Hand · Cantrip/ }).click();
   await expect.poll(async () => (await f.snapshot()).monsters.some(m => m.name === 'Mage Hand')).toBe(true);
   const hand = (await f.snapshot()).monsters.find(m => m.name === 'Mage Hand')!;
   expect(hand.disposition).toBe('friendly');
   expect((await f.snapshot()).tokens.some(token => token.refId === hand.id)).toBe(true);
-  await combat.getByRole('button',{name:'Cast Find Familiar',exact:true}).click();
-  const familiar=page.getByRole('dialog',{name:'Cast Find Familiar',exact:true});
+  await combat.getByRole('button', { name: 'Cast Find Familiar', exact: true }).click();
+  const familiar = page.getByRole('dialog', { name: 'Cast Find Familiar', exact: true });
   await familiar.getByRole('combobox', { name: 'Find Familiar slot pool', exact: true }).selectOption('pact');
   await expect(familiar.getByRole('combobox', { name: 'Find Familiar cast level', exact: true })).toHaveValue('2');
-  await familiar.getByRole('button',{name:/^Cast Find Familiar · Pact Level 2 slot/}).click();
+  await familiar.getByRole('button', { name: /^Cast Find Familiar · Pact Level 2 slot/ }).click();
   await expect.poll(async () => (await f.snapshot()).characters.find(c => c.id === f.characterId)!.spellSlots.P2.used).toBe(1);
   const after = await f.snapshot();
   expect(after.characters.find(c => c.id === f.characterId)!.spellSlots.L1.used).toBe(0);
@@ -183,11 +179,11 @@ test('The browse picker tracks duplicate spell names separately for each learned
   await expect(book.getByRole('button', { name: /Added/ })).toBeDisabled();
 });
 
-test('A deliberate unsafe-spell roll override is labelled authored and retains its chosen mechanics', async ({ page, request }) => {
+test('A deliberate unsafe-spell roll override updates its cast summary and retains its chosen mechanics', async ({ page, request }) => {
   const f = await fixture(request, page, ['Aid', 'Shield'], { curHp: 8 });
   await f.openSheet();
   const entry = f.entry('Aid');
-  await expect(entry.locator('[data-spell-support]')).toHaveAttribute('data-spell-support', 'manual');
+  await expect(entry.locator('[data-spell-cast-summary]')).toHaveText('No roll · cast only');
   await entry.locator('.spell-toggle').click();
   // Intentionally author a homebrew healing variant, rather than executing the
   // catalogue's max-HP buff as ordinary healing silently.
@@ -205,8 +201,7 @@ test('A deliberate unsafe-spell roll override is labelled authored and retains i
   const edited = (await f.snapshot()).characters.find(c => c.id === f.characterId)!.sheetAbilities.find(a => a.name === 'Aid')!;
   expect(edited.executionProfile).toBe('manual');
   expect(edited.description).toBe(f.abilities.find(a => a.name === 'Aid')!.description);
-  await expect(entry.locator('[data-spell-support]')).toHaveAttribute('data-spell-support', 'partial');
-  await expect(entry.getByLabel('Aid combat support')).toContainText('Custom or explicitly authored');
+  await expect(entry.locator('[data-spell-cast-summary]')).toHaveText('Heal 1d4 · 1 ally');
   await page.getByRole('button', { name: 'Close character window', exact: true }).click();
   const combat = page.locator('.compact-player-combat');
   await expect(combat.getByRole('button', { name: /Cast manually.*Aid/ })).toHaveCount(0);

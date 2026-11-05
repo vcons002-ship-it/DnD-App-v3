@@ -26,7 +26,7 @@ import { RechargeChip } from './RechargeChip';
 import { isCanonicalHasteProfile, effectiveSheetAbility, isMultiTargetSpell, spellDamageTypeChoices } from '../../../shared/spellExecution';
 import { spellSlotOptions, selectSpellSlot, type SpellSlotPool } from '../../../shared/spellSlotPools';
 import { spellCombatSupport } from '../../../shared/spellSupport';
-import { SpellCombatSupportBadge } from './SpellCombatSupport';
+
 import { spellActionBlock } from '../../../shared/spellBuffs';
 
 const manualRiderNote = (ability: SheetAbility): string | undefined => {
@@ -216,7 +216,7 @@ export function AbilityButtons({
           <div key={a.id} className="combat-ability-row" style={damageTypes.length ? { flexWrap: 'wrap' } : undefined}>
             {choosing?null:btn}
 
-            <SpellCombatSupportBadge ability={a} />
+
             <RechargeChip ability={a} kind={kind} refId={caster.id} />
             {damageTypeSelect}
             {abilityKey(a)==='hex'&&<select aria-label="Hex ability checks" value={hexAbility} onChange={e=>setHexAbility(e.target.value)}>{['STR','DEX','CON','INT','WIS','CHA'].map(k=><option key={k}>{k}</option>)}</select>}
