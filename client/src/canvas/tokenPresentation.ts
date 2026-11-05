@@ -2,6 +2,7 @@ import type {StateSnapshot} from '../../../shared/types.js';
 import type {ExploredTerrain} from '../../../shared/exploration.js';
 import {createPlayerVision, type PlayerVision} from '../../../shared/playerVision.js';
 import {tokenMoveDuration, tokenMoveProgress} from './tokenMotion.js';
+import {facingAfterMove} from '../../../shared/tokenFacing.js';
 import type {LegacyPlayback} from '../../../shared/legacyMotion.js';
 import {legacyMotionIndex} from '../../../shared/legacyMotion.js';
 
@@ -73,6 +74,10 @@ export class TokenPresentation {
   }
 
   moving() {return [...this.moves.values()].some(m=>this.time<m.start+m.duration);}
+  facing = (id:string,fallback?:number):number|undefined => {
+    const move=this.moves.get(id);
+    return move&&this.time<move.start+move.duration?facingAfterMove(move.from.x,move.from.y,move.to.x,move.to.y,fallback):fallback;
+  };
   position = (id:string):Point|undefined => {
     const move=this.moves.get(id);if(!move)return undefined;
     const t=move.duration?tokenMoveProgress(this.time-move.start,move.duration):1;

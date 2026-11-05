@@ -214,8 +214,8 @@ function MapStageInner({
   const [failedMiniatures, setFailedMiniatures] = useState<ReadonlySet<string>>(new Set());
   const [miniaturesUnavailable, setMiniaturesUnavailable] = useState(false);
   const handleMiniatureUnavailable = useCallback(() => { setReadyMiniatures(new Set()); setMiniaturesUnavailable(true); }, []);
-  const handleTokenVisualMove = useCallback((token: Token, x: number, y: number, finished: boolean) => {
-    miniatureRef.current?.moveToken(token.id, x, y, finished, token.facing);
+  const handleTokenVisualMove = useCallback((token: Token, x: number, y: number, finished: boolean, facing?: number) => {
+    miniatureRef.current?.moveToken(token.id, x, y, finished, facing ?? token.facing);
     visionRef.current?.move(token.id,x,y);
   }, []);
   const [size, setSize] = useState(() => ({ w: Math.max(1, window.innerWidth), h: Math.max(1, window.innerHeight - 48) }));
@@ -908,7 +908,7 @@ function MapStageInner({
         if(!node.isDragging())node.position(p);
         node.opacity(opacity);
         if(changed)node.getLayer()?.batchDraw();
-        miniatureRef.current?.moveToken(token.id,p.x,p.y,!moving,token.facing);
+        if(!node.isDragging())miniatureRef.current?.moveToken(token.id,p.x,p.y,!moving,presentation.facing(token.id,token.facing));
       }
       visionRef.current?.frame(now);
       if(moving)frame=requestAnimationFrame(paint);

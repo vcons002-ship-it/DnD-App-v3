@@ -48,6 +48,7 @@ it.each([false,true])('animates doorway moves without exploring across closed wa
  const doorPlan=await prepareLegacyMotion('walker-door',beforeDoor,afterDoor,undefined,{membershipOnly});
  expect(doorPlan?.frames).toHaveLength(13);
  expect(doorPlan?.moves[throughDoor.id]).toEqual({from:{x:100,y:106},to:{x:300,y:106}});
+ expect(doorPlan?.frames[0].tokens?.find(t=>t.id===throughDoor.id)).toBeUndefined();
  // 2. Subsequent move starting within 1ft (6px < 10px radius) of a wall still records a route and animates.
  editMapWalls(openDoor.session.id,openDoor.map.id,{add:{id:'hall-wall',ax:250,ay:100,bx:500,by:100}});
  const beforeParallel=openDoor.snapshot(),parallelMove=moveToken(openDoor.token.id,450,106)!;
@@ -110,7 +111,7 @@ it('authorizes transient midpoint creatures, redacts stats and still excludes ma
 it('presentation shares the server motion clock, redirects smoothly mid-walk, and snaps on cancellation/reduced motion',()=>{
  const f=fixture(),a=f.snapshot(),b={...a,tokens:a.tokens.map(t=>({...t,x:t.x+200}))},p=new TokenPresentation();p.sync(a,10,0,true);
  const token=b.tokens[0],playback={id:'move',start:100,durationMs:400,moves:{[token.id]:{from:{x:100,y:100},to:{x:300,y:100}}}};
- p.sync(b,10,100,false,playback);expect(p.position(token.id)?.x).toBe(100);p.advance(300);expect(p.position(token.id)?.x).toBe(200);
+ p.sync(b,10,100,false,playback);expect(p.position(token.id)?.x).toBe(100);expect(p.facing(token.id,0)).toBeCloseTo(Math.PI/2,5);p.advance(300);expect(p.position(token.id)?.x).toBe(200);
  // Starting a second playback mid-walk redirects from the current position (200) instead of jumping to 300.
  const c={...b,tokens:b.tokens.map(t=>({...t,x:500}))},playback2={id:'move-2',start:300,durationMs:400,moves:{[token.id]:{from:{x:300,y:100},to:{x:500,y:100}}}};
  p.sync(c,10,300,false,playback2);expect(p.position(token.id)?.x).toBe(200);p.advance(500);expect(p.position(token.id)?.x).toBe(350);
