@@ -5,6 +5,7 @@ import {useDiceRendering} from '../lib/useDiceRendering';
 import {runHardwareBenchmark,type HardwareBenchmarkResult} from '../lib/hardwareBenchmark';
 import {ServerRenderingControl} from './ServerRenderingControl';
 import {DiceRenderingControl} from './DiceRenderingControl';
+import {setTokenAppearance} from './TokenAppearanceControl';
 
 export function HardwareBenchmarkPanel({compact=false,onResult,onApplyAndStart}:{compact?:boolean;onResult?:(r:HardwareBenchmarkResult)=>void;onApplyAndStart?:(r:HardwareBenchmarkResult['recommendation'])=>void}){
  const {setQuality}=useEnvironmentQuality();
@@ -28,6 +29,7 @@ export function HardwareBenchmarkPanel({compact=false,onResult,onApplyAndStart}:
    setQuality(rec.quality);
    setServerRendering(rec.serverRendering);
    setDicePreference(rec.dicePreference);
+   setTokenAppearance(rec.use3dTokens,rec.use3dMonsters);
  };
  const rec=benchmarkResult?.recommendation;
  const m=benchmarkResult?.measurements;
@@ -56,10 +58,10 @@ export function HardwareBenchmarkPanel({compact=false,onResult,onApplyAndStart}:
      </div>
      <div className="rendering-benchmark-actions">
        {onApplyAndStart&&<button type="button" className="btn big" onClick={()=>onApplyAndStart(rec)}>
-         Apply &amp; start ({rec.legacy?'Legacy mode':`3D ${rec.quality==='off'?'Effects off':rec.quality} mode`}, Assist {rec.serverRendering?'On':'Off'})
+         Apply &amp; start ({rec.legacy?'Legacy mode':`3D ${rec.quality==='off'?'Effects off':rec.quality} mode`}, {rec.use3dTokens&&rec.use3dMonsters?'3D tokens':rec.use3dTokens?'3D players / 2D monsters':'2D tokens'}, Assist {rec.serverRendering?'On':'Off'})
        </button>}
        <button type="button" className={compact?'btn tiny':'btn'} onClick={()=>applyRecommendation(rec)}>
-         {onApplyAndStart?'Apply to controls':`Apply recommended (${rec.legacy?'Legacy':`3D ${rec.quality==='off'?'Effects off':rec.quality}`}, Assist ${rec.serverRendering?'On':'Off'})`}
+         {onApplyAndStart?'Apply to controls':`Apply recommended (${rec.legacy?'Legacy':`3D ${rec.quality==='off'?'Effects off':rec.quality}`}, ${rec.use3dTokens&&rec.use3dMonsters?'3D tokens':rec.use3dTokens?'3D players / 2D monsters':'2D tokens'}, Assist ${rec.serverRendering?'On':'Off'})`}
        </button>
      </div>
    </div>}
@@ -92,6 +94,7 @@ export function RenderingStartupGate({children}:{children:ReactNode}){
    setQuality(rec.quality);
    setServerRendering(rec.serverRendering);
    setDicePreference(rec.dicePreference);
+   setTokenAppearance(rec.use3dTokens,rec.use3dMonsters);
    try{sessionStorage.setItem(RENDERING_STARTUP_KEY,'1');}catch{}
    setReady(true);
  };

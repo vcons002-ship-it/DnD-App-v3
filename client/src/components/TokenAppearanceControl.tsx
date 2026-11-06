@@ -22,6 +22,15 @@ function readMonster3d(monsterKey: string, tokenKey: string): boolean {
   }
 }
 
+export function setTokenAppearance(use3dTokens: boolean, use3dMonsters: boolean) {
+  const playerId = getPlayerId();
+  safeSetItem(`dnd.tokenView:${playerId}`, use3dTokens ? '3d' : '2d');
+  safeSetItem(`dnd.monsterTokenView:${playerId}`, use3dMonsters ? '3d' : '2d');
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(TOKEN_APPEARANCE_EVENT));
+  }
+}
+
 export function useTokenAppearance() {
   const { budget } = useEnvironmentQuality();
   const legacy = budget.legacy;
