@@ -22,7 +22,9 @@ function fixture(){
 }
 it('uploads one mesh per frame without painting pixels or altering the live view',async()=>{
   const f=fixture(),frame=vi.fn(cb=>{cb(0);return 1});vi.stubGlobal('requestAnimationFrame',frame);
-  await warmMiniatureGpuBuffers(f.renderer as any,f.root,f.camera,f.scene,()=>false);
+  const onFrame=vi.fn(()=>{expect(f.root.parent).toBeNull();expect(f.scissor.toArray()).toEqual([10,20,300,200]);});
+  await warmMiniatureGpuBuffers(f.renderer as any,f.root,f.camera,f.scene,()=>false,onFrame);
+  expect(onFrame).toHaveBeenCalledTimes(2);
   expect(frame).toHaveBeenCalledTimes(2);expect(f.renderer.render).toHaveBeenCalledTimes(2);
   expect(f.root.parent).toBeNull();expect(f.root.visible).toBe(false);
   expect(f.camera.layers.mask).toBe(1);expect(f.light.layers.mask).toBe(1);
