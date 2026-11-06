@@ -339,14 +339,15 @@ export function ToolbarPerfStats() {
       title={tooltip}
       style={{
         display: 'inline-flex',
-        alignItems: 'center',
-        gap: '7px',
-        padding: '3px 8px',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: '1px',
+        padding: '1px 5px',
         borderRadius: '4px',
         background: 'rgba(10, 13, 18, 0.78)',
         border: '1px solid rgba(140, 116, 77, 0.45)',
-        fontSize: '11px',
-        lineHeight: 1.2,
+        fontSize: '9.5px',
+        lineHeight: 1.05,
         fontVariantNumeric: 'tabular-nums',
         whiteSpace: 'nowrap',
         color: '#d6cfc2',
@@ -354,14 +355,22 @@ export function ToolbarPerfStats() {
         flexShrink: 0,
       }}
     >
-      <span style={{ color: '#dfc490', fontWeight: 700 }}>{APP_BUILD_INFO.version}</span>
-      <span style={{ color: fpsColor, fontWeight: 600 }}>{stats.fps} FPS</span>
-      <span style={{ color: pingColor }}>
-        {stats.pingMs !== null ? `${stats.pingMs}ms` : '—'}
-      </span>
-      <span className="toolbar-perf-net" style={{ color: '#a8b5c4' }}>
-        ↓{formatRate(stats.rxBps)} ↑{formatRate(stats.txBps)} KB/s
-      </span>
+      <div
+        className="toolbar-perf-row"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}
+      >
+        <span style={{ color: '#dfc490', fontWeight: 700 }}>{APP_BUILD_INFO.version}</span>
+        <span style={{ color: fpsColor, fontWeight: 600 }}>{stats.fps} FPS</span>
+        <span style={{ color: pingColor }}>
+          {stats.pingMs !== null ? `${stats.pingMs}ms` : '—'}
+        </span>
+      </div>
+      <div
+        className="toolbar-perf-row toolbar-perf-net"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', color: '#a8b5c4' }}
+      >
+        <span>↓{formatRate(stats.rxBps)} ↑{formatRate(stats.txBps)} KB/s</span>
+      </div>
     </div>
   );
 }
