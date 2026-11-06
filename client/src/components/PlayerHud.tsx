@@ -34,7 +34,7 @@ type WindowTab =
   | 'Party';
 export function orbArt(character: Character): GuardianArt | null {
   const race = character.race.toLowerCase().replace(/[\s-]/g, '');
-  const cls = [character.className, ...(character.classes?.map((c) => c.className) ?? [])].join(' ').trim().toLowerCase();
+  const cls = [character.className, multiclassClassSummary(character) ?? ''].join(' ').trim().toLowerCase();
   if (race.includes('orc') && /\bfighter\b/.test(cls)) return 'half-orc-fighter';
   if (race.includes('tiefling') && /\bsorcerer\b/.test(cls)) return 'tiefling-sorcerer';
   if (race.includes('elf') && /\branger\b/.test(cls)) return 'half-elf-ranger';
