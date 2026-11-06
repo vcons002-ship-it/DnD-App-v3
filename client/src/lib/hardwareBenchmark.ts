@@ -27,6 +27,8 @@ export interface HardwareBenchmarkMeasurements {
 export interface HardwareBenchmarkRecommendation {
   legacy: boolean;
   quality: EnvironmentQuality;
+  use3dTokens: boolean;
+  use3dMonsters: boolean;
   serverRendering: boolean;
   dicePreference: DiceRenderingPreference;
   summary: string;
@@ -353,36 +355,52 @@ export function decipherBenchmarkRecommendation(m: HardwareBenchmarkMeasurements
 
   // 1. Determine Graphics Mode & Quality Tier
   let quality: EnvironmentQuality;
+  let use3dTokens = false;
+  let use3dMonsters = false;
   let dicePreference: DiceRenderingPreference;
 
-  if (!m.webglAvailable || isSoftwareGpu || m.gpuFrameMs === null || m.gpuFrameMs > 55 || m.clientCpuGeometryMs > 80) {
+  if (!m.webglAvailable || isSoftwareGpu || m.gpuFrameMs === null || m.gpuFrameMs > 68 || m.clientCpuGeometryMs > 80) {
     quality = 'legacy';
-    dicePreference = '2d';
+    dicePreference = !m.webglAvailable || isSoftwareGpu ? '2d' : '3d';
     if (!m.webglAvailable || isSoftwareGpu) {
       reasons.push(`WebGL hardware acceleration is unavailable (${m.gpuRenderer}); Legacy mode avoids 3D shaders and WebGL context overhead.`);
-    } else if (m.gpuFrameMs !== null && m.gpuFrameMs > 55) {
+    } else if (m.gpuFrameMs !== null && m.gpuFrameMs > 68) {
       reasons.push(`3D shader/shadow pass took ${m.gpuFrameMs} ms/frame (~${Math.round(1000 / m.gpuFrameMs)} FPS) on ${m.gpuRenderer}; Legacy mode keeps map navigation responsive.`);
     } else {
       reasons.push(`Single-thread CPU raycasting took ${m.clientCpuGeometryMs} ms; Legacy mode throttles background updates to keep the UI responsive.`);
     }
   } else if (m.gpuFrameMs <= 16.7 && m.clientCpuGeometryMs <= 25 && !isIntegratedGpu && m.cpuThreads >= 4) {
     quality = 'high';
+    use3dTokens = true;
+    use3dMonsters = true;
     dicePreference = '3d';
     reasons.push(`Fast discrete GPU (${m.gpuRenderer}, ${m.gpuFrameMs} ms/frame in 12-light shadow stress test) and ${m.cpuThreads} CPU threads easily sustain High 3D quality.`);
   } else if (m.gpuFrameMs <= 28 && m.clientCpuGeometryMs <= 40) {
     quality = 'balanced';
+    use3dTokens = true;
+    use3dMonsters = true;
     dicePreference = '3d';
     reasons.push(`GPU completed the 3D lighting & shadow stress pass in ${m.gpuFrameMs} ms/frame on ${m.gpuRenderer}; Balanced 3D mode keeps smooth frame pacing with reduced-polygon distant figures.`);
-  } else if (m.gpuFrameMs <= 42) {
+  } else if (m.gpuFrameMs <= 50) {
     quality = 'low';
+
+    use3dTokens = true;
+    use3dMonsters = true;
     dicePreference = '3d';
-    reasons.push(`GPU frame time (${m.gpuFrameMs} ms/frame on ${m.gpuRenderer}) suits Low 3D quality (floor shadows, 1x pixel ratio, and coarse LOD miniatures).`);
+    reasons.push(`GPU frame time (${m.gpuFrameMs} ms/frame, ~${Math.round(1000 / m.gpuFrameMs)} FPS on ${m.gpuRenderer}) meets the 20–25+ FPS target for full 3D Players & Monsters on Low 3D quality.`);
+  } else if (m.gpuFrameMs <= 58) {
+    quality = 'low';
+
+    use3dTokens = true;
+    use3dMonsters = false;
+    dicePreference = !m.webglAvailable || isSoftwareGpu ? '2d' : '3d';
+    reasons.push(`GPU frame time (${m.gpuFrameMs} ms/frame, ~${Math.round(1000 / m.gpuFrameMs)} FPS on ${m.gpuRenderer}) falls below the 20–25 FPS full-3D target; rendering 3D Players + 2D Monsters on Low quality preserves hero miniatures without crowd slowdowns.`);
   } else {
     quality = 'off';
-    dicePreference = '2d';
-    reasons.push(`GPU supports WebGL (${m.gpuFrameMs} ms/frame on ${m.gpuRenderer}) for hardware-composited sight/fog, but disabling extra environment effects and using 2D dice avoids frame drops.`);
+    dicePreference = !m.webglAvailable || isSoftwareGpu ? '2d' : '3d';
+    reasons.push(`GPU supports WebGL (${m.gpuFrameMs} ms/frame, ~${Math.round(1000 / m.gpuFrameMs)} FPS on ${m.gpuRenderer}) for hardware-composited sight/fog and 3D dice, but falls below the 20–25 FPS target for 3D miniatures; 2D tokens keep gameplay smooth.`);
   }
-
+  if (quality === 'off' || quality === 'legacy') { use3dTokens = false; use3dMonsters = false; }
   let legacy = quality === 'legacy';
   const serverAvailable = m.serverGeometryMs !== null && m.pingMs !== null;
   const legacyAssistOffMs = Number((m.clientCpuGeometryMs * 2.4 + m.clientCanvas2dMs).toFixed(1));
@@ -394,7 +412,7 @@ export function decipherBenchmarkRecommendation(m: HardwareBenchmarkMeasurements
   // 2. Determine Server Assist (Server Managed Rendering)
   let serverRendering = true; let crossCompared = false;
   // Cross-compare 2D WebGL (Effects off) vs Legacy 2D Canvas across Server Assist On/Off when in the 2D tier.
-  if ((quality === 'off' || (quality === 'legacy' && m.webglAvailable && !isSoftwareGpu && m.gpuFrameMs !== null && m.gpuFrameMs <= 55)) && standard2dAssistOffMs !== null) {
+  if ((quality === 'off' || (quality === 'legacy' && m.webglAvailable && !isSoftwareGpu && m.gpuFrameMs !== null && m.gpuFrameMs <= 68)) && standard2dAssistOffMs !== null) {
     const candidates: {q: 'off' | 'legacy'; assist: boolean; cost: number; label: string}[] = [
       {q: 'legacy', assist: false, cost: legacyAssistOffMs, label: `Legacy Assist Off (${legacyAssistOffMs} ms)`},
       {q: 'off', assist: false, cost: standard2dAssistOffMs, label: `2D WebGL Assist Off (${standard2dAssistOffMs} ms)`},
@@ -457,6 +475,7 @@ export function decipherBenchmarkRecommendation(m: HardwareBenchmarkMeasurements
   }
 
   const modeLabel = legacy ? 'Legacy mode' : `3D / standard mode (${quality === 'off' ? 'Effects off' : quality[0].toUpperCase() + quality.slice(1)} quality)`;
+  const tokensLabel = use3dTokens && use3dMonsters ? '3D tokens' : use3dTokens ? '3D players / 2D monsters' : '2D tokens';
   const assistLabel = `Server managed rendering: ${serverRendering ? 'On' : 'Off'}`;
   const diceLabel = `${dicePreference.toUpperCase()} dice`;
 
@@ -465,7 +484,9 @@ export function decipherBenchmarkRecommendation(m: HardwareBenchmarkMeasurements
     quality,
     serverRendering,
     dicePreference,
-    summary: `${modeLabel} · ${assistLabel} · ${diceLabel}`,
+    use3dTokens,
+    use3dMonsters,
+    summary: `${modeLabel} · ${tokensLabel} · ${assistLabel} · ${diceLabel}`,
     reasons,
     comboEstimates,
   };
