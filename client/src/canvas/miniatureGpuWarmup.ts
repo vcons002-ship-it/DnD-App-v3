@@ -3,7 +3,7 @@ import {Light,Mesh,Vector4,type Camera,type Group,type Scene,type WebGLRenderer}
 /** compileAsync links shaders but does not upload vertex/index buffers. Submit
  * one mesh per browser frame with zero pixel coverage, on the real output
  * target/lighting. The old figure keeps rendering while its replacement warms. */
-export async function warmMiniatureGpuBuffers(renderer:WebGLRenderer,root:Group,camera:Camera,scene:Scene,cancelled:()=>boolean){
+export async function warmMiniatureGpuBuffers(renderer:WebGLRenderer,root:Group,camera:Camera,scene:Scene,cancelled:()=>boolean,onFrame?:()=>void){
   const meshes:Mesh[]=[];root.traverse(node=>{if(node instanceof Mesh&&node.visible)meshes.push(node)});
   for(const mesh of meshes){
     await new Promise<void>(resolve=>(globalThis as unknown as {requestAnimationFrame:(callback:()=>void)=>number}).requestAnimationFrame(()=>resolve()));
@@ -31,5 +31,6 @@ export async function warmMiniatureGpuBuffers(renderer:WebGLRenderer,root:Group,
       renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);
       for(const{light,mask}of lights)light.layers.mask=mask;
     }
+    onFrame?.();
   }
 }

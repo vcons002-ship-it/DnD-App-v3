@@ -5,7 +5,7 @@ import {createMiniatureBatchLighting,createMiniatureSharedLighting} from './mini
 /** Compile common body/pewter shaders before an encounter is revealed. These
  * probes contain no creature art or encounter information and are never drawn.
  * Keep their materials alive so Three retains the linked programs for reuse. */
-export function createMiniatureShaderWarmup(renderer:WebGLRenderer, torchLighting:ReturnType<typeof createMiniatureTorchLighting>){
+export function createMiniatureShaderWarmup(renderer:WebGLRenderer, torchLighting:ReturnType<typeof createMiniatureTorchLighting>, onWarm?:()=>void){
   const root=new Group(),geometry=new PlaneGeometry(1,1);
   const batchLighting=createMiniatureBatchLighting(1);
   const sharedLighting=createMiniatureSharedLighting(torchLighting.uniforms);
@@ -56,6 +56,7 @@ export function createMiniatureShaderWarmup(renderer:WebGLRenderer, torchLightin
           renderer.shadowMap.autoUpdate=shadowAuto;renderer.shadowMap.needsUpdate=shadowDirty;
           renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);
           for(const {light,mask} of lights)light.layers.mask=mask;
+          onWarm?.();
         }
       }).catch(error=>{
         if(!disposed){lastKey='';console.warn('Miniature shader warmup unavailable',error);}
