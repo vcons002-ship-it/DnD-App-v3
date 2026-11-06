@@ -34,10 +34,10 @@ type WindowTab =
   | 'Party';
 export function orbArt(character: Character): GuardianArt | null {
   const race = character.race.toLowerCase().replace(/[\s-]/g, '');
-  const cls = character.className.trim().toLowerCase();
-  if (race === 'halforc' && cls === 'fighter') return 'half-orc-fighter';
-  if (race === 'tiefling' && cls === 'sorcerer') return 'tiefling-sorcerer';
-  if (race === 'halfelf' && cls === 'ranger') return 'half-elf-ranger';
+  const cls = [character.className, ...(character.classes?.map((c) => c.className) ?? [])].join(' ').trim().toLowerCase();
+  if (race.includes('orc') && /\bfighter\b/.test(cls)) return 'half-orc-fighter';
+  if (race.includes('tiefling') && /\bsorcerer\b/.test(cls)) return 'tiefling-sorcerer';
+  if (race.includes('elf') && /\branger\b/.test(cls)) return 'half-elf-ranger';
   return null;
 }
 
