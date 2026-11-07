@@ -17,7 +17,7 @@ import {craftHeroToken} from './assets/heroTokens.js';
 import {heroArtBrief} from '../../shared/assetProduction.js';
 import {validCharacterHeight} from '../../shared/characterHeight.js';
 import {SpellAreaPreviewController} from './spellAreaPreview.js';
-import {setRollPending,setRollSmite} from './sessions.js';
+import {setRollPending,setRollSmite,releaseCharacterClaim} from './sessions.js';
 import {repeatSpell,summonSpiritualWeapon,spiritualWeaponPlacementError,spiritualWeaponOwner,moveSpiritualWeapon} from './linkedSpells.js';
 import {castDispelMagic,dispelTargetError} from './dispelMagic.js';
 import {advancedSpell} from '../../shared/advancedSpells.js';
@@ -412,13 +412,13 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
           // Resolve elapsed durations before this action reads AC, movement or
           // spell conditions. Within a live roll these writes are staged and
           // replayed with the rest of the command, never published early.
-          if(sid && !['cursor:move','cursor:hide','chat:typing','token:drag','token:preview','state:resync','client:rendering','client:serverRendering','client:serverRendering'].includes(event) && expireTimedSpellEffects(sid))
+          if(sid && !['cursor:move','cursor:hide','chat:typing','token:drag','token:preview','state:resync','client:rendering','client:serverRendering','character:claim','character:release'].includes(event) && expireTimedSpellEffects(sid))
             afterRollCommit(()=>broadcastSnapshots(io,sid));
           return handler(...args);
         };
         const moving=event==='token:move'?getToken((args[0] as any)?.tokenId):undefined;
         const isRoll=!!(moving&&sid&&spikeConditions(sid).some(c=>c.combatEffect?.spikeArea?.mapId===moving.mapId))||liveEvents.has(event)||(event==='chat:send'&&!(args[0] as any)?.whisperTo&&!!parseRollCommand(String((args[0] as any)?.text??'')));
-        if(options.livePhysics!==false && sid && (isRoll||rollInProgress(sid)) && !['join','disconnect','cursor:move','cursor:hide','chat:typing','token:drag','token:preview','state:resync','client:rendering','client:serverRendering','client:serverRendering'].includes(event)){
+        if(options.livePhysics!==false && sid && (isRoll||rollInProgress(sid)) && !['join','disconnect','cursor:move','cursor:hide','chat:typing','token:drag','token:preview','state:resync','client:rendering','client:serverRendering','character:claim','character:release'].includes(event)){
           enqueueRoll(sid,async()=>{
             if(!socket.connected||commandConnection()?.sessionId!==sid){if(areaCommand)areaPreview.clear();return;}
             if(!isRoll){await runHandler();return;}
@@ -1651,11 +1651,11 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
     on('character:release', () => {
       const sid = sessionId();
       if (!sid) return;
-      releaseClaims(socket.id);
+      releaseCharacterClaim(sid, socket.id, commandConnection()?.playerId);
       // An explicit "change character" gives it up for good — drop the
       // last-holder record so they don't get auto-reclaimed back onto it.
       const pid = commandConnection()?.playerId;
-      if (pid) clearOwnershipElsewhere(sid, pid);
+      for (const [oldSock, p] of pendingReleases) { if (oldSock === socket.id || (pid && p.playerId === pid)) { clearTimeout(p.timer); pendingReleases.delete(oldSock); } }
       afterChange();
     });
 

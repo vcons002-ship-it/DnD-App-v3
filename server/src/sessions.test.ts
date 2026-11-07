@@ -38,6 +38,7 @@ import {
   clearOwnershipElsewhere,
   getCharacter,
   setCharacterOwner,
+  releaseCharacterClaim,
 } from './sessions.js';
 
 describe('custom session codes', () => {
@@ -314,6 +315,30 @@ describe('character ownership (last-holder, for reconnect priority)', () => {
     // Omitting the exception clears all of the player's ownership (release).
     clearOwnershipElsewhere(s.id, 'player-A');
     expect(getCharacter(b.id)!.ownerId).toBeNull();
+  });
+
+  it('releaseCharacterClaim frees both characters so two players can swap when all characters are chosen', () => {
+    const s = createSession('OwnSwap');
+    const a = createCharacter(s.id, { name: 'Hero A' });
+    const b = createCharacter(s.id, { name: 'Hero B' });
+    claimCharacter(a.id, 'sock-1', 'player-1');
+    claimCharacter(b.id, 'sock-2', 'player-2');
+
+    // Both players click "Change character" -> both characters are freed
+    releaseCharacterClaim(s.id, 'sock-1', 'player-1');
+    releaseCharacterClaim(s.id, 'sock-2', 'player-2');
+    expect(getCharacter(a.id)!.claimedBy).toBeNull();
+    expect(getCharacter(a.id)!.ownerId).toBeNull();
+    expect(getCharacter(b.id)!.claimedBy).toBeNull();
+    expect(getCharacter(b.id)!.ownerId).toBeNull();
+
+    // Now each player can select the other character
+    claimCharacter(b.id, 'sock-1', 'player-1');
+    claimCharacter(a.id, 'sock-2', 'player-2');
+    expect(getCharacter(b.id)!.claimedBy).toBe('sock-1');
+    expect(getCharacter(b.id)!.ownerId).toBe('player-1');
+    expect(getCharacter(a.id)!.claimedBy).toBe('sock-2');
+    expect(getCharacter(a.id)!.ownerId).toBe('player-2');
   });
 
   it('DM unlock clears the owner AND the live claim', () => {

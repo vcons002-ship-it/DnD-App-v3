@@ -1338,7 +1338,21 @@ export const useStore = create<Store>((set, get) => ({
   rulebookView: null,
   openRulebook: (page) => set({ rulebookView: { page } }),
   closeRulebook: () => set({ rulebookView: null }),
-  releaseCharacter: () => get().socket?.emit('character:release'),
+  releaseCharacter: () => {
+    const { socket, snapshot } = get();
+    const sockId = socket?.id;
+    if (snapshot && sockId) {
+      set({
+        snapshot: {
+          ...snapshot,
+          characters: snapshot.characters.map((c) =>
+            c.claimedBy === sockId ? { ...c, claimedBy: null, ownerId: null } : c,
+          ),
+        },
+      });
+    }
+    socket?.emit('character:release');
+  },
   setResource: (payload) => get().socket?.emit('resource:set', payload),
   setItem: (characterId, item) =>
     get().socket?.emit('item:set', { characterId, item }),
