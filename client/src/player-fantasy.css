@@ -836,6 +836,11 @@
   border-bottom: 1px solid #6c5a3a;
   background: radial-gradient(ellipse at 15% 0, #5b483430, transparent 70%);
 }
+.player-fantasy .character-tab-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
 .player-fantasy .character-window-head h2 {
   font-size: 30px;
   margin: 3px 0;

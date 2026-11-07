@@ -3094,6 +3094,21 @@ export function setCharacterOwner(characterId: string, ownerId: string | null): 
   }
 }
 
+/** Explicit "change character" release: frees any character held by `socketId`
+ *  and clears both its live claim and durable `owner_player_id` so the player
+ *  is not auto-reclaimed back onto it and others can immediately pick it. */
+export function releaseCharacterClaim(
+  sessionId: string,
+  socketId: string,
+  playerId?: string | null,
+): void {
+  db.prepare(
+    'UPDATE characters SET claimed_by = NULL, owner_player_id = NULL WHERE session_id = ? AND claimed_by = ?',
+  ).run(sessionId, socketId);
+  releaseClaims(socketId);
+  if (playerId) clearOwnershipElsewhere(sessionId, playerId);
+}
+
 export function releaseClaims(socketId: string): void {
   db.prepare('UPDATE characters SET claimed_by = NULL WHERE claimed_by = ?').run(
     socketId,

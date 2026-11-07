@@ -2,9 +2,9 @@ import { MarkTransferPrompt } from '../components/MarkTransferPrompt';
 import { MapLoadingBar } from '../components/MapLoadingBar';
 import { ChromaticOrbPrompt } from '../components/ChromaticOrbPrompt';
 import { CombatMoments } from '../components/CombatMoments';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { getPlayerId, useStore } from '../state/socket';
+import { useStore } from '../state/socket';
 import { MapStage } from '../canvas/MapStage';
 import { PlayerPanel } from '../components/PlayerPanel';
 import { SelectedTokenPanel } from '../components/SelectedTokenPanel';
@@ -36,6 +36,7 @@ export function PlayerView() {
   const { selectedIds, setSelectedIds, handleSelect, handleMove, primaryId } =
     useSelection(snapshot);
   const [claimedId, setClaimedId] = useState<string | null>(null);
+  const releasingRef = useRef(false);
   const [placing, setPlacing] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const compact=useCompactViewport();
@@ -60,7 +61,26 @@ export function PlayerView() {
   const mySocketId = useStore((s) => s.socket?.id);
   const claimKey = snapshot ? `claimedChar:${snapshot.sessionCode}` : null;
   useEffect(() => {
-    if (!snapshot || !claimKey || claimedId) return;
+    if (!snapshot || !claimKey) return;
+    const serverClaimed = mySocketId
+      ? snapshot.characters.find((x) => x.claimedBy === mySocketId)
+      : undefined;
+    if (releasingRef.current) {
+      if (!serverClaimed) releasingRef.current = false;
+      return;
+    }
+    if (claimedId) {
+      const current = snapshot.characters.find((x) => x.id === claimedId);
+      if (current && current.claimedBy && current.claimedBy !== mySocketId) {
+        setClaimedId(null);
+      }
+      return;
+    }
+    if (serverClaimed) {
+      setClaimedId(serverClaimed.id);
+      localStorage.setItem(claimKey, serverClaimed.id);
+      return;
+    }
     const stored = localStorage.getItem(claimKey);
     if (!stored) return;
     const c = snapshot.characters.find((x) => x.id === stored);
@@ -71,14 +91,14 @@ export function PlayerView() {
     // Sync our local selection back after a reload/reconnect: the server has
     // usually already handed the character back (claimedBy === our socket); also
     // re-grab it if it's simply free. Never snatch one a live player now holds.
-    const heldByOther = !!c.claimedBy && c.claimedBy !== mySocketId;
-    const mineByOwner = !!c.ownerId && c.ownerId === getPlayerId();
-    if (!heldByOther || mineByOwner) {
+    // Check if another active socket holds this character.
+    // Check if another active socket holds this character.
+    if (!(!!c.claimedBy && c.claimedBy !== mySocketId)) {
       setClaimedId(stored);
       if (c.claimedBy !== mySocketId) claimCharacter(stored);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot, claimKey, claimedId]);
+  }, [snapshot, claimKey, claimedId, mySocketId]);
 
   // Players can place their own claimed character once; clear when it's down.
   const alreadyPlaced =
@@ -99,6 +119,7 @@ export function PlayerView() {
   );
   const placeOwnToken=useStableCallback(()=>setPlacing(p=>!p));
   const release=useStableCallback(()=>{
+    releasingRef.current = true;
     setClaimedId(null);releaseCharacter();if(claimKey)localStorage.removeItem(claimKey);
   });
 
@@ -140,6 +161,7 @@ export function PlayerView() {
               placing={placing}
               isPlaced={alreadyPlaced}
               onClaim={(id) => {
+                releasingRef.current = false;
                 setClaimedId(id);
                 claimCharacter(id);
                 if (claimKey) localStorage.setItem(claimKey, id);

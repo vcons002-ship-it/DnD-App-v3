@@ -1,5 +1,5 @@
 import type { StateSnapshot } from '../../../shared/types';
-import { getPlayerId, useStore } from '../state/socket';
+import { useStore } from '../state/socket';
 import { ConditionPicker } from './ConditionPicker';
 import { NewCharacterForm } from './NewCharacterForm';
 import { LibraryCharacterPicker } from './LibraryCharacterPicker';
@@ -26,7 +26,11 @@ export function PlayerPanel({
   onPlaceToken,
 }: Props) {
   const applyDamage = useStore((s) => s.applyDamage);
-  const mine = snapshot.characters.find((c) => c.id === claimedId) ?? null;
+  const mySocketId = useStore((s) => s.socket?.id);
+  const mine =
+    snapshot.characters.find(
+      (c) => c.id === claimedId && c.claimedBy === mySocketId,
+    ) ?? null;
 
   return (
     <div className="panel">
@@ -38,8 +42,8 @@ export function PlayerPanel({
             // Taken only while someone is actively playing it. The last holder
             // (`ownerId`) can still reclaim during their disconnect grace; for
             // anyone else a claimed character is off-limits until it frees up.
-            const mineByOwner = !!c.ownerId && c.ownerId === getPlayerId();
-            const taken = !!c.claimedBy && !mineByOwner;
+            const taken = !!c.claimedBy && c.claimedBy !== mySocketId;
+            // Active claims from other sockets show as taken until released.
             return (
               <button
                 key={c.id}

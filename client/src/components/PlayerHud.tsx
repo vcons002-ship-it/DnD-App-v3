@@ -118,6 +118,13 @@ function CharacterWindow({
         className={`character-window-content tab-${tab.split(' ')[0].toLowerCase()}`}
       >
         {tab === 'Character' && (
+          <div className="character-tab-actions">
+            <button type="button" className="btn" onClick={onRelease}>
+              Change my character
+            </button>
+          </div>
+        )}
+        {tab === 'Character' && (
           <CharacterSheet character={character} editable abilitiesElsewhere
             miniatureToken={snapshot.tokens.find(t => t.kind === 'pc' && t.refId === character.id) ?? null}
             resourceManagementControl={<PlayerResourceRowEditor character={character} />}
