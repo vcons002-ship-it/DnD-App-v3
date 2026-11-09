@@ -1,5 +1,8 @@
+import { useEffect, useRef } from 'react';
+import type Konva from 'konva';
 import { Circle, Group, Line, Rect, Text } from 'react-konva';
 import { areaOrigin, areaPolygon, type SpellArea, type SpellAreaPlacement } from '../../../shared/spellAreas';
+import { useMapAnimation } from '../lib/useMapAnimation';
 
 export function SpellAreaShapes({
   spec,
@@ -89,7 +92,7 @@ function sampleQuadraticBezier(
   cy: number,
   ex: number,
   ey: number,
-  steps = 14,
+  steps = 16,
 ): number[] {
   const pts: number[] = [];
   for (let i = 0; i <= steps; i++) {
@@ -98,6 +101,23 @@ function sampleQuadraticBezier(
     pts.push(inv * inv * sx + 2 * inv * t * cx + t * t * ex, inv * inv * sy + 2 * inv * t * cy + t * t * ey);
   }
   return pts;
+}
+
+function evalQuadraticBezier(
+  sx: number,
+  sy: number,
+  cx: number,
+  cy: number,
+  ex: number,
+  ey: number,
+  t: number,
+): { x: number; y: number; angleDeg: number } {
+  const inv = 1 - t;
+  const x = inv * inv * sx + 2 * inv * t * cx + t * t * ex;
+  const y = inv * inv * sy + 2 * inv * t * cy + t * t * ey;
+  const tx = 2 * inv * (cx - sx) + 2 * t * (ex - cx);
+  const ty = 2 * inv * (cy - sy) + 2 * t * (ey - cy);
+  return { x, y, angleDeg: (Math.atan2(ty, tx) * 180) / Math.PI };
 }
 
 export function SpellRayTargetShapes({
@@ -117,21 +137,67 @@ export function SpellRayTargetShapes({
   damageType?: string;
   spellName?: string;
 }) {
+  const groupRef = useRef<Konva.Group>(null);
+  const { enabled: animateEnabled } = useMapAnimation();
+
   const lowerName = (spellName ?? '').trim().toLowerCase();
   const lowerType = (damageType ?? '').trim().toLowerCase();
   const palette =
     lowerType === 'fire' || lowerName.includes('scorching')
-      ? { glow: '#ff6422', core: '#ffe299', bg: '#2b1006eb', border: '#ff8a47' }
+      ? { glow: '#ff6422', core: '#ffe299', spark: '#fff6d6', bg: '#2b1006eb', border: '#ff8a47' }
       : lowerName.includes('eldritch')
-        ? { glow: '#35e0a1', core: '#d4fff0', bg: '#09261ceb', border: '#63f5be' }
+        ? { glow: '#35e0a1', core: '#d4fff0', spark: '#f2fffa', bg: '#09261ceb', border: '#63f5be' }
         : lowerType === 'force' || lowerName.includes('missile')
-          ? { glow: '#9b6bff', core: '#ede0ff', bg: '#1b0e36eb', border: '#b894ff' }
-          : { glow: '#5cb8ff', core: '#e3f4ff', bg: '#0c2036eb', border: '#82caff' };
+          ? { glow: '#b335ff', core: '#e8a1ff', spark: '#fff0ff', bg: '#1b0e36eb', border: '#d584ff' }
+          : { glow: '#5cb8ff', core: '#e3f4ff', spark: '#ffffff', bg: '#0c2036eb', border: '#82caff' };
+
+  useEffect(() => {
+    if (!animateEnabled || !targets.length) return;
+    let raf = 0;
+    const tick = (now: number) => {
+      const root = groupRef.current;
+      if (!root) return;
+      const sec = now / 1000;
+      const sparks = root.find('.ray-spark') as Konva.Line[];
+      for (let i = 0; i < sparks.length; i++) {
+        const spark = sparks[i];
+        const phase = Number(spark.getAttr('rayPhase') ?? 0);
+        spark.dashOffset(-((sec * 96 + phase * 32) / scale));
+      }
+      const rings = root.find('.ray-target-ring') as Konva.Circle[];
+      for (let i = 0; i < rings.length; i++) {
+        rings[i].dashOffset(-((sec * 18) / scale));
+      }
+      const travelers = root.find('.ray-travel-arrow') as Konva.Group[];
+      for (let i = 0; i < travelers.length; i++) {
+        const node = travelers[i];
+        const curve = node.getAttr('rayCurve') as
+          | { sx: number; sy: number; cx: number; cy: number; ex: number; ey: number; phase: number }
+          | undefined;
+        if (!curve) continue;
+        const cycle = (sec * 0.95 + curve.phase) % 1;
+        const t = 0.08 + cycle * 0.84;
+        const pos = evalQuadraticBezier(curve.sx, curve.sy, curve.cx, curve.cy, curve.ex, curve.ey, t);
+        const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.82 ? (1 - cycle) / 0.18 : 1;
+        node.position({ x: pos.x, y: pos.y });
+        node.rotation(pos.angleDeg);
+        node.opacity(Math.max(0, Math.min(1, fade * 0.95)));
+      }
+      root.getLayer()?.batchDraw();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [animateEnabled, targets, scale, caster.x, caster.y]);
 
   const casterRadius = (caster.widthFt * pxPerFoot) / 2;
+  const arrowLen = 9.5 / scale;
+  const arrowWing = 4.6 / scale;
+  const travelLen = 7.5 / scale;
+  const travelWing = 3.8 / scale;
 
   return (
-    <Group name="spell-ray-targets" listening={false}>
+    <Group ref={groupRef} name="spell-ray-targets" listening={false}>
       <Circle
         x={caster.x}
         y={caster.y}
@@ -141,7 +207,7 @@ export function SpellRayTargetShapes({
         strokeWidth={1.6 / scale}
         dash={[8 / scale, 6 / scale]}
       />
-      {targets.map(({ token, count, tag }) => {
+      {targets.map(({ token, count, tag }, targetIdx) => {
         const dx = token.x - caster.x;
         const dy = token.y - caster.y;
         const dist = Math.hypot(dx, dy) || 1;
@@ -151,7 +217,7 @@ export function SpellRayTargetShapes({
         const ny = ux;
         const targetRadius = (token.widthFt * pxPerFoot) / 2;
         const startOffset = Math.min(casterRadius * 0.55, dist * 0.22);
-        const endOffset = Math.min(targetRadius * 0.65, dist * 0.22);
+        const endOffset = Math.min(targetRadius * 0.68, dist * 0.22);
         const sx = caster.x + ux * startOffset;
         const sy = caster.y + uy * startOffset;
         const ex = token.x - ux * endOffset;
@@ -171,48 +237,91 @@ export function SpellRayTargetShapes({
               radius={targetRadius + 4 / scale}
               stroke={palette.glow}
               strokeWidth={2.6 / scale}
-              opacity={0.9}
+              opacity={0.88}
             />
             <Circle
+              name="ray-target-ring"
               x={token.x}
               y={token.y}
-              radius={targetRadius + 8 / scale}
+              radius={targetRadius + 8.5 / scale}
               stroke={palette.core}
-              strokeWidth={1.2 / scale}
-              dash={[6 / scale, 4 / scale]}
-              opacity={0.75}
+              strokeWidth={2 / scale}
+              dash={[14 / scale, 6 / scale]}
+              opacity={0.85}
             />
             {Array.from({ length: count }, (_, k) => {
               const offset = count === 1 ? 0 : (k - (count - 1) / 2) * spreadStep;
               const cx = (sx + ex) / 2 + nx * offset;
               const cy = (sy + ey) / 2 + ny * offset;
               const pts = sampleQuadraticBezier(sx, sy, cx, cy, ex, ey);
+              const endAngle = (Math.atan2(ey - cy, ex - cx) * 180) / Math.PI;
+              const phase = (targetIdx * 0.37 + k * 0.29) % 1;
+              const mid = evalQuadraticBezier(sx, sy, cx, cy, ex, ey, 0.55);
+
               return (
                 <Group key={k}>
+                  {/* Sorcerous-Burst style 3-layer beam: outer aura, inner core, and flowing spark */}
                   <Line
                     points={pts}
                     stroke={palette.glow}
-                    strokeWidth={6.5 / scale}
-                    opacity={0.48}
+                    strokeWidth={11 / scale}
+                    opacity={0.22}
                     lineCap="round"
                     lineJoin="round"
                   />
                   <Line
                     points={pts}
                     stroke={palette.core}
-                    strokeWidth={2.3 / scale}
-                    opacity={0.96}
+                    strokeWidth={2.5 / scale}
+                    opacity={0.92}
                     lineCap="round"
                     lineJoin="round"
                   />
-                  <Circle
-                    x={ex}
-                    y={ey}
-                    radius={3.6 / scale}
-                    fill={palette.core}
-                    stroke={palette.glow}
-                    strokeWidth={1.4 / scale}
+                  <Line
+                    name="ray-spark"
+                    points={pts}
+                    stroke={palette.spark}
+                    strokeWidth={4.6 / scale}
+                    dash={[5 / scale, 52 / scale]}
+                    lineCap="round"
+                    lineJoin="round"
+                    rayPhase={phase}
                   />
+                  {/* Traveling directional arrow chevron gliding along the beam */}
+                  <Group
+                    name="ray-travel-arrow"
+                    x={mid.x}
+                    y={mid.y}
+                    rotation={mid.angleDeg}
+                    rayCurve={{ sx, sy, cx, cy, ex, ey, phase }}
+                  >
+                    <Line
+                      points={[-travelLen, -travelWing, 0, 0, -travelLen, travelWing]}
+                      stroke={palette.glow}
+                      strokeWidth={4.2 / scale}
+                      opacity={0.55}
+                      lineCap="round"
+                      lineJoin="round"
+                    />
+                    <Line
+                      points={[-travelLen, -travelWing, 0, 0, -travelLen, travelWing]}
+                      stroke={palette.spark}
+                      strokeWidth={2 / scale}
+                      lineCap="round"
+                      lineJoin="round"
+                    />
+                  </Group>
+                  {/* Terminal burst-arrow marker at the target end of the tether */}
+                  <Group x={ex} y={ey} rotation={endAngle}>
+                    <Line
+                      closed
+                      points={[0, 0, -arrowLen, -arrowWing, -arrowLen * 0.72, 0, -arrowLen, arrowWing]}
+                      fill={palette.core}
+                      stroke={palette.glow}
+                      strokeWidth={1.2 / scale}
+                      lineJoin="round"
+                    />
+                  </Group>
                 </Group>
               );
             })}
