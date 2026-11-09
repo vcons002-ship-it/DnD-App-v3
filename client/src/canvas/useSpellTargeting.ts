@@ -51,6 +51,75 @@ export function useSpellTargeting(actionSnapshot: StateSnapshot, map: StateSnaps
           : null
       : null;
 
+  const rayCast = useStore((s) => s.rayCast);
+  const clearRayCast = useStore((s) => s.clearRayCast);
+  const [rayTargets, setRayTargets] = useState<string[]>([]);
+  const [rayError, setRayError] = useState<string | null>(null);
+  const rayActor = rayCast
+    ? actionSnapshot.tokens.find((t) => t.kind === rayCast.payload.kind && t.refId === rayCast.payload.refId)
+    : undefined;
+  useEffect(() => {
+    setRayTargets([]);
+    setRayError(null);
+  }, [rayCast]);
+  useEffect(() => {
+    if (!rayCast) return;
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') clearRayCast();
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [rayCast, clearRayCast]);
+  useEffect(() => {
+    if (rayCast && (!rayActor || !map || rayActor.mapId !== map.id)) clearRayCast();
+  }, [rayCast, rayActor?.id, rayActor?.mapId, map?.id, clearRayCast]);
+
+  const toggleRayTarget = (tokenId: string, mode: 'click' | 'decrement' = 'click') => {
+    if (!rayCast || !rayActor || !map) return;
+    if (mode === 'decrement') {
+      setRayTargets((prev) => {
+        const idx = prev.lastIndexOf(tokenId);
+        return idx < 0 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      });
+      setRayError(null);
+      return;
+    }
+    const tok = actionSnapshot.tokens.find((t) => t.id === tokenId);
+    if (!tok) return;
+    if (tok.id === rayActor.id) {
+      setRayError('Choose another creature as a target.');
+      return;
+    }
+    if (tok.sharedSightOnly || tok.partiallyRevealed) {
+      setRayError('Choose a creature you can see yourself.');
+      return;
+    }
+    const resolved = resolveToken(actionSnapshot, tok);
+    const isObject = tok.kind === 'monster' && !!actionSnapshot.monsters.find((m) => m.id === tok.refId)?.objectKind;
+    if (resolved.dead || isObject) {
+      setRayError('Choose a living creature.');
+      return;
+    }
+    if (tokenDistanceFt(rayActor, tok, map) > rayCast.rangeFt + 1e-6) {
+      setRayError(`Target is out of ${rayCast.rangeFt} ft range.`);
+      return;
+    }
+    if (!hasLineOfSight(rayActor, tok, map.walls)) {
+      setRayError('Target is blocked by a wall.');
+      return;
+    }
+    setRayError(null);
+    setRayTargets((prev) => {
+      if (prev.length >= rayCast.instances) {
+        if (prev.includes(tokenId)) {
+          return prev.filter((id) => id !== tokenId);
+        }
+        return [...prev.slice(0, -1), tokenId];
+      }
+      return [...prev, tokenId];
+    });
+  };
+
   const areaSocketId = useStore((s) => s.socket?.id);
   const areaCast = useStore((s) => s.areaCast);
   const clearAreaCast = useStore((s) => s.clearAreaCast);
@@ -201,6 +270,14 @@ export function useSpellTargeting(actionSnapshot: StateSnapshot, map: StateSnaps
     setTeleportPoint,
     teleportActor,
     teleportError,
+    rayCast,
+    clearRayCast,
+    rayActor,
+    rayTargets,
+    setRayTargets,
+    rayError,
+    setRayError,
+    toggleRayTarget,
     areaSocketId,
     areaCast,
     clearAreaCast,

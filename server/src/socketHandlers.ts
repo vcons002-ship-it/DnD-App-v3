@@ -467,7 +467,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
             else if(ability?.roll&&['save','damage'].includes(ability.roll.kind))meta.label=`${ability.name} — Damage Roll`;
             const riposte=event==='combat:riposte'?listRipostes(sid).find(o=>o.id===payload?.opportunityId):undefined;
             const targetId=payload?.targetTokenId??(event==='save:resolve'?payload?.tokenId:undefined)??pending?.hitOptions?.targetTokenId??riposte?.attackerTokenId;
-            const targetRefs:LiveTargetRef[]=typeof targetId==='string'?[{id:targetId}]:pending?[pending.target]:Array.isArray(payload?.tokenIds)?payload.tokenIds.map((id:string)=>({id}))
+            const targetRefs:LiveTargetRef[]=typeof targetId==='string'?[{id:targetId}]:pending?.rayHits?.length?pending.rayHits.map(h=>({id:h.tokenId})):pending?[pending.target]:Array.isArray(payload?.targetTokenIds)?payload.targetTokenIds.map((id:string)=>({id})):Array.isArray(payload?.tokenIds)?payload.tokenIds.map((id:string)=>({id}))
               :event==='save:roll'&&abilityOwner?[{kind:payload.kind,refId:abilityOwner.id}]:[];
             const targetLabels=new Map<string,string|undefined>();
             const attackerLabels=new Map<string,string|undefined>();
@@ -483,16 +483,16 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
             const delegateSaves=!isDm()&&!!getSessionById(sid)?.hideDmRolls;
             let saveController:PrivateController|undefined,currentPrivateSave=false;
             const saveLabelFor=(id:string,target:import('../../shared/dice.js').SaveDieInfo['target'])=>{
-              const key=`save:${id}:${target.kind}:${target.refId}`;
+              const key=`save:${id}:${target.kind}:${target.tokenId??target.refId}`;
               if(!targetLabels.has(key)){
                 const conn=getConn(id)!,view=buildSnapshot(sid,conn.role,conn.viewMapId,id,conn.playerId);
-                const token=view?.tokens.find(t=>!t.sharedSightOnly&&t.kind===target.kind&&t.refId===target.refId);
+                const token=view?.tokens.find(t=>!t.sharedSightOnly&&(target.tokenId?t.id===target.tokenId:t.kind===target.kind&&t.refId===target.refId));
                 targetLabels.set(key,token?(token.kind==='monster'&&token.revealTag&&token.revealTag!=='U'?token.revealTag:liveRollTarget(view!,[target])):undefined);
               }
               return targetLabels.get(key);
             };
             const configureDice=(info:import('../../shared/dice.js').PhysicalDiceInfo)=>{
-              currentPrivateSave=delegateSaves&&(!!info.saveDice?.some(d=>d.target.kind==='monster')||!!info.target&&info.target.kind==='monster'&&/sav(?:e|ing)/i.test(info.label??''));
+              currentPrivateSave=delegateSaves&&(!!info.saveDice?.some(d=>!d.rollKind&&d.target.kind==='monster')||!!info.target&&info.target.kind==='monster'&&/sav(?:e|ing)/i.test(info.label??''));
               // Never await a graphics-ready acknowledgement from a caster who
               // cannot receive this save tray. A connected DM prepares it; a
               // headless session can resolve without a graphics gate.
@@ -551,15 +551,16 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
                for(const id of audience()){
                 if(currentPrivateSave&&getConn(id)?.role!=='dm')continue;
                 if(info?.saveDice){
-                  const shaped=shapeSaveFrame(frame,info.saveDice,target=>saveLabelFor(id,target),{hideModifiersFor:target=>getConn(id)?.role!=='dm'&&(target.kind==='monster'||isDm()),
+                  const shaped=shapeSaveFrame(frame,info.saveDice,target=>saveLabelFor(id,target),{hideModifiersFor:(target,save)=>getConn(id)?.role!=='dm'&&(isDm()||dmDice||(!save?.rollKind&&target.kind==='monster')),
                     // A player's own spell/maneuver DC is public to that player;
                     // creature and encounter DCs remain private regardless of faces.
                     hideDc:getConn(id)?.role!=='dm'&&(isDm()||dmDice||!actor||!!sourceEntry&&sourceEntry.roller!==roller),
                     nameFor:target=>{
-                      const conn=getConn(id)!,key=`save-name:${id}:${target.kind}:${target.refId}`;
+                      const conn=getConn(id)!,key=`save-name:${id}:${target.kind}:${target.tokenId??target.refId}`;
                       if(!targetLabels.has(key)){
                         const view=buildSnapshot(sid,conn.role,conn.viewMapId,id,conn.playerId);
-                        targetLabels.set(key,view?liveRollTarget(view,[target]):undefined);
+                        const tok=target.tokenId?view?.tokens.find(t=>!t.sharedSightOnly&&t.id===target.tokenId):undefined;
+                        targetLabels.set(key,view?(tok?.kind==='monster'&&tok.revealTag&&tok.revealTag!=='U'?`${liveRollTarget(view,[target])} ${tok.revealTag}`:liveRollTarget(view,[target])):undefined);
                       }
                       return targetLabels.get(key);
                     }});
@@ -1954,6 +1955,15 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       const requestedSlot=kind==='pc'?(selectedAbility.level??0)>0?selectSpellSlot(getCharacter(refId)!,cast??selectedAbility.level!,slotPool):undefined:undefined;
       if(advanced&&(selectedAbility.level??0)>0&&kind==='pc'&&!requestedSlot?.remaining){socket.emit('notice',{message:`No spell slot available for ${selectedAbility.name}.`});return;}
       const invisTargets=targetTokenIds??(tgt?[tgt]:[]);
+      if(advanced!=='invisibility'&&Array.isArray(targetTokenIds)&&targetTokenIds.length>0){
+        for(const tid of targetTokenIds){
+          if(typeof tid!=='string'||targetBehindWall(tid,{kind,refId}))return;
+          if(!canDirectlyTargetToken(tid)){
+            socket.emit('notice',{message:'Choose a creature you can see yourself. Party sightings cannot be targeted.'});
+            return;
+          }
+        }
+      }
       if(advanced==='invisibility'){
         if(!Array.isArray(invisTargets)||invisTargets.some(id=>typeof id!=='string'||!canDirectlyTargetToken(id))){socket.emit('notice',{message:'Choose visible willing targets.'});return;}
         const error=invisibilityError(sid,kind,refId,requestedSlot?.level??cast??2,invisTargets);
@@ -1979,6 +1989,15 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         }
       }
       if(selectedAbility.type==='spell')breakInvisibility(kind,refId,'casting a spell');
+      if(advanced!=='invisibility'&&Array.isArray(targetTokenIds)&&targetTokenIds.length>0){
+        for(const tid of targetTokenIds){
+          if(typeof tid!=='string'||targetBehindWall(tid,{kind,refId}))return;
+          if(!canDirectlyTargetToken(tid)){
+            socket.emit('notice',{message:'Choose a creature you can see yourself. Party sightings cannot be targeted.'});
+            return;
+          }
+        }
+      }
       if(advanced==='invisibility'){
         const error=castInvisibility(sid,roller,kind,refId,requestedSlot?.level??cast??2,invisTargets);
         if(error){socket.emit('notice',{message:error});afterChange();return;}
@@ -2030,7 +2049,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         if(targetError){socket.emit('notice',{message:targetError});return;}
         // CR-based DC/to-hit; no spell slots for creatures. A limited-use action
         // (breath weapon) is spent by using it; the DM re-readies it manually.
-        if (resolveMonsterSheetAbility(sid, roller, m, ability, cast, adv, area?undefined:tgt, selectedDamageType,area)) {
+        if (resolveMonsterSheetAbility(sid, roller, m, ability, cast, adv, area?undefined:tgt, selectedDamageType,area,targetTokenIds)) {
           setAbilityRechargeSpent('monster', m.id, ability.id, true);
           afterChange();
           if (ability.type === 'spell') broadcastSpellCast(io, sid, kind, refId);
@@ -2063,7 +2082,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
           socket.emit('notice',{message:'Choose a visible creature for the mark.'}); return;
         }
       }
-      const ok = resolveAbilityRoll(sid, roller, c, ability, castAt, adv, area?undefined:tgt, selectedDamageType,area);
+      const ok = resolveAbilityRoll(sid, roller, c, ability, castAt, adv, area?undefined:tgt, selectedDamageType,area,targetTokenIds);
       if(!ok&&area)socket.emit('notice',{message:'Could not place the area. Check its range, connected pieces, and chosen target limit.'});
       if(!ok && JSON.stringify(c.conditions)!==JSON.stringify(getCharacter(c.id)?.conditions)) {
         afterChange();socket.emit('notice',{message:spellActionBlockMessage(getCharacter(c.id)!,{inCombat:!!getSessionById(sid)?.combatRound})??'Previous concentration ended. Recover from Haste lethargy before casting a new concentration spell.',durationMs:8000});

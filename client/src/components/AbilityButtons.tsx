@@ -130,7 +130,7 @@ export function AbilityButtons({
       targetTokenId: dispelTarget ? undefined : ids ? ids[0] : linkedSpellProfile(a)&&['mirror image','flame blade'].includes(spellKey(a.name)) ? undefined : isCanonicalHasteProfile(a) ? buffTargetId ?? targetTokenId : manualCast ? targetTokenId : execution.roll?.kind === 'heal' ? healTargetId
         : isMultiTargetSpell(a, level) ? undefined : targetTokenId,
     });
-    if(isCastSpell(a)&&!useStore.getState().areaCast&&!useStore.getState().teleportCast)notify(`Cast requested: ${a.name} · ${cost.label}. Check the cast record and slot counter for confirmation.`);
+    if(isCastSpell(a)&&!useStore.getState().areaCast&&!useStore.getState().teleportCast&&!useStore.getState().rayCast)notify(`Cast requested: ${a.name} · ${cost.label}. Check the cast record and slot counter for confirmation.`);
     onAfter?.();
   };
 
@@ -188,11 +188,11 @@ export function AbilityButtons({
           <button
             key={menu ? a.id : 'btn'}
             className={`${menu ? 'btn tiny fm-spell-attack' : 'btn tiny attack-row'}${spent ? ' recharge-spent' : ''}`}
-            title={[a.description || 'Ability', workflow, support?.manual.length ? `You handle: ${support.manual.join('; ')}` : '', manualRiderNote(a), spent ? 'Spent — ready it from its ⟳ chip after a successful recharge roll.' : ''].filter(Boolean).join('\n')}
+            title={[restriction, a.description || 'Ability', workflow, support?.manual.length ? `You handle: ${support.manual.join('; ')}` : '', manualRiderNote(a), spent ? 'Spent — ready it from its ⟳ chip after a successful recharge roll.' : ''].filter(Boolean).join('\n')}
             disabled={!!spellActionBlock(caster) || !!restriction || spell&&cost.unavailable || (!summon&&!isCommandSpell(a)&&!area && !manualCast && !menu && !selfSpell && !['invisibility','dispel magic'].includes(advancedSpell(a)??'') && !['misty step','pass without trace'].includes(partySpell(a)??'') && !multiple && (execution.roll?.kind === 'heal' ? execution.roll.healTarget !== 'self' && !healTargetId : !(isCanonicalHasteProfile(a) ? buffTargetId ?? targetTokenId : targetTokenId)))}
             onClick={() => cast(a)}
           >
-            {spell?'Cast':execution.roll?ROLL_ICON[execution.roll.kind]:'Use'} {a.name}{spell?` · ${cost.label}`:''}{menu && spent ? ' (spent)' : ''}
+            {spell?'Cast':execution.roll?ROLL_ICON[execution.roll.kind]:'Use'} {a.name}{spell?` · ${cost.label}${a.prepared===false&&(a.level??0)>0?' (not prepared)':''}`:''}{menu && spent ? ' (spent)' : ''}
           </button>
         );
         const damageTypeSelect = damageTypes.length > 0 && (
@@ -213,7 +213,7 @@ export function AbilityButtons({
           </select>
         );
         return (
-          <div key={a.id} className="combat-ability-row" style={damageTypes.length ? { flexWrap: 'wrap' } : undefined}>
+          <div key={a.id} className="combat-ability-row">
             {choosing?null:btn}
 
 

@@ -1174,6 +1174,11 @@ export type PendingDamage = {
   maneuver?: { abilityIds: string[]; targetTokenId?:string; rawDamage: number; multiplier: number; minimumAdjustment: number; dc: number };
   /** Multi-ray cast whose next attack waits until this hit's damage is applied. */
   sourceRollId?: string;
+  /** Group multi-ray hits awaiting a batched group damage roll. */
+  rayHits?: { tokenId: string; target: { kind: TokenKind; refId: string; name: string }; crit: boolean; rayIndex: number }[];
+  rayDice?: string;
+  rayDamageBonus?: { label: string; value: number };
+  rayCastLevel?: number;
   /** Who takes it (and their name, so the button can read "→ Goblin"). */
   target: { kind: TokenKind; refId: string; name: string };
   /** Who dealt it — credits a PC's kill count when it drops the target. */

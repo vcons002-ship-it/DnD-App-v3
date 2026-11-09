@@ -46,11 +46,11 @@ export async function physicalFaces(
   if(sides.some(s=>![4,6,8,10,12,20,100].includes(s)))
     throw new UnsupportedPhysicalDice('Live rolls support d4, d6, d8, d10, d12, d20 and d100. Choose one of these dice.');
   const {ready,onFacing,waitForPresentation,burstTray,review,deferFacing,requireSaveStart,configureDice,saveDiceArt,...displayMeta}=meta;
-  const awaitStart=!!requireSaveStart&&(!!info?.saveDice?.some(d=>d.rollKind!=='initiative')||/\bsav(?:e|ing throw)\b/i.test(info?.label??meta.label));
+  const awaitStart=!!requireSaveStart&&(!!info?.saveDice?.some(d=>!d.rollKind)||/\bsav(?:e|ing throw)\b/i.test(info?.label??meta.label));
   if(typeof info?.triggerRule==='object'&&burstTray)return burstFaces(sides,publish,meta,seed,info);
   // A caster initiates these commands, but the saved creatures own the dice.
   // Batches containing NPC saves use the shared DM tray rather than the caster.
-  if(info?.saveDice?.some(save=>save.target.kind==='monster')){
+  if(info?.saveDice?.some(save=>!save.rollKind&&save.target.kind==='monster')){
     displayMeta.dmDice=true;displayMeta.className='';displayMeta.affinity=undefined;
   }
   const singleSave=info?.target&&/\bsav(?:e|ing throw)\b/i.test(info.label??meta.label)?info.target:undefined;
@@ -69,7 +69,7 @@ export async function physicalFaces(
       if(count+next>40) break;
       logical.push(side); count+=next;
     }
-    const diceArt=info?.saveDice&&saveDiceArt?logical.flatMap((side,i)=>Array.from({length:side===100?2:1},()=>saveDiceArt(info.saveDice![offset+i].target))):undefined;
+    const diceArt=info?.saveDice?.some(d=>!d.rollKind||d.rollKind==='initiative')&&saveDiceArt?logical.flatMap((side,i)=>Array.from({length:side===100?2:1},()=>saveDiceArt(info.saveDice![offset+i].target))):undefined;
     const expanded=logical.flatMap(s=>s===100?[10,10]:[s]);
     const world=createLiveWorld(expanded.map((sides,index)=>({sides,value:1,index,set:0})),seed+offset,'bottom');
     const id=randomUUID(); let seq=0;
