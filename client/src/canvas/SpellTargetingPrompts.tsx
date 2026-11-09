@@ -57,6 +57,13 @@ export function SpellTargetingPrompts({
     pendingSpellCost,
     teleportPoint,
     teleportError,
+    rayCast,
+    clearRayCast,
+    rayActor,
+    rayTargets,
+    setRayTargets,
+    rayError,
+    toggleRayTarget,
     areaCast,
     clearAreaCast,
     areaPoints,
@@ -72,6 +79,24 @@ export function SpellTargetingPrompts({
     areaTargets,
     areaRangeError,
   } = targeting;
+
+  const groupedRayTargets = (() => {
+    if (!rayCast) return [];
+    const mapById = new Map<string, { token: StateSnapshot['tokens'][number]; tag: string; count: number }>();
+    for (const tid of rayTargets) {
+      const existing = mapById.get(tid);
+      if (existing) {
+        existing.count += 1;
+        continue;
+      }
+      const tok = actionSnapshot.tokens.find((t) => t.id === tid);
+      if (!tok) continue;
+      const e = resolveToken(actionSnapshot, tok);
+      const tag = tok.kind === 'monster' && tok.revealTag && tok.revealTag !== 'U' ? tok.revealTag : e.name;
+      mapById.set(tid, { token: tok, tag, count: 1 });
+    }
+    return [...mapById.values()];
+  })();
 
   return (
     <>
@@ -97,6 +122,67 @@ export function SpellTargetingPrompts({
             Cast Misty Step · {pendingSpellCost(teleportCast)?.label}
           </button>
           <button className="btn" onClick={clearTeleportCast}>
+            Cancel (Esc)
+          </button>
+        </div>
+      )}
+      {rayCast && rayActor && map && (
+        <div
+          className="save-resolve-banner spell-area-prompt spell-ray-prompt"
+          role="region"
+          aria-label="Choose spell targets"
+          style={{
+            flexWrap: 'wrap',
+            maxWidth: 'min(760px,calc(100% - 30px))',
+            zIndex: 30,
+            borderColor: '#f09a4a',
+          }}
+        >
+          <strong>
+            {rayCast.name} · {rayTargets.length} / {rayCast.instances} {rayCast.kind} · {rayCast.rangeFt} ft
+          </strong>
+          <span>
+            Click creatures on the map to aim {rayCast.kind} (click again to stack {rayCast.kind} or undo when full). No
+            slot is spent until you click Cast.
+          </span>
+          {rayError && (
+            <span role="alert" style={{ color: '#ff9696' }}>
+              {rayError}
+            </span>
+          )}
+          {groupedRayTargets.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              {groupedRayTargets.map((g) => (
+                <button
+                  key={g.token.id}
+                  type="button"
+                  className="btn tiny"
+                  onClick={() => toggleRayTarget(g.token.id, 'decrement')}
+                  title="Click to remove one ray/missile from this target"
+                >
+                  {g.tag} ×{g.count} ✕
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            className="btn tiny"
+            disabled={rayTargets.length !== rayCast.instances || pendingSpellCost(rayCast.payload)?.unavailable}
+            onClick={() => {
+              useStore.getState().rollAbility({ ...rayCast.payload, targetTokenIds: rayTargets });
+              clearRayCast();
+            }}
+          >
+            Cast {rayCast.name} · {pendingSpellCost(rayCast.payload)?.label ?? rayCast.name}
+          </button>
+          <button
+            className="btn tiny"
+            disabled={!rayTargets.length}
+            onClick={() => setRayTargets((old) => old.slice(0, -1))}
+          >
+            Undo
+          </button>
+          <button className="btn tiny" onClick={clearRayCast}>
             Cancel (Esc)
           </button>
         </div>

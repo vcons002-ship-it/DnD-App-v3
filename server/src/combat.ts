@@ -1019,6 +1019,18 @@ export function resolveSmite(
  * them, logs the damage roll with its own dice reveal, and stamps the pending
  * payload `done` so a double-click can't damage twice.
  */
+function countDiceInExpr(expr: string): number {
+  let count = 0;
+  for (const m of expr.replace(/\s+/g, '').matchAll(/(\d*)d(\d+)/gi)) count += Number(m[1] || 1);
+  return count;
+}
+function flatBonusInExpr(expr: string): number {
+  let flat = 0;
+  for (const m of expr.replace(/\s+/g, '').matchAll(/([+-]?)(\d*)d(\d+)|([+-]?)(\d+)/gi)) {
+    if (m[3] === undefined) flat += (m[4] === '-' ? -1 : 1) * Number(m[5]);
+  }
+  return flat;
+}
 export function resolveAttackDamage(
   sessionId: string,
   roller: string,
@@ -1029,6 +1041,112 @@ export function resolveAttackDamage(
   const entry = getRollEntry(rollId, sessionId);
   const p = entry?.pending;
   if (!entry || !p || p.done) return false;
+  if (p.rayHits?.length && p.rayDice) {
+    const attacker = p.attacker.kind === 'pc' ? getCharacter(p.attacker.refId) : getMonster(p.attacker.refId);
+    if (attacker?.sessionId !== sessionId) return false;
+    setRollPending(rollId, { ...p, done: true });
+    const dice = p.rayDice;
+    const flatFromExpr = flatBonusInExpr(dice);
+    const terms: { expr: string; critical?: boolean }[] = [];
+    const saveDice: import('../../shared/dice.js').SaveDieInfo[] = [];
+    const rayTermRanges: { normalIndex: number; critIndex?: number }[] = [];
+    for (let i = 0; i < p.rayHits.length; i++) {
+      const hit = p.rayHits[i];
+      const normalIndex = terms.length;
+      terms.push({ expr: dice });
+      let critIndex: number | undefined;
+      const critExpr = hit.crit ? criticalDiceExpression(dice) : '';
+      if (hit.crit && critExpr) {
+        critIndex = terms.length;
+        terms.push({ expr: critExpr, critical: true });
+      }
+      rayTermRanges.push({ normalIndex, critIndex });
+      const diceCount = countDiceInExpr(dice) + (critExpr ? countDiceInExpr(critExpr) : 0);
+      for (let k = 0; k < diceCount; k++) {
+        saveDice.push({
+          rollKind: 'damage',
+          target: { kind: hit.target.kind, refId: hit.target.refId, tokenId: hit.tokenId },
+          modifier: (p.rayDamageBonus?.value ?? 0) + flatFromExpr,
+          dc: 0,
+          group: String(i),
+          crit: hit.crit,
+          damageType: p.damageType,
+        });
+      }
+    }
+    const rolledTerms = withDiceMetadata({ label: `${p.weapon} — Spell Damage`, saveDice }, () => rollDicePool(terms));
+    const damageRollId = newId();
+    let totalApplied = 0;
+    const detailParts: string[] = [];
+    const revealDice: NonNullable<RollReveal['damageDice']> = [];
+    const revealMods: NonNullable<RollReveal['damageMods']> = [];
+    let lastHpNote: RollEntry['hpNote'];
+    for (let i = 0; i < p.rayHits.length; i++) {
+      const hit = p.rayHits[i];
+      const range = rayTermRanges[i];
+      const first = rolledTerms[range.normalIndex];
+      const second = range.critIndex !== undefined ? rolledTerms[range.critIndex] : undefined;
+      const tok = getToken(hit.tokenId) ?? listTokens(getSessionById(sessionId)?.activeMapId ?? '').find(t => t.kind === hit.target.kind && t.refId === hit.target.refId);
+      const t = tok && resolve(tok);
+      if (!t) continue;
+      let dmg = (first?.total ?? 0) + (second?.total ?? 0);
+      const faces = [...(first?.rolls ?? []), ...(second?.rolls ?? [])];
+      revealDice.push({ label: `Ray ${hit.rayIndex + 1} (${hit.target.name})`, value: dmg, faces, diceExpression: dice });
+      if (p.rayDamageBonus?.value) {
+        dmg += p.rayDamageBonus.value;
+        revealMods.push({ label: `${p.rayDamageBonus.label} (Ray ${hit.rayIndex + 1})`, value: p.rayDamageBonus.value });
+      }
+      const mult = damageMultiplier(p.damageType, t.resistances, t.weaknesses, t.immunities, { magical: true });
+      let applied = Math.max(0, Math.floor(dmg * mult));
+      const hitDamageParts: HpDamagePart[] = [{ amount: applied, damageType: p.damageType }];
+      if (tok) {
+        const mark = markedDamage(p.attacker.kind, p.attacker.refId, tok, hit.crit);
+        applied += mark.amount;
+        hitDamageParts.push(...mark.parts);
+        revealDice.push(...mark.dice);
+        revealMods.push(...mark.mods);
+      }
+      totalApplied += applied;
+      if (applied > 0) {
+        lastHpNote = applyDamageNoted(
+          t.kind,
+          t.refId,
+          applied,
+          p.damageType,
+          p.attacker,
+          hit.crit,
+          impactRollId ?? damageRollId,
+          p.weapon,
+          hitDamageParts,
+          { id: rollId, order: hit.rayIndex },
+        ) ?? lastHpNote;
+        noteConcentration(sessionId, t.kind, t.refId, applied);
+      }
+      detailParts.push(`Ray ${hit.rayIndex + 1} → ${t.name}: ${applied}${p.damageType ? ` ${p.damageType}` : ''} [${faces.join(',')}]${hit.crit ? ' (CRIT)' : ''}`);
+    }
+    addRollLog(sessionId, {
+      roller,
+      label: 'Damage',
+      expr: p.weapon,
+      total: totalApplied,
+      detail: `${p.weapon}: ${detailParts.join(' · ')} (total ${totalApplied}${p.damageType ? ` ${p.damageType}` : ''} damage)`,
+      hpNote: lastHpNote,
+      reveal: {
+        presentedLive: usingPhysicalDice(),
+        kind: 'damage',
+        title: `${p.weapon} — Spell Damage`,
+        attacker: entry.reveal?.attacker ?? attacker.name,
+        target: p.target.name,
+        outcome: p.crit ? 'crit' : 'hit',
+        damageDice: revealDice,
+        ...(revealMods.length ? { damageMods: revealMods } : {}),
+        damage: totalApplied,
+        ...(p.damageType ? { damageType: p.damageType } : {}),
+      },
+      hideMods: hidesMods(p.attacker.kind, p.attacker.refId),
+    }, damageRollId);
+    return true;
+  }
   const target = p.target.kind === 'pc' ? getCharacter(p.target.refId) : getMonster(p.target.refId);
   const attacker = p.attacker.kind === 'pc' ? getCharacter(p.attacker.refId) : getMonster(p.attacker.refId);
   if (target?.sessionId !== sessionId || attacker?.sessionId !== sessionId) return false;
@@ -1648,10 +1766,18 @@ function resolveSheetAbilityFor(
   advantage?: Advantage,
   targetTokenId?: string,
   damageTypeChoice?: string,
-  area?:SpellAreaPlacement,
+  area?:SpellAreaPlacement, targetTokenIds?:string[],
 ): boolean {
   // Validate before concentration, rolls, HP changes or the caller's slot spend.
   if (targetTokenId && !spellTarget(sessionId, targetTokenId)) return false;
+  if (targetTokenIds?.length) {
+    for (const tid of targetTokenIds) {
+      if (!spellTarget(sessionId, tid)) return false;
+      const target = getToken(tid)!;
+      const source = listTokens(target.mapId).find(t => t.kind === kind && t.refId === entity.id);
+      if (source && !hasLineOfSight(source, target, getMap(target.mapId)?.walls)) return false;
+    }
+  }
   if(targetTokenId){
     const target=getToken(targetTokenId)!;
     const source=listTokens(target.mapId).find(t=>t.kind===kind&&t.refId===entity.id);
@@ -1842,6 +1968,155 @@ function resolveSheetAbilityFor(
       return true;
     }
     const attacks = spellInstanceCount(roll, castLevel, casterLevel);
+    if (attacks > 0 && dice && targetTokenIds?.length) {
+      if (targetTokenIds.length > attacks) return false;
+      const rayPlans = targetTokenIds.map((tid, rayIndex) => {
+        const tt = spellTarget(sessionId, tid);
+        const t = tt && resolve(tt);
+        if (!tt || !t) return null;
+        const attackerToken = listTokens(tt.mapId).find(tok => tok.kind === kind && tok.refId === entity.id);
+        if (attackerToken && !hasLineOfSight(attackerToken, tt, getMap(tt.mapId)?.walls)) return null;
+        const attacker = kind === 'pc' ? getCharacter(entity.id) : getMonster(entity.id);
+        const defender = tt.kind === 'pc' ? getCharacter(tt.refId) : getMonster(tt.refId);
+        const within5 = !!attackerToken && tokensWithin5ft(attackerToken, tt, getMap(tt.mapId));
+        const spellDistance = attackerToken ? tokenDistanceFt(attackerToken, tt, getMap(tt.mapId)) : Infinity;
+        const spellEval = evaluateAttackContext({
+          attackerConditions: attacker?.conditions ?? [],
+          targetConditions: defender?.conditions ?? [],
+          attackerEntity: attacker ?? undefined,
+          targetEntity: defender ?? undefined,
+          within5ft: within5,
+          distanceFt: spellDistance,
+          manual: advantage,
+          includeAttackerStances: false,
+        });
+        const adv = spellEval.adv ?? attackAdvantage(
+          attacker ? combatLabels(attacker.conditions).filter(v => v.toLowerCase() !== 'invisible' || !defender || !seesInvisible(defender, spellDistance)) : [],
+          t.conditionLabels.filter(v => v.toLowerCase() !== 'invisible' || !attacker || !seesInvisible(attacker, spellDistance)),
+          within5,
+          advantage,
+          targetGivesAdvantage(t.kind, t.refId),
+          spellAttackDis(kind, entity.id),
+        );
+        const autoCrit = autoCritFromConditions(t.conditionLabels, within5);
+        return { rayIndex, tid, tt, t, attackerToken, adv, autoCrit };
+      });
+      if (rayPlans.some(p => !p)) return false;
+      const validPlans = rayPlans as NonNullable<(typeof rayPlans)[number]>[];
+      if (validPlans[0]?.attackerToken) {
+        faceTokenToward(sessionId, validPlans[0].attackerToken.id, validPlans[0].tt.id);
+      }
+      const d20Terms: { expr: string }[] = [];
+      const saveDice: import('../../shared/dice.js').SaveDieInfo[] = [];
+      for (const plan of validPlans) {
+        const count = plan.adv.state ? 2 : 1;
+        for (let k = 0; k < count; k++) {
+          d20Terms.push({ expr: '1d20' });
+          saveDice.push({
+            rollKind: 'attack',
+            target: { kind: plan.tt.kind, refId: plan.tt.refId, tokenId: plan.tt.id },
+            modifier: bonus,
+            dc: plan.t.ac,
+            group: String(plan.rayIndex),
+            mode: plan.adv.state,
+            crit: !!plan.autoCrit,
+          });
+        }
+      }
+      const d20Rolls = withDiceMetadata({ label: `${title} — Spell Attack Rolls`, saveDice }, () => rollDicePool(d20Terms));
+      breakInvisibility(kind, entity.id, 'making an attack roll');
+      let termOffset = 0;
+      const rayResults: {
+        plan: (typeof validPlans)[number];
+        face: number;
+        d20detail: string;
+        attackTotal: number;
+        hit: boolean;
+        crit: boolean;
+        mirrorBlocked?: boolean;
+      }[] = [];
+      for (const plan of validPlans) {
+        const f1 = d20Rolls[termOffset++]?.total ?? 10;
+        const f2 = plan.adv.state ? (d20Rolls[termOffset++]?.total ?? f1) : f1;
+        const face = plan.adv.state === 'dis' ? Math.min(f1, f2) : plan.adv.state === 'adv' ? Math.max(f1, f2) : f1;
+        const d20detail = plan.adv.state ? `2d20(${plan.adv.state})[${f1}, ${f2} → ${face}]` : `d20[${face}]`;
+        const fumble = face === 1;
+        const attackTotal = face + bonus;
+        let hit = face === 20 || (!fumble && attackTotal >= plan.t.ac);
+        const crit = hit && (face === 20 || !!plan.autoCrit);
+        let mirrorBlocked = false;
+        if (hit && plan.attackerToken && mirrorIntercept(sessionId, plan.attackerToken, plan.tt, roller)) {
+          hit = false;
+          mirrorBlocked = true;
+        }
+        if (hit || mirrorBlocked) consumeHitAdvantage(plan.tt);
+        rayResults.push({ plan, face, d20detail, attackTotal, hit, crit, mirrorBlocked });
+      }
+      const hitRays = rayResults.filter(r => r.hit);
+      const attackRollId = newId();
+      const summaryParts = rayResults.map((r, i) =>
+        `Ray ${i + 1} → ${r.plan.t.name}: ${r.d20detail} ${bonusDetail} = ${r.attackTotal} vs AC ${r.plan.t.ac} — ${
+          r.mirrorBlocked ? 'Mirror Image destroyed' : r.crit ? 'CRIT' : r.hit ? 'HIT' : 'MISS'
+        }`,
+      );
+      const hitTargetCounts = new Map<string, { name: string; count: number }>();
+      for (const hr of hitRays) {
+        const key = hr.plan.tt.id;
+        const prev = hitTargetCounts.get(key);
+        if (prev) prev.count += 1;
+        else hitTargetCounts.set(key, { name: hr.plan.t.name, count: 1 });
+      }
+      const hitTargetLabel = [...hitTargetCounts.values()]
+        .map(v => v.count > 1 ? `${v.name} ×${v.count}` : v.name)
+        .join(', ');
+      addRollLog(sessionId, {
+        roller,
+        label: 'Attack',
+        expr: title,
+        total: rayResults[0]?.attackTotal ?? 0,
+        detail: `${title}: ${summaryParts.join(' · ')}${hitRays.length ? ` — ${hitRays.length}/${rayResults.length} hit — roll damage` : ' — all rays missed'}`,
+        description: ability.description || undefined,
+        hideMods: hidesMods(kind, entity.id),
+        reveal: {
+          presentedLive: usingPhysicalDice(),
+          kind: 'attack',
+          title: `${title} — Spell Attack Rolls`,
+          attacker: roller,
+          target: hitTargetLabel || rayResults[0]?.plan.t.name,
+          d20: rayResults[0]?.face ?? 10,
+          toHit: toHitSteps.length ? toHitSteps : bonus ? [{ label: 'spell', value: bonus }] : [],
+          attackTotal: rayResults[0]?.attackTotal ?? 0,
+          outcome: hitRays.some(r => r.crit) ? 'crit' : hitRays.length ? 'hit' : 'miss',
+        },
+        ...(hitRays.length ? {
+          pending: {
+            rayHits: hitRays.map(hr => ({
+              tokenId: hr.plan.tt.id,
+              target: { kind: hr.plan.t.kind, refId: hr.plan.t.refId, name: hr.plan.t.name },
+              crit: hr.crit,
+              rayIndex: hr.plan.rayIndex,
+            })),
+            rayDice: dice,
+            rayDamageBonus: damageBonus,
+            rayCastLevel: castLevel,
+            target: {
+              kind: hitRays[0].plan.t.kind,
+              refId: hitRays[0].plan.t.refId,
+              name: hitTargetLabel,
+            },
+            attacker: { kind, refId: entity.id },
+            weapon: title,
+            amount: 0,
+            damageType: roll.damageType,
+            crit: hitRays.some(hr => hr.crit),
+            dice: [{ label: `${hitRays.length}× ${dice}`, value: 0, faces: [] }],
+            mods: damageBonus?.value ? [damageBonus] : [],
+            ...(kind === 'pc' ? { owner: entity.id } : {}),
+          },
+        } : {}),
+      }, attackRollId);
+      return true;
+    }
     if (attacks > 0 && dice) {
       addRollLog(sessionId, {
         roller, label: ability.name, expr: title, total: 0,
@@ -1973,6 +2248,165 @@ function resolveSheetAbilityFor(
   // dice rolled ON the click (not pre-rolled). Upcasting adds darts, not dice.
   // `owner` lets the CASTER (the player) assign the darts, not only the DM.
   const instanceCount = spellInstanceCount(roll, castLevel, casterLevel);
+  if (roll.kind === 'damage' && instanceCount > 0 && dice && targetTokenIds?.length) {
+    if (targetTokenIds.length > instanceCount) return false;
+    const dartPlans = targetTokenIds.map((tid, dartIdx) => {
+      const tok = spellTarget(sessionId, tid);
+      const r = tok && resolve(tok);
+      if (!tok || !r) return null;
+      const source = listTokens(tok.mapId).find(t => t.kind === kind && t.refId === entity.id);
+      if (source && !hasLineOfSight(source, tok, getMap(tok.mapId)?.walls)) return null;
+      return { dartIdx, tok, r, source };
+    });
+    if (dartPlans.some(p => !p)) return false;
+    const validDarts = dartPlans as NonNullable<(typeof dartPlans)[number]>[];
+    if (validDarts[0]?.source) {
+      faceTokenToward(sessionId, validDarts[0].source.id, validDarts[0].tok.id);
+    }
+    const flatFromExpr = flatBonusInExpr(dice);
+    const dicePerDart = countDiceInExpr(dice);
+    const terms = validDarts.map(() => ({ expr: dice }));
+    const saveDice: import('../../shared/dice.js').SaveDieInfo[] = [];
+    for (const plan of validDarts) {
+      for (let k = 0; k < dicePerDart; k++) {
+        saveDice.push({
+          rollKind: 'damage',
+          target: { kind: plan.tok.kind, refId: plan.tok.refId, tokenId: plan.tok.id },
+          modifier: flatFromExpr + (damageBonus?.value ?? 0),
+          dc: 0,
+          group: String(plan.dartIdx),
+          damageType: roll.damageType,
+        });
+      }
+    }
+    const rolledDarts = withDiceMetadata({ label: `${title} — Spell Damage`, saveDice }, () => rollDicePool(terms));
+    const castRollId = newId();
+    const missile = ability.name.trim().toLowerCase() === 'magic missile';
+    let totalApplied = 0;
+    const detailParts: string[] = [];
+    const revealDice: NonNullable<RollReveal['damageDice']> = [];
+    const revealMods: NonNullable<RollReveal['damageMods']> = [];
+    let lastHpNote: RollEntry['hpNote'];
+    const pendingShieldByTarget = new Map<string, {
+      tok: Token;
+      r: Resolved;
+      shield: NonNullable<import('../../shared/types.js').PendingDamage['shield']>;
+      amount: number;
+      base: number;
+      faces: number[];
+      firstDartIdx: number;
+      dartCount: number;
+    }>();
+    for (let i = 0; i < validDarts.length; i++) {
+      const { dartIdx, tok, r } = validDarts[i];
+      const rolled = rolledDarts[i];
+      const base = (rolled?.total ?? 0) + (damageBonus?.value ?? 0);
+      const dartFaces = rolled?.rolls ?? [];
+      const mult = damageMultiplier(roll.damageType, r.resistances, r.weaknesses, r.immunities, { magical: true });
+      const targetEnt = tok.kind === 'pc' ? getCharacter(tok.refId) : getMonster(tok.refId);
+      const shielded = missile && targetEnt && shieldAcBonus(targetEnt) > 0;
+      const dmg = shielded ? 0 : Math.max(0, Math.floor(base * mult));
+      const targetKey = `${tok.kind}:${tok.refId}`;
+      const existingShield = pendingShieldByTarget.get(targetKey);
+      const shield = existingShield?.shield ?? (!shielded && missile ? shieldGate(sessionId, tok.kind, tok.refId) : undefined);
+      if (shield) {
+        if (existingShield) {
+          existingShield.amount += dmg;
+          existingShield.base += base;
+          existingShield.faces.push(...dartFaces);
+          existingShield.dartCount += 1;
+        } else {
+          pendingShieldByTarget.set(targetKey, {
+            tok,
+            r,
+            shield,
+            amount: dmg,
+            base,
+            faces: [...dartFaces],
+            firstDartIdx: dartIdx,
+            dartCount: 1,
+          });
+        }
+        detailParts.push(`Dart ${dartIdx + 1} → ${r.name}: ${dmg}${dmgType} (awaiting Shield)`);
+        continue;
+      }
+      totalApplied += dmg;
+      if (dmg > 0) {
+        lastHpNote = applyDamageNoted(
+          r.kind,
+          r.refId,
+          dmg,
+          roll.damageType,
+          { kind, refId: entity.id },
+          false,
+          castRollId,
+          spellImpactName(title) ?? spellImpactName(ability.name),
+          undefined,
+          { id: castRollId, order: dartIdx },
+        ) ?? lastHpNote;
+        noteConcentration(sessionId, r.kind, r.refId, dmg);
+      }
+      revealDice.push({ label: `Dart ${dartIdx + 1} (${r.name})`, value: dmg, faces: dartFaces, diceExpression: dice });
+      detailParts.push(
+        shielded
+          ? `Dart ${dartIdx + 1} → ${r.name}: blocked by Shield`
+          : `Dart ${dartIdx + 1} → ${r.name}: ${dmg}${dmgType} [${dartFaces.join(',')}${flatFromExpr ? `${flatFromExpr >= 0 ? '+' : ''}${flatFromExpr}` : ''}]`,
+      );
+    }
+    for (const ps of pendingShieldByTarget.values()) {
+      const dartDice = [{ label: `${ps.dartCount}× ${dice}`, value: ps.base, faces: ps.faces }];
+      addRollLog(sessionId, {
+        roller,
+        label: 'Damage',
+        total: ps.amount,
+        expr: ps.dartCount > 1 ? `${ps.dartCount} darts` : `dart ${ps.firstDartIdx + 1}`,
+        detail: `${ps.r.name}: Magic Missile targets you — choose Shield or pass.`,
+        pending: {
+          impact: { id: castRollId, order: ps.firstDartIdx },
+          shield: { ...ps.shield, automatic: true },
+          target: { kind: ps.tok.kind, refId: ps.tok.refId, name: ps.r.name },
+          attacker: { kind, refId: entity.id },
+          weapon: 'Magic Missile',
+          amount: ps.amount,
+          crit: false,
+          dice: dartDice,
+          mods: ps.amount !== ps.base ? [{ label: 'Damage adjustment', value: ps.amount - ps.base }] : [],
+          damageType: roll.damageType,
+          owner: kind === 'pc' ? entity.id : undefined,
+        },
+      });
+    }
+    const targetCounts = new Map<string, { name: string; count: number }>();
+    for (const d of validDarts) {
+      const prev = targetCounts.get(d.tok.id);
+      if (prev) prev.count += 1;
+      else targetCounts.set(d.tok.id, { name: d.r.name, count: 1 });
+    }
+    const targetSummary = [...targetCounts.values()].map(v => v.count > 1 ? `${v.name} ×${v.count}` : v.name).join(', ');
+    addRollLog(sessionId, {
+      roller,
+      label: ability.name,
+      expr: title,
+      total: totalApplied,
+      detail: `${title}: ${detailParts.join(' · ')} (total ${totalApplied}${dmgType} damage)`,
+      description: ability.description || undefined,
+      hpNote: lastHpNote,
+      reveal: {
+        presentedLive: usingPhysicalDice(),
+        kind: 'damage',
+        title: `${title} — Spell Damage`,
+        attacker: roller,
+        target: targetSummary,
+        outcome: 'hit',
+        damageDice: revealDice,
+        ...(revealMods.length ? { damageMods: revealMods } : {}),
+        damage: totalApplied,
+        damageType: roll.damageType,
+      },
+      hideMods: hidesMods(kind, entity.id),
+    }, castRollId);
+    return true;
+  }
   if (roll.kind === 'damage' && instanceCount > 0 && dice) {
     addRollLog(sessionId, {
       roller,
@@ -2069,7 +2503,7 @@ export function resolveAbilityRoll(
   advantage?: Advantage,
   targetTokenId?: string,
   damageTypeChoice?: string,
-  area?:SpellAreaPlacement,
+  area?:SpellAreaPlacement, targetTokenIds?:string[],
 ): boolean {
   if (character.sessionId !== sessionId) return false;
   if(area)return resolvePlacedSpell(sessionId,roller,'pc',character,ability,castLevel,area,placementOnly=>resolveSheetAbilityFor(sessionId,roller,'pc',{...character,stats:effectiveStats(character).scores},placementOnly?{...ability,roll:undefined,executionProfile:'manual'}:ability,castLevel,advantage,undefined,damageTypeChoice,area));
@@ -2084,6 +2518,8 @@ export function resolveAbilityRoll(
     advantage,
     targetTokenId,
     damageTypeChoice,
+    undefined,
+    targetTokenIds,
   );
 }
 
@@ -2097,7 +2533,7 @@ export function resolveMonsterSheetAbility(
   advantage?: Advantage,
   targetTokenId?: string,
   damageTypeChoice?: string,
-  area?:SpellAreaPlacement,
+  area?:SpellAreaPlacement, targetTokenIds?:string[],
 ): boolean {
   if (monster.sessionId !== sessionId) return false;
   if(area)return resolvePlacedSpell(sessionId,roller,'monster',monster,ability,castLevel,area,placementOnly=>resolveSheetAbilityFor(sessionId,roller,'monster',monster,placementOnly?{...ability,roll:undefined,executionProfile:'manual'}:ability,castLevel,advantage,undefined,damageTypeChoice,area));
@@ -2111,6 +2547,8 @@ export function resolveMonsterSheetAbility(
     advantage,
     targetTokenId,
     damageTypeChoice,
+    undefined,
+    targetTokenIds,
   );
 }
 

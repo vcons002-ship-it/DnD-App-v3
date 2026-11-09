@@ -24,7 +24,7 @@ import {requestBattlefieldFrame,cancelBattlefieldFrame} from './battlefieldFrame
 import {createLatestFrame} from '../lib/latestFrame';
 import {ManualFog,type ManualFogHandle} from './ManualFog';
 import {mirrorImageCount} from '../../../shared/linkedSpells';
-import {SpellAreaShapes} from './SpellAreaShapes';
+import {SpellAreaShapes,SpellRayTargetShapes} from './SpellAreaShapes';
 import {DEATH_SKULL} from '../lib/miniatures';
 import './door-controls.css';
 import { activeHasteCondition, speedIsZero, walkingSpeedFeet } from '../../../shared/spellBuffs';
@@ -348,7 +348,7 @@ function MapStageInner({
   const resolvingRoll=useStore(s=>saveResolve?s.snapshot?.rollLog.find(r=>r.id===saveResolve.rollId):undefined);
   const actionSnapshot=actualDm?sourceSnapshot:snapshot;
   const spellTargeting = useSpellTargeting(actionSnapshot, map);
-  const { teleportCast, teleportPoint, setTeleportPoint, teleportActor, teleportError, areaSocketId, areaCast, areaPoints, setAreaPointer, setAreaAngle, areaDirectionLocked, areaExcluded, areaActor, placeSpellArea, areaPreview, areaTargets } = spellTargeting;
+  const { teleportCast, teleportPoint, setTeleportPoint, teleportActor, teleportError, rayCast, rayActor, rayTargets, toggleRayTarget, areaSocketId, areaCast, areaPoints, setAreaPointer, setAreaAngle, areaDirectionLocked, areaExcluded, areaActor, placeSpellArea, areaPreview, areaTargets } = spellTargeting;
   const hpFx = useStore((s) => s.hpFx);
   const preparedHpFx=useStore(s=>s.preparedHpFx);
   const rollBackground = useStore(s => reduceRollBackground(s));
@@ -612,6 +612,7 @@ function MapStageInner({
   // when its own token/display actually changes (not on every snapshot).
   const handleTokenSelect = useStableCallback((tok: Token, additive: boolean) => {
     if(areaCast){placeSpellArea(tok);return;}
+    if(rayCast){toggleRayTarget(tok.id,'click');return;}
     if(tok.sharedSightOnly||tok.partiallyRevealed)return;
     if (orbTarget) setOrbTarget({...orbTarget,targetId:tok.id});
     else if (saveResolve) resolveSaveAt(tok.id);
@@ -619,7 +620,7 @@ function MapStageInner({
     if(resolveToken(snapshot,tok).dead && !orbTarget && !saveResolve&&!explicitTokenInspection()){setDetailsExpanded(true);nudgeRightPanel();}
   });
   const handleTokenActivate = useStableCallback((tok: Token) => {
-    if(areaCast)return;
+    if(areaCast||rayCast)return;
     if(tok.sharedSightOnly||tok.partiallyRevealed)return;
     if (saveResolve || orbTarget) return;
     onSelectToken(tok, false);
@@ -647,6 +648,7 @@ function MapStageInner({
   });
   const handleTokenMenu = useStableCallback((tok: Token, cx: number, cy: number) => {
     if(tok.sharedSightOnly||tok.partiallyRevealed)return;
+    if(rayCast){toggleRayTarget(tok.id,'decrement');return;}
     setHover(null);
     // Also aim the Combat section's target dropdown at the right-clicked token,
     // so closing the menu still leaves the side panel set up to attack it.
@@ -2187,6 +2189,19 @@ function MapStageInner({
               ref={layer=>{spellAreaLayerRef.current=layer;if(layer){const c=layer.getNativeCanvasElement();c.style.zIndex='6';c.style.pointerEvents='none';c.dataset.testid='spell-area-canvas';}}}>
               {map&&<SharedSpellAreas mapId={map.id} hideId={areaCast?areaSocketId:undefined} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare}/>}
               {areaCast&&areaActor&&map&&<SpellAreaShapes spellName={areaCast.name} scale={view.scale} spec={areaCast.spec} placement={areaPreview} caster={areaActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} previewState="aiming" targets={areaTargets.filter(t=>!areaExcluded.includes(t.id))}/>}
+              {rayCast&&rayActor&&map&&<SpellRayTargetShapes caster={rayActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} rangeFt={rayCast.rangeFt} scale={view.scale} damageType={rayCast.damageType} spellName={rayCast.name} targets={(() => {
+                const byId = new Map<string, { token: Token; count: number; tag: string }>();
+                for (const tid of rayTargets) {
+                  const existing = byId.get(tid);
+                  if (existing) { existing.count += 1; continue; }
+                  const tok = actionSnapshot.tokens.find(t => t.id === tid);
+                  if (!tok) continue;
+                  const e = resolveToken(actionSnapshot, tok);
+                  const tag = tok.kind === 'monster' && tok.revealTag && tok.revealTag !== 'U' ? tok.revealTag : e.name;
+                  byId.set(tid, { token: tok, count: 1, tag });
+                }
+                return [...byId.values()];
+              })()}/>}
             </Layer>
             <Layer name="hp-number-layer" listening={false} ref={layer=>{
               if(!layer)return;const canvas=layer.getNativeCanvasElement();

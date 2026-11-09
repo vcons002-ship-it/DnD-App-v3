@@ -4,6 +4,7 @@ import {partySpell} from '../../../shared/partySpells';
 import type {LiveDiceFrame} from '../../../shared/liveDiceTypes';
 import {resultTrayFor} from '../lib/rollTrayPresentation';
 import {spellAreaFor,type SpellArea} from '../../../shared/spellAreas';
+import {effectiveSheetAbility,spellInstanceCount} from '../../../shared/spellExecution';
 import type {MapEnvironment} from '../../../shared/mapEnvironment';
 import {readGraphicsQuality} from '../lib/useEnvironmentQuality';
 import {readDiceRenderingMode} from '../lib/useDiceRendering';
@@ -112,6 +113,8 @@ type Store = {
   shareSpellArea:(payload:import('../../../shared/types').SpellAreaPreviewIntent|null)=>void;
   areaCast:{payload:AbilityRollPayload;spec:SpellArea;name:string;repeat?:import('../../../shared/types').SpellRepeatPayload}|null;
   clearAreaCast:()=>void;
+  rayCast:{payload:AbilityRollPayload;name:string;instances:number;rangeFt:number;kind:'rays'|'missiles';damageType?:string}|null;
+  clearRayCast:()=>void;
   socket: TypedSocket | null;
   status: Status;
   error: string | null;
@@ -563,6 +566,8 @@ export const useStore = create<Store>((set, get) => ({
   shareSpellArea:payload=>get().socket?.emit('spell:areaPreview',payload),
   areaCast:null,
   clearAreaCast:()=>{get().socket?.emit('spell:areaPreview',null);set({areaCast:null});},
+  rayCast:null,
+  clearRayCast:()=>set({rayCast:null}),
   socket: null,
   status: 'idle',
   error: null,
@@ -1162,7 +1167,7 @@ export const useStore = create<Store>((set, get) => ({
       renderSerial++;renderPending=false;renderHpQueue.length=0;
       set({hiddenRollReview:null,hiddenRollSubmitting:false});
       completedLiveTrays.clear();
-      set({liveDice:null,resolvingDice:null, skippedLiveDiceId:null, areaCast:null,spellAreaPreviews:{},teleportCast:null, chatAccessToken: null});
+      set({liveDice:null,resolvingDice:null, skippedLiveDiceId:null, areaCast:null,rayCast:null,spellAreaPreviews:{},teleportCast:null, chatAccessToken: null});
       if (reason === 'io client disconnect') return; // we asked to leave
       set((s) => (s.status === 'connected' ? { status: 'reconnecting' } : {}));
     });
@@ -1188,7 +1193,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   selectMap: (mapId) => {
-    set({ viewMapId: mapId, areaCast:null,teleportCast:null });
+    set({ viewMapId: mapId, areaCast:null,rayCast:null,teleportCast:null });
     get().socket?.emit('map:select', { mapId });
   },
   setDmPartyView: enabled => get().socket?.emit('dm:partyView',enabled),
@@ -1374,8 +1379,32 @@ export const useStore = create<Store>((set, get) => ({
   rollAbility: (payload) => {
     const view=get().snapshot,caster=payload.kind==='pc'?view?.characters.find(c=>c.id===payload.refId):view?.monsters.find(c=>c.id===payload.refId);
     const a=caster&&'sheetAbilities'in caster?caster.sheetAbilities.find(a=>a.id===payload.abilityId):undefined,spec=a&&spellAreaFor(a,payload.castLevel);
-    if(a&&partySpell(a)==='misty step'&&!payload.destination){set({teleportCast:{...payload,targetTokenId:undefined},areaCast:null,saveResolve:null,orbTarget:null});return;}
-    if(spec&&!payload.area){set({areaCast:{payload:{...payload,targetTokenId:undefined},spec,name:a!.name},saveResolve:null,orbTarget:null});return;}
+    if(a&&partySpell(a)==='misty step'&&!payload.destination){set({teleportCast:{...payload,targetTokenId:undefined},areaCast:null,rayCast:null,saveResolve:null,orbTarget:null});return;}
+    if(spec&&!payload.area){set({areaCast:{payload:{...payload,targetTokenId:undefined},spec,name:a!.name},rayCast:null,saveResolve:null,orbTarget:null});return;}
+    if(a&&!payload.targetTokenIds){
+      const exec=effectiveSheetAbility(a,payload.castLevel);
+      const casterLevel=payload.kind==='pc'&&caster&&'level'in caster?caster.level:undefined;
+      const instances=exec.roll?spellInstanceCount(exec.roll,payload.castLevel,casterLevel):0;
+      if(instances>0&&exec.roll?.dice&&(exec.roll.kind==='attack'||exec.roll.kind==='damage')){
+        const rangeMatch=/\b(\d+)\s*(?:ft|feet)\b/i.exec(a.meta??'')??/\b(\d+)\s*(?:ft|feet)\b/i.exec(a.description??'');
+        const rangeFt=rangeMatch?Number(rangeMatch[1]):120;
+        set({
+          rayCast:{
+            payload:{...payload,targetTokenId:undefined},
+            name:a.name,
+            instances,
+            rangeFt,
+            kind:exec.roll.kind==='attack'?'rays':'missiles',
+            damageType:payload.damageType??exec.roll.damageType,
+          },
+          areaCast:null,
+          teleportCast:null,
+          saveResolve:null,
+          orbTarget:null,
+        });
+        return;
+      }
+    }
     get().socket?.emit('ability:roll',payload);
   },
   setAbilityRecharge: (kind, refId, abilityId, spent) => get().socket?.emit('ability:setRecharge', { kind, refId, abilityId, spent }),

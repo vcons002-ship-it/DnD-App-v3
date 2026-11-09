@@ -9,6 +9,7 @@ import {
   setVisionFog,getMap,
 } from './sessions.js';
 import { getSpell } from './spells/srd.js';
+import { withDiceSource, type PhysicalDiceInfo } from '../../shared/dice.js';
 import {editMapWalls} from './mapWalls.js';
 import {buildSnapshot} from './visibility.js';
 import {moveToken,updateCharacter} from './sessions.js';
@@ -267,6 +268,82 @@ describe('spell socket target and ownership boundaries', () => {
     expect(getRollEntry(cast.id)?.apply?.consumedAttacks).toBe(3);
     expect(getCharacter(f.caster.id)!.spellSlots.L2.used).toBe(before + 1);
     expect(getCharacter(f.caster.id)!.sheetAbilities.find((a) => a.id === ability.id)).toEqual(ability);
+  });
+  it('rolls pre-selected Scorching Ray and Magic Missile targets as tagged group throws', () => {
+    const f = fixture(), t1 = f.target(), t2 = f.target(), client = harness(f.session.id, f.map.id);
+    claimCharacter(f.caster.id, client.id);
+    setFogLayer(f.map.id, 'map', false);
+    setFogLayer(f.map.id, 'tokens', false);
+    createToken({ mapId: f.map.id, kind: 'pc', refId: f.caster.id, x: 50, y: 50 });
+    const scorching: SheetAbility = { ...getSpell('Scorching Ray')!, id: 'rays' };
+    const missile: SheetAbility = { ...getSpell('Magic Missile')!, id: 'missile' };
+    setSheetAbility('pc', f.caster.id, scorching);
+    setSheetAbility('pc', f.caster.id, missile);
+    const seenInfos: PhysicalDiceInfo[] = [];
+    withDiceSource((sides, info) => {
+      seenInfos.push(info);
+      return sides.map((s) => (s === 20 ? 18 : 4));
+    }, () => {
+      client.send('ability:roll', {
+        kind: 'pc',
+        refId: f.caster.id,
+        abilityId: scorching.id,
+        castLevel: 2,
+        targetTokenIds: [t1.token.id, t1.token.id, t2.token.id],
+      });
+    });
+    expect(seenInfos).toHaveLength(1);
+    expect(seenInfos[0].saveDice?.map((d) => ({ rollKind: d.rollKind, tokenId: d.target.tokenId, group: d.group }))).toEqual([
+      { rollKind: 'attack', tokenId: t1.token.id, group: '0' },
+      { rollKind: 'attack', tokenId: t1.token.id, group: '1' },
+      { rollKind: 'attack', tokenId: t2.token.id, group: '2' },
+    ]);
+    const attackEntry = listRollLog(f.session.id).at(-1)!;
+    expect(attackEntry.pending?.rayHits).toHaveLength(3);
+    expect(getMonster(t1.monster.id)!.curHp).toBe(40);
+    expect(getMonster(t2.monster.id)!.curHp).toBe(40);
+
+    seenInfos.length = 0;
+    withDiceSource((sides, info) => {
+      seenInfos.push(info);
+      return sides.map(() => 4);
+    }, () => {
+      client.send('combat:damage', { rollId: attackEntry.id });
+    });
+    expect(seenInfos).toHaveLength(1);
+    expect(seenInfos[0].saveDice).toHaveLength(6);
+    expect(seenInfos[0].saveDice?.map((d) => ({ rollKind: d.rollKind, tokenId: d.target.tokenId, group: d.group }))).toEqual([
+      { rollKind: 'damage', tokenId: t1.token.id, group: '0' },
+      { rollKind: 'damage', tokenId: t1.token.id, group: '0' },
+      { rollKind: 'damage', tokenId: t1.token.id, group: '1' },
+      { rollKind: 'damage', tokenId: t1.token.id, group: '1' },
+      { rollKind: 'damage', tokenId: t2.token.id, group: '2' },
+      { rollKind: 'damage', tokenId: t2.token.id, group: '2' },
+    ]);
+    expect(getMonster(t1.monster.id)!.curHp).toBe(40 - 16);
+    expect(getMonster(t2.monster.id)!.curHp).toBe(40 - 8);
+
+    seenInfos.length = 0;
+    withDiceSource((sides, info) => {
+      seenInfos.push(info);
+      return sides.map(() => 3);
+    }, () => {
+      client.send('ability:roll', {
+        kind: 'pc',
+        refId: f.caster.id,
+        abilityId: missile.id,
+        castLevel: 1,
+        targetTokenIds: [t1.token.id, t2.token.id, t2.token.id],
+      });
+    });
+    expect(seenInfos).toHaveLength(1);
+    expect(seenInfos[0].saveDice?.map((d) => ({ rollKind: d.rollKind, tokenId: d.target.tokenId, modifier: d.modifier, group: d.group }))).toEqual([
+      { rollKind: 'damage', tokenId: t1.token.id, modifier: 1, group: '0' },
+      { rollKind: 'damage', tokenId: t2.token.id, modifier: 1, group: '1' },
+      { rollKind: 'damage', tokenId: t2.token.id, modifier: 1, group: '2' },
+    ]);
+    expect(getMonster(t1.monster.id)!.curHp).toBe(24 - 4);
+    expect(getMonster(t2.monster.id)!.curHp).toBe(32 - 8);
   });
   it('rejects missing/invalid variable damage type before slot spend and accepts an allowed type', () => {
     const f = fixture(), target = f.target(), client = harness(f.session.id, f.map.id);

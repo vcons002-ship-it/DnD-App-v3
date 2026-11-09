@@ -1645,7 +1645,9 @@ details.sheet-actions-traits[open] > summary::before { content: '▾ '; }
 .attack-controls select { flex: 1; }
 /* Combat section ability rows: roll button + optional upcast level select. */
 .combat-summon-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.combat-ability-row { display: flex; align-items: center; gap: 4px; }
+.combat-ability-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.combat-ability-row:has(select) { padding: 4px; margin: 3px 0; border: 1px solid rgba(183, 155, 100, 0.24); border-radius: 5px; background: rgba(12, 15, 22, 0.45); }
+.combat-ability-row select { flex: 1 1 auto; width: auto; min-width: 0; margin: 0; }
 .combat-ability-row:has(.spell-cast-summary) { flex-wrap:wrap; }
 .spell-cast-summary { flex-basis:100%; color:var(--muted); font-size:11px; line-height:1.4; }
 .spell-cast-control { display:flex; flex-direction:column; gap:3px; align-items:flex-start; max-width:100%; }
@@ -1660,7 +1662,8 @@ details.sheet-actions-traits[open] > summary::before { content: '▾ '; }
 .spell-cast-dialog .spell-target-dock { position:static; transform:none; width:auto; max-width:100%; margin:12px 0; }
 .spellbook-cast-note { font-size:12px; color:var(--muted); }
 @media(max-width:600px) { .spellbook-row-head { flex-wrap:wrap; } .spellbook-row-head>.spell-toggle { flex-basis:100%; } .spell-cast-dialog .btn { min-height:40px; } }
-.combat-ability-row .attack-row { flex: 1; margin: 3px 0; }
+.combat-ability-row .attack-row, .combat-ability-row .fm-spell-attack { flex: 1 1 140px; min-width: 0; margin: 3px 0; white-space: normal; overflow-wrap: break-word; }
+.combat-ability-row:has(select) .attack-row, .combat-ability-row:has(select) .fm-spell-attack { flex: 1 1 100%; margin: 0; }
 /* Combat section toggle chips (stances / masteries / maneuvers). */
 .combat-toggles { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; }
 .combat-toggle-row { display: flex; align-items: center; gap: 6px; }

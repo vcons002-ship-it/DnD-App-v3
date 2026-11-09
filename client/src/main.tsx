@@ -19,7 +19,7 @@ function Home() {
   return (
     <div className="home">
       <LegacyModeControl/>
-      <h1>DnD App v2</h1>
+      <h1>DnD App v3</h1>
       <p>Pick how you're joining the table:</p>
       <div className="home-links">
         <Link className="btn big" to="/dm">

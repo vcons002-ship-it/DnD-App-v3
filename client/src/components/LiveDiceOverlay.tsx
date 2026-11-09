@@ -297,15 +297,24 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
  const saveResult=(i:number)=>{
    const save=frame.saveDice?.[i];if(!save||!frame.done||(!arrived.includes(i)&&!failed))return undefined;
    const indices=frame.saveDice!.flatMap((s,j)=>s.group===save.group?[j]:[]);
-   const faces=indices.map(j=>frame.values[j]??0),face=save.mode==='dis'?Math.min(...faces):Math.max(...faces);
+   const faces=indices.map(j=>frame.values[j]??0);
+   if(save.rollKind==='damage'){
+     const sum=faces.reduce((a,b)=>a+b,0),modifier=save.modifier??0,total=sum+modifier;
+     const calcParts=[faces.join(' + '),...(modifier?[`${modifier>=0?'+':'−'} ${Math.abs(modifier)}`]:[])];
+     const calculation=save.hideModifiers?'':calcParts.length>1||faces.length>1?`${calcParts.join(' ')} = ${total}`:`${total}`;
+     const dmgLabel=save.damageType?`${total} ${save.damageType}`:`${total} dmg`;
+     return {calculation,outcome:bonusesShown?(save.crit?`CRIT ${dmgLabel}`:dmgLabel):save.hideModifiers?'Resolving…':'Adding bonuses…'};
+   }
+   const face=save.mode==='dis'?Math.min(...faces):Math.max(...faces);
    if(indices.length>1&&i!==indices[faces.indexOf(face)])return {calculation:'',outcome:'Discarded'};
    const modifier=save.modifier??0,total=face+modifier;return {calculation:save.hideModifiers?'':`${face} ${modifier>=0?'+':'−'} ${Math.abs(modifier)} = ${total}`,outcome:bonusesShown?(save.rollKind==='initiative'?save.hideModifiers?'Initiative rolled':`Initiative ${total}`:(save.outcome??(!save.autoFail&&save.dc!==undefined&&total>=save.dc?'pass':'fail')).toUpperCase()):save.hideModifiers?'Resolving…':'Adding bonuses…'};
  };
  const saveBonus=(i:number)=>{
    const result=saveResult(i),save=frame.saveDice![i],visible=!!result;
+   if(save.rollKind==='damage'&&frame.saveDice!.findIndex(s=>s.group===save.group)!==i)return null;
    return <span className="tray-save-outcome" data-outcome={result?.outcome} data-bonus-phase={visible?(bonusesShown?'complete':'adding'):'waiting'}>
      <span className="tray-save-summary"><span className="tray-save-name" title={save.label}>{save.label}</span><b>{result?.outcome||'\u00a0'}</b></span>
-     {!save.hideModifiers&&<><small>{save.rollKind==='initiative'?'Initiative bonus':'Save bonus'} <em>{visible?`${(save.modifier??0)>=0?'+':'−'}${Math.abs(save.modifier??0)}`:'\u00a0'}</em></small>
+     {!save.hideModifiers&&<>{(save.rollKind!=='damage'||!!save.modifier)&&<small>{save.rollKind==='initiative'?'Initiative bonus':save.rollKind==='attack'?'Attack bonus':save.rollKind==='damage'?'Damage bonus':'Save bonus'} <em>{visible?`${(save.modifier??0)>=0?'+':'−'}${Math.abs(save.modifier??0)}`:'\u00a0'}</em></small>}
      <span className="tray-save-equation">{bonusesShown?result?.calculation:'\u00a0'}</span></>}
      {bonusesShown&&result?.outcome!=='Discarded'&&(save.passEffect||save.failEffect)&&<small>{result?.outcome==='PASS'?save.passEffect:save.failEffect}</small>}
    </span>;
@@ -322,7 +331,7 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
  const heading=saveRollHeading(frame,title??frame.label,resultHeader?.attacker);
  return <div className={`roll-reveal-backdrop${compact?' is-impact':''}`} data-live-dice={result||compact?undefined:'true'} data-live-calculation={frame.calculation?'true':undefined} data-result-hold-ms={frame.resultHoldMs} data-private-roll={hiddenPrivate||undefined} data-reviewing={!!hiddenReview} data-awaiting-start={pendingStart||undefined} data-dice-presentation={result?'result':'live'} data-roll-id={frame.id}><div ref={card} className={`roll-reveal${naturalCritical?' roll-reveal-crit':''}`} data-roll-id={rollId??frame.id} data-reveal-kind={revealKind} data-dice-theme={theme.id} data-impact-ready={impactReady} role="status" aria-label="Live dice roll" onClick={skip} title={hiddenReview||pendingStart?undefined:"Click or tap to skip animation"}>
   <div className="roll-reveal-title" role="heading" aria-level={2} title={heading}>{heading}</div>
-  <div className="roll-reveal-who">{frame.saveDice&&frame.saveDice[0]?.rollKind!=='initiative'?'Triggered by ':''}{frame.attacker??resultHeader?.attacker??frame.roller}{target&&<span className="rr-arrow"> &rarr; {target}</span>}{!!frame.advantageReasons?.length&&<span className={`rr-adv-reason is-${frame.advantageState??frame.mode??'straight'}`}> &middot; {(frame.advantageState??frame.mode)==='adv'?'Advantage':(frame.advantageState??frame.mode)==='dis'?'Disadvantage':'Straight (adv + dis)'}: {frame.advantageReasons.join(', ')}</span>}</div>
+  <div className="roll-reveal-who">{frame.saveDice&&!frame.saveDice[0]?.rollKind?'Triggered by ':''}{frame.attacker??resultHeader?.attacker??frame.roller}{target&&<span className="rr-arrow"> &rarr; {target}</span>}{!!frame.advantageReasons?.length&&<span className={`rr-adv-reason is-${frame.advantageState??frame.mode??'straight'}`}> &middot; {(frame.advantageState??frame.mode)==='adv'?'Advantage':(frame.advantageState??frame.mode)==='dis'?'Disadvantage':'Straight (adv + dis)'}: {frame.advantageReasons.join(', ')}</span>}</div>
   {naturalTwenty&&!compact&&!hiddenReview&&<NaturalTwentyCelebration key={frame.id}/>}
   {naturalCritical&&!compact&&!hiddenReview&&<div className="roll-reveal-outcome tray-natural-critical" role="status" aria-label="Roll result">CRITICAL HIT!</div>}
   <div ref={root} className="physics-dice-tray" style={resultLayout} data-renderer={twoDimensional?'2d':'3d'} data-dense-results={denseResults||undefined} data-status={frame.done?'settled':'rolling'} data-theme={theme.id} data-entry-side={own?'bottom':'top'} data-mode={frame.mode} data-material={twoDimensional?'canvas2d':failed?'unavailable':!prepared?'loading':theme.id==='sorcerer'?'volumetric-glass':theme.id==='fighter'?'obsidian-gold':theme.id==='ranger'?'forest-resin':theme.id.startsWith('dm-')?'purple-resin':theme.id} role="group" aria-label="Live dice tray">
