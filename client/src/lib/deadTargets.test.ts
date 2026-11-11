@@ -33,5 +33,9 @@ describe('confirmed death and target lists',()=>{
   it('healing and buff lists still include downed allies but filter dead and partially-revealed tokens, including the caster',()=>{
     const {snapshot,caster}=fixture('player');const ids=(show=false)=>healTargets(snapshot,caster,show).map(t=>t.id);
     expect(ids()).toEqual(['caster','downed']);expect(ids(true)).toEqual(['caster','downed','dead-pc']);snapshot.characters[0].deathSaves.failures=3;expect(ids()).toEqual(['downed']);
+    snapshot.characters[0].deathSaves.failures=0;
+    const withNeutral={...snapshot,tokens:[...snapshot.tokens,{id:'neutral-npc',kind:'monster',refId:'neutral-npc',mapId:'map',x:75,y:50,widthFt:5,isHidden:false} as Token],monsters:[...snapshot.monsters,{id:'neutral-npc',name:'Neutral NPC',curHp:10,maxHp:20,conditions:[],icon:'',disposition:'neutral'} as unknown as Monster]} as StateSnapshot;
+    expect(healTargets(withNeutral,caster,false,false).map(t=>t.id)).toEqual(['caster','downed','neutral-npc']);
+    expect(healTargets(withNeutral,caster,false,true).map(t=>t.id)).toEqual(['caster','downed','neutral-npc','living']);
   });
 });

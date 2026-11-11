@@ -1,8 +1,9 @@
-import { memo } from 'react';
+import { memo, useEffect } from 'react';
+import { tokenDistanceFt } from '../../../shared/distance';
 import type { StateSnapshot } from '../../../shared/types';
 import { resolveToken } from '../lib/entities';
 import { useStore } from '../state/socket';
-import { SpellAreaShapes } from './SpellAreaShapes';
+import { resolveTargetAffinity, SpellAreaShapes, SpellRayTargetShapes } from './SpellAreaShapes';
 import type { useSpellTargeting } from './useSpellTargeting';
 
 /** Other casters' live spell-area aims (~14 updates/s each while aiming).
@@ -21,6 +22,7 @@ export const SharedSpellAreas = memo(function SharedSpellAreas({
   const previews = useStore((s) => s.spellAreaPreviews);
   return (
     <>
+
       {Object.values(previews)
         .filter((p) => !p.resolving && p.area.mapId === mapId && p.id !== hideId)
         .map((p) => (
@@ -37,6 +39,70 @@ export const SharedSpellAreas = memo(function SharedSpellAreas({
           />
         ))}
     </>
+  );
+});
+
+export const CombatTargetLine = memo(function CombatTargetLine({
+  tokens,
+  mapId,
+  scale,
+  pxPerFoot,
+  getPosition,
+  getBaseWidthFt,
+  is3dToken,
+}: {
+  tokens: StateSnapshot['tokens'];
+  mapId: string;
+  scale: number;
+  pxPerFoot: number;
+  getPosition?: (tokenId: string) => { x: number; y: number } | undefined;
+  getBaseWidthFt?: (token: { id: string; widthFt: number; kind?: string; refId?: string; miniatureWidthFt?: number }) => number;
+  is3dToken?: (tokenId: string) => boolean;
+}) {
+  const storeSnapshot = useStore((s) => s.snapshot);
+  const showTargetLine = useStore((s) => s.showTargetLine);
+  const floatingMenuTarget = useStore((s) => s.floatingMenuTarget);
+  const combatPanelTarget = useStore((s) => s.combatPanelTarget);
+  const rayCast = useStore((s) => s.rayCast);
+  const areaCast = useStore((s) => s.areaCast);
+  if (!showTargetLine || rayCast || areaCast) return null;
+  const active = floatingMenuTarget ?? combatPanelTarget;
+  if (!active || active.attackerTokenId === active.targetTokenId) return null;
+  const liveTokens = storeSnapshot?.tokens ?? tokens;
+  const caster =
+    liveTokens.find((t) => t.id === active.attackerTokenId && t.mapId === mapId) ??
+    tokens.find((t) => t.id === active.attackerTokenId && t.mapId === mapId);
+  const target =
+    liveTokens.find(
+      (t) => t.id === active.targetTokenId && t.mapId === mapId && !t.sharedSightOnly && !t.partiallyRevealed,
+    ) ??
+    tokens.find(
+      (t) => t.id === active.targetTokenId && t.mapId === mapId && !t.sharedSightOnly && !t.partiallyRevealed,
+    );
+  if (!caster || !target) return null;
+  const affinityIds = storeSnapshot?.serverRendering?.enabled && storeSnapshot.legacyGeometry !== undefined ? new Set(storeSnapshot.legacyGeometry?.affinity ?? []) : undefined;
+  const targetDisposition = resolveTargetAffinity(storeSnapshot?.monsters, caster, target, {
+    role: storeSnapshot?.role,
+    vision: storeSnapshot?.playerVision,
+    map: storeSnapshot?.map,
+    affinityIds,
+    targetPos: getPosition ? getPosition(target.id) : undefined,
+    casterPos: getPosition ? getPosition(caster.id) : undefined,
+  });
+  return (
+    <SpellRayTargetShapes
+      caster={caster}
+      pxPerFoot={pxPerFoot}
+      scale={scale}
+      showCount={false}
+      affinity={targetDisposition}
+      getPosition={getPosition}
+      getBaseWidthFt={getBaseWidthFt}
+      is3dToken={is3dToken}
+      midLabel={!floatingMenuTarget && combatPanelTarget?.midLabel ? combatPanelTarget.midLabel : storeSnapshot?.map ? `${Math.round(tokenDistanceFt(caster, target, storeSnapshot.map))} ft` : undefined}
+      outOfRange={!floatingMenuTarget ? combatPanelTarget?.outOfRange : undefined}
+      targets={[{ token: target, count: 1, tag: '', affinity: targetDisposition }]}
+    />
   );
 });
 
@@ -80,6 +146,17 @@ export function SpellTargetingPrompts({
     areaRangeError,
   } = targeting;
 
+  const mapTargetPick = useStore((s) => s.mapTargetPick);
+  const setMapTargetPick = useStore((s) => s.setMapTargetPick);
+  useEffect(() => {
+    if (!mapTargetPick) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMapTargetPick(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mapTargetPick, setMapTargetPick]);
+
   const groupedRayTargets = (() => {
     if (!rayCast) return [];
     const mapById = new Map<string, { token: StateSnapshot['tokens'][number]; tag: string; count: number }>();
@@ -100,6 +177,23 @@ export function SpellTargetingPrompts({
 
   return (
     <>
+
+      {Boolean(mapTargetPick) && (
+        <div
+          className="save-resolve-banner spell-area-prompt map-target-pick-banner"
+          role="region"
+          aria-label="Pick target on map"
+          style={{ zIndex: 30, borderColor: '#6bb8ff' }}
+        >
+          <strong>
+            🎯 Pick {mapTargetPick === 'heal' ? 'Heal' : mapTargetPick === 'buff' ? 'Buff' : 'Attack'} Target
+          </strong>
+          <span>Click any visible creature on the map (tip: Alt+Click aims anytime).</span>
+          <button className="btn tiny" onClick={() => setMapTargetPick(null)}>
+            Cancel (Esc)
+          </button>
+        </div>
+      )}
       {teleportCast && (
         <div
           className="save-resolve-banner spell-area-prompt"
@@ -139,11 +233,13 @@ export function SpellTargetingPrompts({
           }}
         >
           <strong>
-            {rayCast.name} · {rayTargets.length} / {rayCast.instances} {rayCast.kind} · {rayCast.rangeFt} ft
+            {rayCast.name} · {rayTargets.length} / {rayCast.instances} {rayCast.kind}{rayCast.distinct && (rayCast.minTargets ?? rayCast.instances) < rayCast.instances ? ' (max)' : ''} · {rayCast.rangeFt} ft
           </strong>
           <span>
-            Click creatures on the map to aim {rayCast.kind} (click again to stack {rayCast.kind} or undo when full). No
-            slot is spent until you click Cast.
+            {rayCast.distinct
+              ? `Click${rayCast.allowSelf ? ' yourself or' : ''} up to ${rayCast.instances} distinct ${rayCast.kind} on the map (click again to deselect). No slot is spent until you click Cast.`
+              : `Click creatures on the map to aim ${rayCast.kind} (click again to stack ${rayCast.kind} or undo when full). No slot is spent until you click Cast.`}
+
           </span>
           {rayError && (
             <span role="alert" style={{ color: '#ff9696' }}>
@@ -160,14 +256,14 @@ export function SpellTargetingPrompts({
                   onClick={() => toggleRayTarget(g.token.id, 'decrement')}
                   title="Click to remove one ray/missile from this target"
                 >
-                  {g.tag} ×{g.count} ✕
+                  {rayCast.distinct ? g.tag : `${g.tag} ×${g.count}`} ✕
                 </button>
               ))}
             </div>
           )}
           <button
             className="btn tiny"
-            disabled={rayTargets.length !== rayCast.instances || pendingSpellCost(rayCast.payload)?.unavailable}
+            disabled={rayTargets.length < (rayCast.minTargets ?? rayCast.instances) || rayTargets.length > rayCast.instances || pendingSpellCost(rayCast.payload)?.unavailable}
             onClick={() => {
               useStore.getState().rollAbility({ ...rayCast.payload, targetTokenIds: rayTargets });
               clearRayCast();

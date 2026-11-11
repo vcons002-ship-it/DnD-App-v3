@@ -2,7 +2,73 @@ import { useEffect, useRef } from 'react';
 import type Konva from 'konva';
 import { Circle, Group, Line, Rect, Text } from 'react-konva';
 import { areaOrigin, areaPolygon, type SpellArea, type SpellAreaPlacement } from '../../../shared/spellAreas';
-import { useMapAnimation } from '../lib/useMapAnimation';
+import { tokenRadiusPx, visionLit, visionShowsAffinity, type PlayerVision } from '../../../shared/playerVision';
+
+export type TargetAffinity = 'enemy' | 'neutral' | 'friendly' | 'unknown';
+
+export type AffinityVisibilityOptions = {
+  role?: string;
+  vision?: PlayerVision | null;
+  map?: { gridSizePx: number; feetPerSquare: number } | null;
+  affinityIds?: ReadonlySet<string>;
+  targetPos?: { x: number; y: number };
+  casterPos?: { x: number; y: number };
+};
+
+export function isTokenAffinityVisible(
+  tok: { id?: string; kind?: string; x?: number; y?: number; widthFt?: number; sharedSightOnly?: boolean; partiallyRevealed?: boolean } | undefined,
+  opts?: AffinityVisibilityOptions,
+  pos?: { x: number; y: number },
+): boolean {
+  if (!tok) return true;
+  if (tok.sharedSightOnly || tok.partiallyRevealed) return false;
+  if (!opts || (opts.role === 'dm' && !opts.vision)) return true;
+  if (tok.kind === 'pc') return true;
+  if (opts.affinityIds && tok.id && !opts.affinityIds.has(tok.id)) return false;
+  const vision = opts.vision;
+  if (!vision || vision.daylight) return true;
+  const x = pos?.x ?? tok.x ?? 0;
+  const y = pos?.y ?? tok.y ?? 0;
+  const r = tok.widthFt ? tokenRadiusPx({ widthFt: tok.widthFt }, opts.map) : 0;
+  if (!visionShowsAffinity(vision, x, y, r)) return false;
+  if (visionLit(vision, x, y)) return true;
+  if (r > 0) {
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4;
+      if (visionLit(vision, x + Math.cos(a) * r, y + Math.sin(a) * r)) return true;
+    }
+  }
+  return false;
+}
+
+export function resolveTargetAffinity(
+  monsters: readonly { id: string; disposition: 'enemy' | 'neutral' | 'friendly' }[] | undefined,
+  caster: { id?: string; kind?: string; refId?: string; x?: number; y?: number; widthFt?: number; sharedSightOnly?: boolean; partiallyRevealed?: boolean } | undefined,
+  target: { id?: string; kind?: string; refId?: string; x?: number; y?: number; widthFt?: number; sharedSightOnly?: boolean; partiallyRevealed?: boolean },
+  opts?: AffinityVisibilityOptions,
+): TargetAffinity {
+  const tokenDisp = (tok: typeof caster, pos?: { x: number; y: number }): TargetAffinity => {
+    if (!tok || tok.kind === 'pc') return 'friendly';
+    if (!isTokenAffinityVisible(tok, opts, pos)) return 'unknown';
+    return (tok.refId ? monsters?.find((m) => m.id === tok.refId)?.disposition : undefined) ?? 'enemy';
+  };
+  const targetDisp = tokenDisp(target, opts?.targetPos);
+  if (targetDisp !== 'friendly') return targetDisp;
+  return tokenDisp(caster, opts?.casterPos);
+}
+
+export function affinityPalette(aff: TargetAffinity = 'enemy') {
+  if (aff === 'unknown') {
+    return { glow: '#8e96a4', core: '#c8d0dc', spark: '#eef2f7', bg: '#1a1e26eb', border: '#8e96a4' };
+  }
+  if (aff === 'friendly') {
+    return { glow: '#39c46b', core: '#8cf0ae', spark: '#e8fff0', bg: '#082612eb', border: '#39c46b' };
+  }
+  if (aff === 'neutral') {
+    return { glow: '#f5c518', core: '#ffe678', spark: '#fffbe6', bg: '#2b2206eb', border: '#f5c518' };
+  }
+  return { glow: '#e23b3b', core: '#ff8a8a', spark: '#ffe6e6', bg: '#2b0909eb', border: '#e23b3b' };
+}
 
 export function SpellAreaShapes({
   spec,
@@ -23,7 +89,14 @@ export function SpellAreaShapes({
   placement: SpellAreaPlacement;
   caster: { x: number; y: number };
   pxPerFoot: number;
-  targets: { x: number; y: number; widthFt: number }[];
+  targets: {
+    x: number;
+    y: number;
+    widthFt: number;
+    baseWidthFt?: number;
+    affinity?: TargetAffinity;
+    hideRing?: boolean;
+  }[];
   onRemove?: () => void;
   scale?: number;
 }) {
@@ -78,9 +151,18 @@ export function SpellAreaShapes({
           </Group>
         );
       })}
-      {targets.map((t, i) => (
-        <Circle key={i} x={t.x} y={t.y} radius={(t.widthFt * pxPerFoot) / 2} stroke="#fff5bf" strokeWidth={2 / scale} />
-      ))}
+      {targets.map((t, i) =>
+        t.hideRing ? null : (
+          <Circle
+            key={i}
+            x={t.x}
+            y={t.y}
+            radius={((t.baseWidthFt ?? t.widthFt) * pxPerFoot) / 2}
+            stroke={t.affinity ? affinityPalette(t.affinity).glow : '#fff5bf'}
+            strokeWidth={2 / scale}
+          />
+        ),
+      )}
     </Group>
   );
 }
@@ -120,77 +202,201 @@ function evalQuadraticBezier(
   return { x, y, angleDeg: (Math.atan2(ty, tx) * 180) / Math.PI };
 }
 
+type RayToken = {
+  id: string;
+  x: number;
+  y: number;
+  widthFt: number;
+  kind?: string;
+  refId?: string;
+  miniatureWidthFt?: number;
+};
+
 export function SpellRayTargetShapes({
   caster,
   targets,
   pxPerFoot,
   rangeFt,
   scale = 1,
-  damageType,
-  spellName,
+  showCount = true,
+  affinity,
+  getPosition,
+  getBaseWidthFt,
+  is3dToken,
+  midLabel,
+  outOfRange,
+  distinct,
 }: {
-  caster: { x: number; y: number; widthFt: number };
-  targets: { token: { id: string; x: number; y: number; widthFt: number }; count: number; tag: string }[];
+  caster: { id?: string; x: number; y: number; widthFt: number; kind?: string; refId?: string; miniatureWidthFt?: number };
+  targets: {
+    token: RayToken;
+    count: number;
+    tag: string;
+    affinity?: TargetAffinity;
+  }[];
   pxPerFoot: number;
-  rangeFt: number;
+  rangeFt?: number;
   scale?: number;
   damageType?: string;
   spellName?: string;
+  showCount?: boolean;
+  affinity?: TargetAffinity;
+  getPosition?: (tokenId: string) => { x: number; y: number } | undefined;
+  getBaseWidthFt?: (token: RayToken) => number;
+  is3dToken?: (tokenId: string) => boolean;
+  midLabel?: string;
+  outOfRange?: boolean;
+  distinct?: boolean;
 }) {
   const groupRef = useRef<Konva.Group>(null);
-  const { enabled: animateEnabled } = useMapAnimation();
+  const latestRef = useRef({ caster, targets, pxPerFoot, scale, getPosition, getBaseWidthFt, is3dToken });
+  latestRef.current = { caster, targets, pxPerFoot, scale, getPosition, getBaseWidthFt, is3dToken };
 
-  const lowerName = (spellName ?? '').trim().toLowerCase();
-  const lowerType = (damageType ?? '').trim().toLowerCase();
-  const palette =
-    lowerType === 'fire' || lowerName.includes('scorching')
-      ? { glow: '#ff6422', core: '#ffe299', spark: '#fff6d6', bg: '#2b1006eb', border: '#ff8a47' }
-      : lowerName.includes('eldritch')
-        ? { glow: '#35e0a1', core: '#d4fff0', spark: '#f2fffa', bg: '#09261ceb', border: '#63f5be' }
-        : lowerType === 'force' || lowerName.includes('missile')
-          ? { glow: '#b335ff', core: '#e8a1ff', spark: '#fff0ff', bg: '#1b0e36eb', border: '#d584ff' }
-          : { glow: '#5cb8ff', core: '#e3f4ff', spark: '#ffffff', bg: '#0c2036eb', border: '#82caff' };
+  const defaultPalette = affinityPalette(affinity ?? targets[0]?.affinity ?? 'enemy');
 
   useEffect(() => {
-    if (!animateEnabled || !targets.length) return;
+    if (!targets.length) return;
     let raf = 0;
     const tick = (now: number) => {
       const root = groupRef.current;
       if (!root) return;
+      const {
+        caster: curCaster,
+        targets: curTargets,
+        pxPerFoot: curPpf,
+        scale: curScale,
+        getPosition: curGetPos,
+        getBaseWidthFt: curGetBaseWidth,
+        is3dToken: curIs3d,
+      } = latestRef.current;
       const sec = now / 1000;
-      const sparks = root.find('.ray-spark') as Konva.Line[];
-      for (let i = 0; i < sparks.length; i++) {
-        const spark = sparks[i];
-        const phase = Number(spark.getAttr('rayPhase') ?? 0);
-        spark.dashOffset(-((sec * 96 + phase * 32) / scale));
+      const cPos = (curCaster.id ? curGetPos?.(curCaster.id) : undefined) ?? curCaster;
+      const cBaseWidthFt = curCaster.id
+        ? (curGetBaseWidth?.({ ...curCaster, id: curCaster.id }) ?? curCaster.widthFt)
+        : curCaster.widthFt;
+      const cRadius = (cBaseWidthFt * curPpf) / 2;
+
+      const rangeCircle = root.findOne<Konva.Circle>('.ray-range-circle');
+      if (rangeCircle) {
+        rangeCircle.position({ x: cPos.x, y: cPos.y });
       }
-      const rings = root.find('.ray-target-ring') as Konva.Circle[];
-      for (let i = 0; i < rings.length; i++) {
-        rings[i].dashOffset(-((sec * 18) / scale));
+
+      const targetGroups = root.find('.ray-target-group') as Konva.Group[];
+      for (let i = 0; i < targetGroups.length; i++) {
+        const tGroup = targetGroups[i];
+        const targetIdx = Number(tGroup.getAttr('targetIdx') ?? i);
+        const item = curTargets[targetIdx];
+        if (!item) continue;
+        const tPos = curGetPos?.(item.token.id) ?? item.token;
+        const dx = tPos.x - cPos.x;
+        const dy = tPos.y - cPos.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        const nx = -uy;
+        const ny = ux;
+        const tBaseWidthFt = curGetBaseWidth?.(item.token) ?? item.token.widthFt;
+        const targetRadius = (tBaseWidthFt * curPpf) / 2;
+        const hideRing = !!curIs3d?.(item.token.id);
+        const startOffset = Math.min(cRadius * 1.05, dist * 0.42);
+        const endOffset = Math.min(hideRing ? targetRadius * 1.19 : targetRadius + 8.5 / curScale, dist * 0.42);
+        const sx = cPos.x + ux * startOffset;
+        const sy = cPos.y + uy * startOffset;
+        const ex = tPos.x - ux * endOffset;
+        const ey = tPos.y - uy * endOffset;
+        const spreadStep = Math.min(30 / curScale, Math.max(15 / curScale, dist * 0.16));
+
+        const outerRing = tGroup.findOne<Konva.Circle>('.ray-outer-ring');
+        if (outerRing) {
+          outerRing.visible(!hideRing);
+          outerRing.position({ x: tPos.x, y: tPos.y });
+          outerRing.radius(targetRadius + 4 / curScale);
+        }
+
+        const targetRing = tGroup.findOne<Konva.Circle>('.ray-target-ring');
+        if (targetRing) {
+          targetRing.visible(!hideRing);
+          targetRing.position({ x: tPos.x, y: tPos.y });
+          targetRing.radius(targetRadius + 8.5 / curScale);
+          targetRing.dashOffset(-((sec * 18) / curScale));
+        }
+
+        const badge = tGroup.findOne<Konva.Group>('.ray-badge');
+        if (badge) {
+          const badgeW = Number(badge.getAttr('badgeW') ?? 46 / curScale);
+          const badgeH = Number(badge.getAttr('badgeH') ?? 22 / curScale);
+          badge.position({
+            x: tPos.x - badgeW / 2,
+            y: tPos.y - targetRadius - badgeH - 8 / curScale,
+          });
+        }
+
+        const beamGroups = tGroup.find('.ray-beam-group') as Konva.Group[];
+        for (let b = 0; b < beamGroups.length; b++) {
+          const bGroup = beamGroups[b];
+          const k = Number(bGroup.getAttr('beamIdx') ?? b);
+          const count = Number(bGroup.getAttr('beamCount') ?? item.count);
+          const offset = count === 1 ? spreadStep * 0.35 : (k - (count - 1) / 2) * spreadStep;
+          const cx = (sx + ex) / 2 + nx * offset;
+          const cy = (sy + ey) / 2 + ny * offset;
+          const pts = sampleQuadraticBezier(sx, sy, cx, cy, ex, ey);
+          const endAngle = (Math.atan2(ey - cy, ex - cx) * 180) / Math.PI;
+          const phase = (targetIdx * 0.37 + k * 0.29) % 1;
+
+          const glowLine = bGroup.findOne<Konva.Line>('.ray-glow');
+          if (glowLine) glowLine.points(pts);
+
+          const coreLine = bGroup.findOne<Konva.Line>('.ray-core');
+          if (coreLine) coreLine.points(pts);
+
+          const sparkLine = bGroup.findOne<Konva.Line>('.ray-spark');
+          if (sparkLine) {
+            sparkLine.points(pts);
+            sparkLine.dashOffset(-((sec * 96 + phase * 32) / curScale));
+          }
+
+          const traveler = bGroup.findOne<Konva.Group>('.ray-travel-arrow');
+          if (traveler) {
+            const cycle = (sec * 0.95 + phase) % 1;
+            const t = 0.08 + cycle * 0.84;
+            const pos = evalQuadraticBezier(sx, sy, cx, cy, ex, ey, t);
+            const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.82 ? (1 - cycle) / 0.18 : 1;
+            traveler.position({ x: pos.x, y: pos.y });
+            traveler.rotation(pos.angleDeg);
+            traveler.opacity(Math.max(0, Math.min(1, fade * 0.95)));
+          }
+
+          const endArrow = bGroup.findOne<Konva.Group>('.ray-end-arrow');
+          if (endArrow) {
+            endArrow.position({ x: ex, y: ey });
+            endArrow.rotation(endAngle);
+          }
+
+          const midPill = bGroup.findOne<Konva.Group>('.ray-mid-pill');
+          if (midPill) {
+            const midPt = evalQuadraticBezier(sx, sy, cx, cy, ex, ey, 0.5);
+            const pillW = Number(midPill.getAttr('pillW') ?? 54 / curScale);
+            const pillH = Number(midPill.getAttr('pillH') ?? 19 / curScale);
+            midPill.position({ x: midPt.x - pillW / 2, y: midPt.y - pillH / 2 });
+          }
+        }
       }
-      const travelers = root.find('.ray-travel-arrow') as Konva.Group[];
-      for (let i = 0; i < travelers.length; i++) {
-        const node = travelers[i];
-        const curve = node.getAttr('rayCurve') as
-          | { sx: number; sy: number; cx: number; cy: number; ex: number; ey: number; phase: number }
-          | undefined;
-        if (!curve) continue;
-        const cycle = (sec * 0.95 + curve.phase) % 1;
-        const t = 0.08 + cycle * 0.84;
-        const pos = evalQuadraticBezier(curve.sx, curve.sy, curve.cx, curve.cy, curve.ex, curve.ey, t);
-        const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.82 ? (1 - cycle) / 0.18 : 1;
-        node.position({ x: pos.x, y: pos.y });
-        node.rotation(pos.angleDeg);
-        node.opacity(Math.max(0, Math.min(1, fade * 0.95)));
-      }
+
       root.getLayer()?.batchDraw();
       raf = requestAnimationFrame(tick);
     };
+    const layer = groupRef.current?.getLayer();
+    layer?.batchDraw();
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [animateEnabled, targets, scale, caster.x, caster.y]);
+    return () => {
+      cancelAnimationFrame(raf);
+      layer?.batchDraw();
+    };
+  }, [targets.length]);
 
-  const casterRadius = (caster.widthFt * pxPerFoot) / 2;
+  const cPos = (caster.id ? getPosition?.(caster.id) : undefined) ?? caster;
+  const cBaseWidthFt = caster.id ? (getBaseWidthFt?.({ ...caster, id: caster.id }) ?? caster.widthFt) : caster.widthFt;
+  const casterRadius = (cBaseWidthFt * pxPerFoot) / 2;
   const arrowLen = 9.5 / scale;
   const arrowWing = 4.6 / scale;
   const travelLen = 7.5 / scale;
@@ -198,59 +404,69 @@ export function SpellRayTargetShapes({
 
   return (
     <Group ref={groupRef} name="spell-ray-targets" listening={false}>
-      <Circle
-        x={caster.x}
-        y={caster.y}
-        radius={rangeFt * pxPerFoot}
-        stroke={palette.glow}
-        opacity={0.32}
-        strokeWidth={1.6 / scale}
-        dash={[8 / scale, 6 / scale]}
-      />
-      {targets.map(({ token, count, tag }, targetIdx) => {
-        const dx = token.x - caster.x;
-        const dy = token.y - caster.y;
+      {!!rangeFt && rangeFt > 0 && (
+        <Circle
+          name="ray-range-circle"
+          x={cPos.x}
+          y={cPos.y}
+          radius={rangeFt * pxPerFoot}
+          stroke={defaultPalette.glow}
+          opacity={0.32}
+          strokeWidth={1.6 / scale}
+          dash={[8 / scale, 6 / scale]}
+        />
+      )}
+      {targets.map(({ token, count, tag, affinity: itemAffinity }, targetIdx) => {
+        const tPalette = affinityPalette(itemAffinity ?? affinity ?? 'enemy');
+        const tPos = getPosition?.(token.id) ?? token;
+        const dx = tPos.x - cPos.x;
+        const dy = tPos.y - cPos.y;
         const dist = Math.hypot(dx, dy) || 1;
         const ux = dx / dist;
         const uy = dy / dist;
         const nx = -uy;
         const ny = ux;
-        const targetRadius = (token.widthFt * pxPerFoot) / 2;
-        const startOffset = Math.min(casterRadius * 0.55, dist * 0.22);
-        const endOffset = Math.min(targetRadius * 0.68, dist * 0.22);
-        const sx = caster.x + ux * startOffset;
-        const sy = caster.y + uy * startOffset;
-        const ex = token.x - ux * endOffset;
-        const ey = token.y - uy * endOffset;
+        const tBaseWidthFt = getBaseWidthFt?.(token) ?? token.widthFt;
+        const targetRadius = (tBaseWidthFt * pxPerFoot) / 2;
+        const hideRing = !!is3dToken?.(token.id);
+        const startOffset = Math.min(casterRadius * 1.05, dist * 0.42);
+        const endOffset = Math.min(hideRing ? targetRadius * 1.19 : targetRadius + 8.5 / scale, dist * 0.42);
+        const sx = cPos.x + ux * startOffset;
+        const sy = cPos.y + uy * startOffset;
+        const ex = tPos.x - ux * endOffset;
+        const ey = tPos.y - uy * endOffset;
         const spreadStep = Math.min(30 / scale, Math.max(15 / scale, dist * 0.16));
-        const badgeText = `${tag} ×${count}`;
+        const badgeText = distinct && count === 1 ? tag : `${tag} ×${count}`;
         const badgeW = Math.max(46, badgeText.length * 8.5 + 14) / scale;
         const badgeH = 22 / scale;
-        const bx = token.x - badgeW / 2;
-        const by = token.y - targetRadius - badgeH - 8 / scale;
+        const bx = tPos.x - badgeW / 2;
+        const by = tPos.y - targetRadius - badgeH - 8 / scale;
 
         return (
-          <Group key={token.id}>
+          <Group key={token.id} name="ray-target-group" targetIdx={targetIdx}>
             <Circle
-              x={token.x}
-              y={token.y}
+              name="ray-outer-ring"
+              visible={!hideRing}
+              x={tPos.x}
+              y={tPos.y}
               radius={targetRadius + 4 / scale}
-              stroke={palette.glow}
+              stroke={tPalette.glow}
               strokeWidth={2.6 / scale}
               opacity={0.88}
             />
             <Circle
               name="ray-target-ring"
-              x={token.x}
-              y={token.y}
+              visible={!hideRing}
+              x={tPos.x}
+              y={tPos.y}
               radius={targetRadius + 8.5 / scale}
-              stroke={palette.core}
+              stroke={tPalette.core}
               strokeWidth={2 / scale}
               dash={[14 / scale, 6 / scale]}
               opacity={0.85}
             />
             {Array.from({ length: count }, (_, k) => {
-              const offset = count === 1 ? 0 : (k - (count - 1) / 2) * spreadStep;
+              const offset = count === 1 ? spreadStep * 0.35 : (k - (count - 1) / 2) * spreadStep;
               const cx = (sx + ex) / 2 + nx * offset;
               const cy = (sy + ey) / 2 + ny * offset;
               const pts = sampleQuadraticBezier(sx, sy, cx, cy, ex, ey);
@@ -259,28 +475,31 @@ export function SpellRayTargetShapes({
               const mid = evalQuadraticBezier(sx, sy, cx, cy, ex, ey, 0.55);
 
               return (
-                <Group key={k}>
+                <Group key={k} name="ray-beam-group" beamIdx={k} beamCount={count}>
                   {/* Sorcerous-Burst style 3-layer beam: outer aura, inner core, and flowing spark */}
                   <Line
+                    name="ray-glow"
                     points={pts}
-                    stroke={palette.glow}
+                    stroke={tPalette.glow}
                     strokeWidth={11 / scale}
-                    opacity={0.22}
+                    opacity={outOfRange ? 0.14 : 0.22}
                     lineCap="round"
                     lineJoin="round"
                   />
                   <Line
+                    name="ray-core"
                     points={pts}
-                    stroke={palette.core}
+                    stroke={tPalette.core}
                     strokeWidth={2.5 / scale}
-                    opacity={0.92}
+                    opacity={outOfRange ? 0.7 : 0.92}
+                    dash={outOfRange ? [7 / scale, 8 / scale] : undefined}
                     lineCap="round"
                     lineJoin="round"
                   />
                   <Line
                     name="ray-spark"
                     points={pts}
-                    stroke={palette.spark}
+                    stroke={tPalette.spark}
                     strokeWidth={4.6 / scale}
                     dash={[5 / scale, 52 / scale]}
                     lineCap="round"
@@ -297,7 +516,7 @@ export function SpellRayTargetShapes({
                   >
                     <Line
                       points={[-travelLen, -travelWing, 0, 0, -travelLen, travelWing]}
-                      stroke={palette.glow}
+                      stroke={tPalette.glow}
                       strokeWidth={4.2 / scale}
                       opacity={0.55}
                       lineCap="round"
@@ -305,46 +524,81 @@ export function SpellRayTargetShapes({
                     />
                     <Line
                       points={[-travelLen, -travelWing, 0, 0, -travelLen, travelWing]}
-                      stroke={palette.spark}
+                      stroke={tPalette.spark}
                       strokeWidth={2 / scale}
                       lineCap="round"
                       lineJoin="round"
                     />
                   </Group>
                   {/* Terminal burst-arrow marker at the target end of the tether */}
-                  <Group x={ex} y={ey} rotation={endAngle}>
+                  <Group name="ray-end-arrow" x={ex} y={ey} rotation={endAngle}>
                     <Line
                       closed
                       points={[0, 0, -arrowLen, -arrowWing, -arrowLen * 0.72, 0, -arrowLen, arrowWing]}
-                      fill={palette.core}
-                      stroke={palette.glow}
+                      fill={tPalette.core}
+                      stroke={tPalette.glow}
                       strokeWidth={1.2 / scale}
                       lineJoin="round"
                     />
                   </Group>
+                  {midLabel && k === 0 && (() => {
+                    const midPt = evalQuadraticBezier(sx, sy, cx, cy, ex, ey, 0.5);
+                    const pillW = Math.max(44, midLabel.length * 7.1 + 14) / scale;
+                    const pillH = 19 / scale;
+                    return (
+                      <Group
+                        name="ray-mid-pill"
+                        x={midPt.x - pillW / 2}
+                        y={midPt.y - pillH / 2}
+                        pillW={pillW}
+                        pillH={pillH}
+                      >
+                        <Rect
+                          width={pillW}
+                          height={pillH}
+                          fill="rgba(16, 18, 25, 0.88)"
+                          stroke={outOfRange ? '#e07b67' : tPalette.border}
+                          strokeWidth={1.2 / scale}
+                          cornerRadius={pillH / 2}
+                        />
+                        <Text
+                          width={pillW}
+                          height={pillH}
+                          align="center"
+                          verticalAlign="middle"
+                          text={midLabel}
+                          fill={outOfRange ? '#ffb3a3' : tPalette.spark}
+                          fontStyle="bold"
+                          fontSize={11 / scale}
+                        />
+                      </Group>
+                    );
+                  })()}
                 </Group>
               );
             })}
-            <Group x={bx} y={by}>
-              <Rect
-                width={badgeW}
-                height={badgeH}
-                fill={palette.bg}
-                stroke={palette.border}
-                strokeWidth={1.4 / scale}
-                cornerRadius={badgeH / 2}
-              />
-              <Text
-                width={badgeW}
-                height={badgeH}
-                align="center"
-                verticalAlign="middle"
-                text={badgeText}
-                fill={palette.core}
-                fontStyle="bold"
-                fontSize={12.5 / scale}
-              />
-            </Group>
+            {showCount && (
+              <Group name="ray-badge" x={bx} y={by} badgeW={badgeW} badgeH={badgeH}>
+                <Rect
+                  width={badgeW}
+                  height={badgeH}
+                  fill={tPalette.bg}
+                  stroke={tPalette.border}
+                  strokeWidth={1.4 / scale}
+                  cornerRadius={badgeH / 2}
+                />
+                <Text
+                  width={badgeW}
+                  height={badgeH}
+                  align="center"
+                  verticalAlign="middle"
+                  text={badgeText}
+                  fill={tPalette.core}
+                  fontStyle="bold"
+                  fontSize={12.5 / scale}
+                />
+              </Group>
+            )}
           </Group>
         );
       })}

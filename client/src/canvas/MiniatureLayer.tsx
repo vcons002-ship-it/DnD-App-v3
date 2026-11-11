@@ -78,6 +78,7 @@ export type MiniatureToken = {
   carriedLantern?: boolean;
   tint?: string;
   outline?: string;
+  affinity?: 'enemy' | 'neutral' | 'friendly' | 'unknown';
   shade?: [number, number, number];
   activeTurn?: boolean;
   selected?: boolean;
@@ -108,6 +109,7 @@ type Props = {
   personalVision?: boolean;
   onVisionLights?: (lights:import('../../../shared/playerVision').VisionLight[])=>void;
   tokens: MiniatureToken[];
+  rayTargetIds?: readonly string[];
   preloadDefinitions?: MiniatureDefinition[];
   onFailed?: (tokenIds: ReadonlySet<string>) => void;
   onUnavailable?: () => void;
@@ -153,6 +155,10 @@ type Instance = {
   updateTransform:()=>boolean;
   turnRing: Mesh<RingGeometry, MeshBasicMaterial>;
   selectionRing: Mesh<RingGeometry, MeshBasicMaterial>;
+  targetRing: Group;
+  targetInnerRing: Mesh<RingGeometry, MeshBasicMaterial>;
+  targetOuterRing: Group;
+  targetOuterMaterial: MeshBasicMaterial;
   conditionRings: Mesh<RingGeometry, MeshBasicMaterial>[];
   hunterMark: Sprite;
   combatBadge: Group;
@@ -443,6 +449,46 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     publish();
     dispose();
   };
+  const isTokenTargeted = (tokenId: string): boolean => {
+    if (props.rayTargetIds?.length) return props.rayTargetIds.includes(tokenId);
+    const st = useStore.getState();
+    if (!st.showTargetLine || st.rayCast || st.areaCast) return false;
+    const active = st.floatingMenuTarget ?? st.combatPanelTarget;
+    if (!active || active.attackerTokenId === active.targetTokenId || active.targetTokenId !== tokenId) return false;
+    return tokenById.has(active.attackerTokenId) || !!st.snapshot?.tokens.some((t) => t.id === active.attackerTokenId && t.mapId === st.snapshot?.map?.id);
+  };
+  const updateTargetRing = (token: MiniatureToken, instance: Instance, seconds = 0) => {
+    const targeted = !token.sharedSightOnly && !token.partiallyRevealed && isTokenTargeted(token.id);
+    instance.targetRing.visible = targeted;
+    if (!targeted) return;
+    const aff = (() => {
+      const targetAff = token.affinity ?? 'enemy';
+      if (targetAff !== 'friendly') return targetAff;
+      const st = useStore.getState();
+      if (st.rayCast) {
+        if (st.rayCast.payload.kind === 'monster') {
+          return st.snapshot?.monsters.find((m) => m.id === st.rayCast!.payload.refId)?.disposition ?? 'enemy';
+        }
+        return 'friendly';
+      }
+      const active = st.floatingMenuTarget ?? st.combatPanelTarget;
+      if (!active) return targetAff;
+      const casterMini = tokenById.get(active.attackerTokenId);
+      if (casterMini?.affinity) return casterMini.affinity;
+      const casterTok = st.snapshot?.tokens.find((t) => t.id === active.attackerTokenId);
+      if (!casterTok || casterTok.kind === 'pc') return 'friendly';
+      return st.snapshot?.monsters.find((m) => m.id === casterTok.refId)?.disposition ?? 'enemy';
+    })();
+    const innerHex = aff === 'unknown' ? '#8e96a4' : aff === 'friendly' ? '#39c46b' : aff === 'neutral' ? '#f5c518' : '#e23b3b';
+    const outerHex = aff === 'unknown' ? '#c8d0dc' : aff === 'friendly' ? '#8cf0ae' : aff === 'neutral' ? '#ffe678' : '#ff8a8a';
+    instance.targetInnerRing.material.color.set(innerHex);
+    instance.targetOuterMaterial.color.set(outerHex);
+    const fade = token.hidden ? 0.45 : 1;
+    instance.targetInnerRing.material.opacity = fade * 0.92;
+    instance.targetOuterMaterial.opacity = fade * 0.88;
+    instance.targetRing.scale.setScalar(token.definition.baseDiameter);
+    instance.targetOuterRing.rotation.z = reducedMotion.matches ? 0 : -seconds * 0.65;
+  };
   const draw = (_frameTime: number) => {
     // RAF's frame-start timestamp can precede an immediate camera redraw in the
     // same frame. One live clock keeps movement, fog history and FX monotonic.
@@ -453,7 +499,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     const environment=props.environmentPreview;
     const atmosphereAnimated = !!environment?.enabled && !reducedMotion.matches &&
       ((environment.particles&&environment.particles!=='none'&&(environment.particleIntensity??.5)>0&&(environment.particleScale??1)>0) || (environment.groundWetness??0)>0 || environment.lightning || (environment.mist&&environment.mistQuality!=='off') || (!!environment.weather && environment.weather!=='none' && (environment.weatherIntensity??.5)>0) || !!environment.lights?.some(light=>light.flicker));
-    const animated = !reducedMotion.matches && [...instances.values()].some((instance) => instance.mixer || instance.fx || instance.turnRing.visible || instance.selectionRing.visible);
+    const animated = !reducedMotion.matches && [...instances.entries()].some(([id, instance]) => instance.mixer || instance.fx || instance.turnRing.visible || instance.selectionRing.visible || isTokenTargeted(id));
     const settling = moves.size > 0;
     const casting = [...instances.entries()].filter(([, instance]) => instance.lightning?.active(now / 1000));
     const fading=[...opacityFades.values()].some(f=>now-f.start<850);
@@ -490,6 +536,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         instance.selectionRing.material.opacity = (reducedMotion.matches ? 1 : .65 + selectionPulse * .35) * (token.hidden ? .45 : 1);
         instance.turnRing.scale.setScalar(token.definition.baseDiameter * (1 + pulse * 0.06));
         instance.turnRing.material.opacity = (0.65 + pulse * 0.35) * (token.hidden ? 0.45 : 1);
+        updateTargetRing(token, instance, seconds);
         if (animated) { instance.mixer?.setTime(seconds); applyFx(instance, seconds); }
         instance.lightning?.update(seconds, now / 1000, reducedMotion.matches, token.hidden);
       }
@@ -790,6 +837,10 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     instance.selectionRing.material.dispose();
     instance.turnRing.geometry.dispose();
     instance.turnRing.material.dispose();
+    instance.targetInnerRing.geometry.dispose();
+    instance.targetInnerRing.material.dispose();
+    instance.targetOuterRing.children.forEach((seg) => { if (seg instanceof Mesh) seg.geometry.dispose(); });
+    instance.targetOuterMaterial.dispose();
   };
   const removeInstance = (id: string) => {
     if(preview?.id===id)clearPreview();cancelLoadingTask(`miniature:${id}`);cancelLoadingTask(`lod:${id}`);
@@ -855,6 +906,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     instance.selectionRing.visible = !!token.selected;
     instance.selectionRing.scale.setScalar(token.definition.baseDiameter);
     instance.selectionRing.material.opacity = token.hidden ? 0.45 : 1;
+    updateTargetRing(token, instance, (performance.now() - started) / 1000);
     if(appearanceChanged){
     const outlineId=silhouette.slot(token.invisible||token.sharedSightOnly?undefined:token.outline,token.hidden?.45:1);
     const weaponOutlineId=outlineId?silhouette.slot(token.outline,(token.hidden?.45:1)*.25):0;
@@ -1009,11 +1061,13 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     const nextMapId = useStore.getState().snapshot?.map?.id;
     if (!forceSceneSync && hasRendered && syncedScene && syncedScene.tokens === next.tokens && syncedScene.preloadDefinitions === next.preloadDefinitions && syncedScene.environmentPreview === next.environmentPreview && syncedScene.spellImpacts === next.spellImpacts && syncedScene.spellFog === next.spellFog && syncedScene.preparedSpellImpacts === next.preparedSpellImpacts && syncedScene.spellColorOverlay === next.spellColorOverlay && syncedScene.spellMist === next.spellMist && syncedScene.personalVision === next.personalVision && syncedScene.rollBackground === next.rollBackground && syncedScene.rollBackgroundPrepared === next.rollBackgroundPrepared && syncedScene.graphics === next.graphics && syncedScene.width === next.width && syncedScene.height === next.height && syncedScene.pixelRatio === nextPixelRatio && syncedScene.mapId === nextMapId) {
       sourceProps = next;
+      const targetIdsChanged = props.rayTargetIds !== next.rayTargetIds;
       const liveTilt = props.tiltDegrees, liveRotation = props.rotationDegrees;
       props = { ...next, tokens: props.tokens, tiltDegrees: next.tiltDegrees === committedTilt ? liveTilt : next.tiltDegrees, rotationDegrees: (next.rotationDegrees ?? 0) === committedRotation ? liveRotation : next.rotationDegrees };
       committedTilt = next.tiltDegrees; committedRotation = next.rotationDegrees ?? 0;
       if (next.view !== committedView) { view = next.view; committedView = next.view; }
       updateCamera(); scheduleLod();
+      if (targetIdsChanged) invalidate();
       if (currentCameraKey() !== drawnCameraKey) { cancelBattlefieldFrame(frame); frame = 0; lastPaint = 0; if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; } draw(performance.now()); }
       return;
     }
@@ -1136,7 +1190,29 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         selectionRing.rotation.x = -Math.PI / 2;
         selectionRing.position.y = 0.002;
         selectionRing.renderOrder = -1;
+        selectionRing.renderOrder = -2;
         root.add(selectionRing);
+        const targetInnerRing = new Mesh(
+          new RingGeometry(0.502, 0.548, 96),
+          new MeshBasicMaterial({ color: '#e23b3b', transparent: true, opacity: 0.92, depthTest: true, depthWrite: false, toneMapped: false }),
+        );
+        targetInnerRing.renderOrder = -1;
+        const targetOuterMaterial = new MeshBasicMaterial({
+          color: '#ff8a8a', transparent: true, opacity: 0.88, depthTest: true, depthWrite: false, toneMapped: false,
+        });
+        const targetOuterRing = new Group();
+        for (let i = 0; i < 12; i++) {
+          const dash = new Mesh(new RingGeometry(0.562, 0.596, 8, 1, (i * Math.PI) / 6, Math.PI / 9), targetOuterMaterial);
+          dash.renderOrder = -1;
+          targetOuterRing.add(dash);
+        }
+        const targetRing = new Group();
+        targetRing.name = 'token-target-ring';
+        targetRing.rotation.x = -Math.PI / 2;
+        targetRing.position.y = 0.0035;
+        targetRing.visible = false;
+        targetRing.add(targetInnerRing, targetOuterRing);
+        root.add(targetRing);
         // Condition markers share the miniatures' depth buffer, so every
         // foreground body/base occludes them, including neighboring figures.
         const conditionRings=Array.from({length:3},(_,i)=>{
@@ -1194,7 +1270,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           modelId:definition.id,
           mirrors:createMirrorImages(centered,root,renderer,()=>scene.environment,definition.baseDiameter),
           baseDiameter:definition.baseDiameter,outlineBounds,lanternAnchor,torchLighting,
-          root, updateTransform, turnRing, selectionRing, conditionRings, hunterMark, combatBadge, badgeMesh, badgeTexture, url: definition.url, materials,
+          root, updateTransform, turnRing, selectionRing, targetRing, targetInnerRing, targetOuterRing, targetOuterMaterial, conditionRings, hunterMark, combatBadge, badgeMesh, badgeTexture, url: definition.url, materials,
           originalColors: materials.map(m => m instanceof MeshStandardMaterial ? m.color.clone() : null),
           originalOpacity: materials.map((material) => material.opacity),
           originalTransparent: materials.map((material) => material.transparent), mixer, fx: null,
@@ -1273,6 +1349,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     contextRecovery.dispose();
     document.removeEventListener('visibilitychange', visibility);
     reducedMotion.removeEventListener('change', invalidate);
+    unsubscribeStore();
     [...instances.keys()].forEach(removeInstance);
     preparedInstances.forEach(disposeInstance);preparedInstances.clear();wantedModels.clear();
     assets.forEach((promise) => { void promise.then((asset) => { if (asset) disposeAsset(asset); }); });
@@ -1299,6 +1376,15 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   };
   document.addEventListener('visibilitychange', visibility);
   reducedMotion.addEventListener('change', invalidate);
+  let prevTargetStoreKey = '';
+  const unsubscribeStore = useStore.subscribe((st) => {
+    const active = st.floatingMenuTarget ?? st.combatPanelTarget;
+    const key = `${st.showTargetLine ? 1 : 0}:${st.rayCast ? 1 : 0}:${st.areaCast ? 1 : 0}:${active?.attackerTokenId ?? ''}:${active?.targetTokenId ?? ''}`;
+    if (key !== prevTargetStoreKey) {
+      prevTargetStoreKey = key;
+      invalidate();
+    }
+  });
   // Throttle rather than debounce: a continuous wheel/pinch gesture must not
   // postpone preparation until the user has already finished zooming. Full
   // scene sync is only needed when the display/preparation decision changes.

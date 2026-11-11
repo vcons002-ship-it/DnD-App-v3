@@ -86,7 +86,7 @@ export function useSpellTargeting(actionSnapshot: StateSnapshot, map: StateSnaps
     }
     const tok = actionSnapshot.tokens.find((t) => t.id === tokenId);
     if (!tok) return;
-    if (tok.id === rayActor.id) {
+    if (tok.id === rayActor.id && !rayCast.allowSelf) {
       setRayError('Choose another creature as a target.');
       return;
     }
@@ -100,6 +100,17 @@ export function useSpellTargeting(actionSnapshot: StateSnapshot, map: StateSnaps
       setRayError('Choose a living creature.');
       return;
     }
+    if (
+      rayCast.humanoidOnly &&
+      tok.kind === 'monster' &&
+      (() => {
+        const m = actionSnapshot.monsters.find((x) => x.id === tok.refId);
+        return Boolean(m && 'creatureType' in m && m.creatureType && !/^humanoid\b/i.test(m.creatureType.trim()));
+      })()
+    ) {
+      setRayError('Hold Person only affects Humanoids.');
+      return;
+    }
     if (tokenDistanceFt(rayActor, tok, map) > rayCast.rangeFt + 1e-6) {
       setRayError(`Target is out of ${rayCast.rangeFt} ft range.`);
       return;
@@ -110,6 +121,20 @@ export function useSpellTargeting(actionSnapshot: StateSnapshot, map: StateSnaps
     }
     setRayError(null);
     setRayTargets((prev) => {
+      if (rayCast.distinct) {
+        const existingIdx = prev.findIndex((id) => {
+          if (id === tokenId) return true;
+          const p = actionSnapshot.tokens.find((t) => t.id === id);
+          return p?.kind === tok.kind && p?.refId === tok.refId;
+        });
+        if (existingIdx >= 0) {
+          return [...prev.slice(0, existingIdx), ...prev.slice(existingIdx + 1)];
+        }
+        if (prev.length >= rayCast.instances) {
+          return [...prev.slice(0, -1), tokenId];
+        }
+        return [...prev, tokenId];
+      }
       if (prev.length >= rayCast.instances) {
         if (prev.includes(tokenId)) {
           return prev.filter((id) => id !== tokenId);

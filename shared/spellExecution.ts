@@ -64,6 +64,8 @@ export function effectiveSheetAbility(ability: SheetAbility, castLevel?: number)
     tags:[...(ability.tags??[]),...(party==='pass without trace'?['concentration']:[])],
     roll:{kind:'damage',dice:'0',baseLevel:ability.level,targetMode:party==='pass without trace'?'multiple':'single'}};
   if (isHasteSpell(ability) && isCanonicalHasteProfile(ability)) return {...ability, level:3, tags:[...(ability.tags??[]),'concentration'], roll:{kind:'damage',dice:'0',baseLevel:3,targetMode:'single',...(ability.roll?.castingAbility?{castingAbility:ability.roll.castingAbility}:{})}};
+  if (isCanonicalAidProfile(ability)) return {...ability, level:2, roll:{kind:'damage',dice:'0',baseLevel:2,targetMode:'multiple',maxTargets:3,...(ability.roll?.castingAbility?{castingAbility:ability.roll.castingAbility}:{})}};
+  if (isCanonicalArmorOfAgathysProfile(ability) && !ability.roll) return {...ability, level:1, roll:{kind:'heal',dice:'5',scaleDice:'5',baseLevel:1,damageType:'healing',healingMode:'temporary',healingBonus:'none',healTarget:'self'}};
   if (ability.type==='spell' && name==='mage hand' && !ability.summon) return {...ability,level:0,summon:{name:'Mage Hand',icon:'\u270b'}};
   const savedRoll = ability.roll;
   if (ability.type === 'ability' && name === 'second wind' && savedRoll?.kind === 'heal' &&
@@ -169,6 +171,56 @@ export function criticalDiceExpression(expression: string): string {
 }
 
 /** Recognize existing saved Haste entries without rewriting campaign sheets. */
+export const isAidSpell = (a: SheetAbility): boolean => a.type === 'spell' && a.name.trim().toLowerCase() === 'aid';
+
+/** Recognize unchanged SRD Aid (either legacy heal 5/+5 or roll-less) without overriding custom edits. */
+export function isCanonicalAidProfile(a: SheetAbility): boolean {
+  if (!isAidSpell(a) || a.source === 'custom' || a.executionProfile === 'manual' || a.level !== 2) return false;
+  const roll = a.roll;
+  if (!roll) return true;
+  const dice = (roll.dice ?? '').replace(/\s/g, '').toLowerCase();
+  const scale = (roll.scaleDice ?? '').replace(/\s/g, '').toLowerCase();
+  if (roll.kind === 'heal' && dice === '5' && scale === '5' &&
+      (roll.baseLevel === undefined || roll.baseLevel === 2) &&
+      (roll.damageType ?? '').trim().toLowerCase() === 'healing') {
+    return Object.keys(roll).every(key => roll[key as keyof AbilityRoll] === undefined ||
+      ['kind', 'dice', 'scaleDice', 'baseLevel', 'damageType', 'castingAbility'].includes(key));
+  }
+  if (roll.kind === 'damage' && dice === '0' &&
+      (roll.baseLevel === undefined || roll.baseLevel === 2) &&
+      (roll.targetMode === undefined || roll.targetMode === 'multiple')) {
+    return Object.keys(roll).every(key => roll[key as keyof AbilityRoll] === undefined ||
+      ['kind', 'dice', 'baseLevel', 'targetMode', 'maxTargets', 'castingAbility'].includes(key));
+  }
+  return false;
+}
+
+export function isCanonicalArmorOfAgathysProfile(a: SheetAbility): boolean {
+  if (a.type !== 'spell' || a.name.trim().toLowerCase() !== 'armor of agathys' ||
+      a.source === 'custom' || a.executionProfile === 'manual' || a.level !== 1) return false;
+  const roll = a.roll;
+  if (!roll) return true;
+  const dice = (roll.dice ?? '').replace(/\s/g, '').toLowerCase();
+  const scale = (roll.scaleDice ?? '').replace(/\s/g, '').toLowerCase();
+  if (roll.kind === 'damage' && dice === '5' && scale === '5' &&
+      (roll.baseLevel === undefined || roll.baseLevel === 1) &&
+      (roll.damageType ?? '').trim().toLowerCase() === 'cold') {
+    return Object.keys(roll).every(key => roll[key as keyof AbilityRoll] === undefined ||
+      ['kind', 'dice', 'scaleDice', 'baseLevel', 'damageType', 'castingAbility'].includes(key));
+  }
+  if (roll.kind === 'heal' && dice === '5' && scale === '5' &&
+      roll.healingMode === 'temporary' && roll.healingBonus === 'none' && roll.healTarget === 'self') {
+    return true;
+  }
+  return false;
+}
+
+export function isCanonicalBlessOrBaneProfile(a: SheetAbility): 'bless' | 'bane' | null {
+  if (a.type !== 'spell' || a.source === 'custom' || a.executionProfile === 'manual' || a.level !== 1 || a.roll) return null;
+  const key = a.name.trim().toLowerCase();
+  return key === 'bless' || key === 'bane' ? key : null;
+}
+
 export const isHasteSpell = (a: SheetAbility): boolean => a.type === 'spell' && a.name.trim().toLowerCase() === 'haste';
 
 /** Only fill the unchanged no-damage buff profile; edited Haste mechanics win. */

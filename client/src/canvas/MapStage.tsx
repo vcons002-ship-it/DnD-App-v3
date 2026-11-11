@@ -3,7 +3,7 @@ import { MeasureShape, MEASURE_FT, type DraftMeasure, type MeasureShapeKind, typ
 import { DecalImage } from "./DecalImage";
 import { PasteImageModal, useClipboardImagePaste, usePasteImageState } from "./PasteImageModal";
 import { useSpellTargeting } from "./useSpellTargeting";
-import { SharedSpellAreas, SpellTargetingPrompts } from "./SpellTargetingPrompts";
+import { CombatTargetLine, SharedSpellAreas, SpellTargetingPrompts } from "./SpellTargetingPrompts";
 import { WallAndDoorHud, WallAndDoorKonvaGroup } from "./WallEditorOverlay";
 export { MEASURE_FT, type MeasureShapeKind, type MeasureSize, type MeasureTool };
 import {renderedImage} from '../lib/renderImages';
@@ -24,7 +24,7 @@ import {requestBattlefieldFrame,cancelBattlefieldFrame} from './battlefieldFrame
 import {createLatestFrame} from '../lib/latestFrame';
 import {ManualFog,type ManualFogHandle} from './ManualFog';
 import {mirrorImageCount} from '../../../shared/linkedSpells';
-import {SpellAreaShapes,SpellRayTargetShapes} from './SpellAreaShapes';
+import {isTokenAffinityVisible,resolveTargetAffinity,SpellAreaShapes,SpellRayTargetShapes,type TargetAffinity} from './SpellAreaShapes';
 import {DEATH_SKULL} from '../lib/miniatures';
 import './door-controls.css';
 import { activeHasteCondition, speedIsZero, walkingSpeedFeet } from '../../../shared/spellBuffs';
@@ -610,10 +610,13 @@ function MapStageInner({
 
   // Identity-stable token handlers so the memoized TokenShape only re-renders
   // when its own token/display actually changes (not on every snapshot).
-  const handleTokenSelect = useStableCallback((tok: Token, additive: boolean) => {
+  const mapTargetPick = useStore((s) => s.mapTargetPick);
+  const handleTokenSelect = useStableCallback((tok: Token, additive: boolean, altKey?: boolean) => {
     if(areaCast){placeSpellArea(tok);return;}
     if(rayCast){toggleRayTarget(tok.id,'click');return;}
     if(tok.sharedSightOnly||tok.partiallyRevealed)return;
+
+    if (mapTargetPick || Boolean(altKey)) { setCombatTarget(tok.id, mapTargetPick ?? undefined); return; }
     if (orbTarget) setOrbTarget({...orbTarget,targetId:tok.id});
     else if (saveResolve) resolveSaveAt(tok.id);
     else onSelectToken(tok, additive);
@@ -622,6 +625,7 @@ function MapStageInner({
   const handleTokenActivate = useStableCallback((tok: Token) => {
     if(areaCast||rayCast)return;
     if(tok.sharedSightOnly||tok.partiallyRevealed)return;
+
     if (saveResolve || orbTarget) return;
     onSelectToken(tok, false);
     setDetailsExpanded(true); // open the player's read-only Details
@@ -635,7 +639,10 @@ function MapStageInner({
       if(!explicitTokenInspection())nudgeRightPanel();
     }
   });
+  const dragPreviewPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const getLiveTokenPosition = useCallback((id: string) => dragPreviewPosRef.current.get(id) ?? (presentation.moving() ? presentation.position(id) : undefined), [presentation]);
   const handleTokenDragPreview = useStableCallback((tok: Token, point: {x:number;y:number;facing:number}|null) => {
+    if (point) dragPreviewPosRef.current.set(tok.id, { x: point.x, y: point.y }); else dragPreviewPosRef.current.delete(tok.id);
     miniatureRef.current?.previewMove(tok.id, point);
     if(!point||(!actualDm&&(tok.kind!=='pc'||!snapshot.characters.some(c=>c.id===tok.refId&&c.claimedBy===mySocketId)))||doors.some(d=>d.tokenId===tok.id)){
       setDoorDragPreview(old=>old?.tokenId===tok.id?null:old);return;
@@ -648,6 +655,7 @@ function MapStageInner({
   });
   const handleTokenMenu = useStableCallback((tok: Token, cx: number, cy: number) => {
     if(tok.sharedSightOnly||tok.partiallyRevealed)return;
+
     if(rayCast){toggleRayTarget(tok.id,'decrement');return;}
     setHover(null);
     // Also aim the Combat section's target dropdown at the right-clicked token,
@@ -657,6 +665,7 @@ function MapStageInner({
   });
   const handleTokenHover = useStableCallback((tok: Token, cx: number, cy: number) => {
     if(tok.sharedSightOnly||tok.partiallyRevealed)return;
+
     if(!privateDrag.current)setHover({ token: tok, x: cx, y: cy });
   });
   const handleTokenHoverEnd = useStableCallback(() => setHover(null));
@@ -959,6 +968,7 @@ function MapStageInner({
       hunterMarked: !dead && !token.partiallyRevealed && !!token.markLabels?.some(label=>/hunter.s mark/i.test(label)),
       conditionColors: dead || token.sharedSightOnly || token.partiallyRevealed ? [] : presentAuras(display.conditions.filter(c=>!c.id.startsWith("spell-mark:") || !/hunter.s mark/i.test(c.label))).map(a=>AURA_HEX[a]),
       outline: token.sharedSightOnly || token.partiallyRevealed || !legacyAffinity.has(token.id) || monster?.objectKind ? undefined : monster ? DISPOSITION_HEX[monster.disposition] : DISPOSITION_HEX.friendly,
+      affinity: !isTokenAffinityVisible(token, { role: snapshot.role, vision: snapshot.playerVision, map: snapshot.map, affinityIds: legacyAffinity }) && token.kind === 'monster' ? 'unknown' : monster ? monster.disposition : 'friendly',
       tint: !dead && monster ? monsterTint(monster) : undefined,
       shade: !dead && monster && !monster.objectKind ? monsterVariation(productionFamily(monster), token.refId).shade : undefined,
       activeTurn: !token.sharedSightOnly && !token.partiallyRevealed && token.id === activeTurnTokenId,
@@ -966,6 +976,13 @@ function MapStageInner({
       diameter: miniatureBaseWidthFt(token, monster ?? { name: resolveToken(snapshot, token).name }) * pxPerFoot, hidden: token.isHidden, definition }] : [];
   }), [legacy,snapshot,legacyAffinity, isDm, pxPerFoot, activeTurnTokenId, selectedIds, orbTarget, use3dTokens, use3dMonsters, hiddenGhosts, miniatureCatalogRevision, graphics.modelQuality]);
   const miniatureIds=useMemo(()=>new Set(miniatureTokens.map(m=>m.id)),[miniatureTokens]);
+  const getTokenBaseWidthFt = useCallback((token: { id: string; widthFt: number; kind?: string; refId?: string; miniatureWidthFt?: number }) => {
+    if (legacy || !(token.kind === 'pc' ? use3dTokens : use3dMonsters)) return token.widthFt;
+    const monster = token.kind === 'monster' && token.refId ? actionSnapshot.monsters.find(m => m.id === token.refId) : undefined;
+    const charName = token.kind === 'pc' && token.refId ? actionSnapshot.characters.find(c => c.id === token.refId)?.name : undefined;
+    return miniatureBaseWidthFt({ kind: token.kind ?? 'monster', widthFt: token.widthFt, miniatureWidthFt: token.miniatureWidthFt }, monster ?? { name: charName });
+  }, [legacy, use3dTokens, use3dMonsters, actionSnapshot.monsters, actionSnapshot.characters]);
+  const isMiniatureTokenReady = useCallback((tokenId: string) => !legacy && readyMiniatures.has(tokenId) && miniatureIds.has(tokenId), [legacy, readyMiniatures, miniatureIds]);
   const trackedMiniaturesRef=useRef<Set<string>>(new Set());
   useEffect(()=>{
     const tracked=trackedMiniaturesRef.current;
@@ -1882,7 +1899,7 @@ function MapStageInner({
             }}
             onWheel={handleWheel}
             style={{
-              cursor: orbTarget || onPlaceAt || fogActive || measureActive ? 'crosshair' : 'default',
+              cursor: orbTarget || mapTargetPick || rayCast || areaCast || onPlaceAt || fogActive || measureActive ? 'crosshair' : 'default',
             }}
           >
             <Layer
@@ -2188,9 +2205,10 @@ function MapStageInner({
               // Targeting is a UI overlay, never a source of terrain visibility.
               ref={layer=>{spellAreaLayerRef.current=layer;if(layer){const c=layer.getNativeCanvasElement();c.style.zIndex='6';c.style.pointerEvents='none';c.dataset.testid='spell-area-canvas';}}}>
               {map&&<SharedSpellAreas mapId={map.id} hideId={areaCast?areaSocketId:undefined} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare}/>}
-              {areaCast&&areaActor&&map&&<SpellAreaShapes spellName={areaCast.name} scale={view.scale} spec={areaCast.spec} placement={areaPreview} caster={areaActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} previewState="aiming" targets={areaTargets.filter(t=>!areaExcluded.includes(t.id))}/>}
-              {rayCast&&rayActor&&map&&<SpellRayTargetShapes caster={rayActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} rangeFt={rayCast.rangeFt} scale={view.scale} damageType={rayCast.damageType} spellName={rayCast.name} targets={(() => {
-                const byId = new Map<string, { token: Token; count: number; tag: string }>();
+              {map&&<CombatTargetLine tokens={actionSnapshot.tokens} mapId={map.id} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare} getPosition={getLiveTokenPosition} getBaseWidthFt={getTokenBaseWidthFt} is3dToken={isMiniatureTokenReady}/>}
+              {areaCast&&areaActor&&map&&<SpellAreaShapes spellName={areaCast.name} scale={view.scale} spec={areaCast.spec} placement={areaPreview} caster={areaActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} previewState="aiming" targets={areaTargets.filter(t=>!areaExcluded.includes(t.id)).map(t=>({...t,baseWidthFt:getTokenBaseWidthFt(t),affinity:resolveTargetAffinity(actionSnapshot.monsters,areaActor,t,{role:snapshot.role,vision:snapshot.playerVision,map:snapshot.map,affinityIds:legacyAffinity})}))}/>}
+              {rayCast&&rayActor&&map&&<SpellRayTargetShapes caster={rayActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} rangeFt={rayCast.rangeFt} scale={view.scale} damageType={rayCast.damageType} spellName={rayCast.name} distinct={rayCast.distinct} affinity={rayCast.kind === 'allies' ? 'friendly' : 'enemy'} getPosition={getLiveTokenPosition} getBaseWidthFt={getTokenBaseWidthFt} is3dToken={isMiniatureTokenReady} targets={(() => {
+                const byId = new Map<string, { token: Token; count: number; tag: string; affinity: TargetAffinity }>();
                 for (const tid of rayTargets) {
                   const existing = byId.get(tid);
                   if (existing) { existing.count += 1; continue; }
@@ -2198,14 +2216,14 @@ function MapStageInner({
                   if (!tok) continue;
                   const e = resolveToken(actionSnapshot, tok);
                   const tag = tok.kind === 'monster' && tok.revealTag && tok.revealTag !== 'U' ? tok.revealTag : e.name;
-                  byId.set(tid, { token: tok, count: 1, tag });
+                  byId.set(tid, { token: tok, count: 1, tag, affinity: resolveTargetAffinity(actionSnapshot.monsters, rayActor, tok, { role: snapshot.role, vision: snapshot.playerVision, map: snapshot.map, affinityIds: legacyAffinity, targetPos: getLiveTokenPosition(tok.id), casterPos: getLiveTokenPosition(rayActor.id) }) });
                 }
                 return [...byId.values()];
               })()}/>}
             </Layer>
             <Layer name="hp-number-layer" listening={false} ref={layer=>{
               if(!layer)return;const canvas=layer.getNativeCanvasElement();
-              canvas.style.zIndex='5';canvas.style.pointerEvents='none';canvas.dataset.testid='hp-number-canvas';
+              canvas.style.zIndex='7';canvas.style.pointerEvents='none';canvas.dataset.testid='hp-number-canvas';
             }}>
               <HpNumberLayer floaters={hpFx} tokens={snapshot.tokens} pxPerFoot={pxPerFoot} gridSizePx={grid}
                 headPosition={hpHeadPosition}
@@ -2213,7 +2231,7 @@ function MapStageInner({
             </Layer>
           </Stage>
           {!legacy&&(miniatureTokens.length > 0 || preloadMiniatures.length > 0 || environment || spellImpacts.length > 0) && <MiniatureFallback onUnavailable={handleMiniatureUnavailable}><Suspense fallback={null}>
-            <MiniatureLayer preparedSpellImpacts={preparedSpellImpacts} spellColorOverlay={spellColorOverlay} spellMist={spellMist} key={map?.id} ref={miniatureRef} rollBackground={rollBackground} rollBackgroundPrepared={rollBackgroundPrepared} personalVision={renderPlayerVision&&(usesMapVision(map)||!!snapshot.playerVision?.heavy)} tokens={miniatureTokens} preloadDefinitions={preloadMiniatures} onFailed={setFailedMiniatures} onUnavailable={handleMiniatureUnavailable} view={view} isVisibleAt={tokenVisibleAtPosition}
+            <MiniatureLayer preparedSpellImpacts={preparedSpellImpacts} spellColorOverlay={spellColorOverlay} spellMist={spellMist} key={map?.id} ref={miniatureRef} rollBackground={rollBackground} rollBackgroundPrepared={rollBackgroundPrepared} personalVision={renderPlayerVision&&(usesMapVision(map)||!!snapshot.playerVision?.heavy)} tokens={miniatureTokens} rayTargetIds={rayCast?rayTargets:undefined} preloadDefinitions={preloadMiniatures} onFailed={setFailedMiniatures} onUnavailable={handleMiniatureUnavailable} view={view} isVisibleAt={tokenVisibleAtPosition}
               environmentPreview={environment} footprints={readFootprints} spellImpacts={spellImpacts} spellFog={spellFog} visualPosition={presentation.position} memoryTerrainCanvas={memoryTerrainCanvas} visionCoverFrame={visionCoverFrame}
               tiltDegrees={tiltDegrees} rotationDegrees={rotationDegrees} width={size.w} height={size.h} onReady={handleMiniatureReady}
               nameLabels={miniatureNameLabels} onRenderedNames={handleRenderedNames} onVisionLights={renderPlayerVision?handleVisionLights:undefined} onPrepareVisionLights={renderPlayerVision?handlePrepareVisionLights:undefined} />

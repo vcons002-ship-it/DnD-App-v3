@@ -78,7 +78,7 @@ type Props = {
   /** A hint, rather than a hard cap; the table handles accumulated movement. */
   movementAllowanceFt?: number;
   terrainZones?: readonly {x:number;y:number;radiusFt:number}[];
-  onSelect: (token: Token, additive: boolean) => void;
+  onSelect: (token: Token, additive: boolean, altKey?: boolean) => void;
   /** Double-click / double-tap — select + expand the player's details panel. */
   onActivate?: (token: Token) => void;
   onMove: (token: Token, x: number, y: number, placed?: (p: {x:number;y:number}) => void, movement?: 'walk' | 'relocate') => void;
@@ -581,11 +581,11 @@ function TokenShapeInner({
       // and never changes selection (keeps the selected attacker intact).
       onClick={(e) => {
         if ((e.evt as MouseEvent).button !== 0) return;
-        onSelect(token, isAdditive(e));
+        onSelect(token, isAdditive(e), !!(e.evt as MouseEvent).altKey);
       }}
       onTap={(e) => {
         if (menuOpened.current) return; // hold-opened the menu; don't re-select
-        onSelect(token, isAdditive(e));
+        onSelect(token, isAdditive(e), !!(e.evt as MouseEvent).altKey);
       }}
       onDblClick={(e) => {
         if ((e.evt as MouseEvent).button !== 0) return;

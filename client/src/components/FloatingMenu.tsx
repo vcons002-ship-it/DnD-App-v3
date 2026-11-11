@@ -114,6 +114,17 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
         )
       : [];
   const canCastAsSelected = pcAbilities.length > 0 || monAbilities.length > 0;
+  const showTargetLine = useStore((s) => s.showTargetLine);
+  const setShowTargetLine = useStore((s) => s.setShowTargetLine);
+  const setFloatingMenuTarget = useStore((s) => s.setFloatingMenuTarget);
+  useEffect(() => {
+    if ((canAttackAsSelected || canCastAsSelected) && attacker && !targetingSelf) {
+      setFloatingMenuTarget({ attackerTokenId: attacker.id, targetTokenId: token.id });
+    } else {
+      setFloatingMenuTarget(null);
+    }
+    return () => setFloatingMenuTarget(null);
+  }, [attacker, token.id, canAttackAsSelected, canCastAsSelected, targetingSelf, setFloatingMenuTarget]);
 
   // Dismiss on outside click, scroll, or Escape — but IGNORE events for a short
   // grace period after opening. On touch, lifting the finger after the
@@ -193,6 +204,20 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
             <span className="fm-attacker-target">
               {' '}→ {targetingSelf ? 'self' : d.name}
             </span>
+            {!targetingSelf && (
+              <label
+                className="muted spell-tag"
+                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+                title="Show animated targeting tether to this target"
+              >
+                <input
+                  type="checkbox"
+                  checked={showTargetLine}
+                  onChange={(e) => setShowTargetLine(e.target.checked)}
+                />{' '}
+                Target Line
+              </label>
+            )}
           </div>
           {attacker && <div className="dice-row"><AdvantageToggle entityId={attacker.refId} />
             {(() => {

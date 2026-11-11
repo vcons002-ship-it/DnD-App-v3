@@ -23,7 +23,7 @@ export function commandTargetError(sid:string,entry:RollEntry,tokenId:string):st
   if(fx.expiresAt<=Date.now())return 'This Command targeting window has ended.';
 }
 
-export function castCommand(sid:string,roller:string,kind:TokenKind,id:string,a:SheetAbility,level:number,word:string,targetTokenId?:string):string|undefined {
+export function castCommand(sid:string,roller:string,kind:TokenKind,id:string,a:SheetAbility,level:number,word:string,targetTokenId?:string,targetTokenIds?:string[]):string|undefined {
   const e=kind==='pc'?getCharacter(id):getMonster(id),mapId=getSessionById(sid)?.activeMapId;
   if(!e||e.sessionId!==sid||!mapId||!listTokens(mapId).some(t=>t.kind===kind&&t.refId===id))return 'Place the caster on the active map before casting Command.';
   const selected=commandWord(word);
@@ -34,6 +34,21 @@ export function castCommand(sid:string,roller:string,kind:TokenKind,id:string,a:
   const entry:Omit<RollEntry,'id'>={createdAt:Date.now(),roller,label:'Command',expr:`Command: ${selected}`,total:0,detail:`Command: ${selected}. ${commandInstruction(selected)} Choose up to ${level} target(s); Wisdom saves resolve before the command takes effect on their next turn.`,
     apply:{amount:0,dc,save:'WIS',saveDamage:'none',targetMode:level>1?'multiple':'single',maxTargets:level,owner:kind==='pc'?id:undefined,
       effect:{casterKind:kind,casterId:id,spell:'Command',castLevel:level,condition:`Command: ${selected}`,commandWord:selected,durationRounds:1,expiresAt:Date.now()+60000,castId:newId(),concentrationConditionId:''}}};
+  if (targetTokenIds?.length) {
+    if (targetTokenIds.length > level) return `Command at level ${level} can target at most ${level} creature(s).`;
+    const seenEntities = new Set<string>();
+    for (const tid of targetTokenIds) {
+      const error = commandTargetError(sid, { ...entry, id: '' }, tid);
+      if (error) return error;
+      const t = getToken(tid)!;
+      const entKey = `${t.kind}:${t.refId}`;
+      if (seenEntities.has(entKey)) return 'Each Command target must be a distinct creature.';
+      seenEntities.add(entKey);
+    }
+    const logged = addRollLog(sid, entry);
+    for (const tid of targetTokenIds) resolveForcedSave(sid, logged.id, tid);
+    return;
+  }
   if(targetTokenId){const error=commandTargetError(sid,{...entry,id:''},targetTokenId);if(error)return error;}
   const logged=addRollLog(sid,entry);
   if(targetTokenId)resolveForcedSave(sid,logged.id,targetTokenId);

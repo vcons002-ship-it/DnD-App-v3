@@ -110,15 +110,15 @@ test('Saved and catalog spells show compact cast functionality and accessible ca
 });
 
 test('Manual spells record casting and slots without fake healing, damage, or legacy summons', async ({ page, request }) => {
-  const f = await fixture(request, page, ['Aid', 'Conjure Animals']);
+  const f = await fixture(request, page, ['Prayer of Healing', 'Conjure Animals']);
   const combat = page.locator('.compact-player-combat');
-  await expect(combat.getByRole('button', { name: /^Cast Aid · Level 2 slot/ })).toBeVisible();
-  await combat.getByRole('button', { name: /^Cast Aid · Level 2 slot/ }).click();
+  await expect(combat.getByRole('button', { name: /^Cast Prayer of Healing · Level 2 slot/ })).toBeVisible();
+  await combat.getByRole('button', { name: /^Cast Prayer of Healing · Level 2 slot/ }).click();
   await expect.poll(async () => (await f.snapshot()).characters.find(c => c.id === f.characterId)!.spellSlots.L2.used).toBe(1);
   const first = await f.snapshot();
   const c = first.characters.find(c => c.id === f.characterId)!;
   expect(c.curHp).toBe(30); expect(c.tempHp).toBe(0);
-  const roll = first.rollLog.find(r => r.label === 'Aid')!;
+  const roll = first.rollLog.find(r => r.label === 'Prayer of Healing')!;
   expect(roll).toBeTruthy(); expect(roll.apply).toBeUndefined(); expect(roll.pending).toBeUndefined(); expect(roll.reveal).toBeUndefined();
   expect(c.sheetAbilities).toEqual(f.abilities);
   await expect(page.locator('.roll-reveal, [data-live-dice=true]')).toHaveCount(0);
@@ -183,7 +183,7 @@ test('A deliberate unsafe-spell roll override updates its cast summary and retai
   const f = await fixture(request, page, ['Aid', 'Shield'], { curHp: 8 });
   await f.openSheet();
   const entry = f.entry('Aid');
-  await expect(entry.locator('[data-spell-cast-summary]')).toHaveText('No roll · cast only');
+  await expect(entry.locator('[data-spell-cast-summary]')).toHaveText('Buff (+5 max & cur HP, +5/lvl) · up to 3 allies');
   await entry.locator('.spell-toggle').click();
   // Intentionally author a homebrew healing variant, rather than executing the
   // catalogue's max-HP buff as ordinary healing silently.

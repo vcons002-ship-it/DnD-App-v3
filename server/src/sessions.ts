@@ -3693,6 +3693,11 @@ export function applyDamage(
       'UPDATE characters SET cur_hp = ?, temp_hp = ?, death_successes = ?, death_failures = ?, conditions = ? WHERE id = ?',
     ).run(nextCur, nextTemp, ds.successes, ds.failures, JSON.stringify(conds), refId);
     if (droppedToZero) endConcentration('pc', refId, massive ? 'killed outright' : 'dropped to 0 HP');
+    if (entity.tempHp > 0 && nextTemp === 0) {
+      for (const c of getCharacter(refId)?.conditions ?? []) {
+        if (c.combatEffect?.spell === 'Armor of Agathys') clearCondition('pc', refId, c.id);
+      }
+    }
     if(nextCur===0) clearDeadControlEffects(kind,refId);
     return getCharacter(refId);
   }
@@ -3702,6 +3707,11 @@ export function applyDamage(
     refId,
   );
   if (droppedToZero) endConcentration('monster', refId, 'dropped to 0 HP');
+  if (entity.tempHp > 0 && nextTemp === 0) {
+    for (const c of getMonster(refId)?.conditions ?? []) {
+      if (c.combatEffect?.spell === 'Armor of Agathys') clearCondition('monster', refId, c.id);
+    }
+  }
   if(nextCur===0) clearDeadControlEffects(kind,refId);
   return getMonster(refId);
 }
@@ -3727,6 +3737,11 @@ export function setTempHp(
   if (!entity || !Number.isFinite(amount)) return null;
   const next = Math.trunc(Math.max(0, Math.min(10000, amount)));
   db.prepare(`UPDATE ${table} SET temp_hp = ? WHERE id = ?`).run(next, refId);
+  if (entity.tempHp > 0 && next === 0) {
+    for (const c of (kind === 'pc' ? getCharacter(refId) : getMonster(refId))?.conditions ?? []) {
+      if (c.combatEffect?.spell === 'Armor of Agathys') clearCondition(kind, refId, c.id);
+    }
+  }
   return kind === 'pc' ? getCharacter(refId) : getMonster(refId);
 }
 
@@ -3798,6 +3813,51 @@ export function setConcentration(
   return { changed: true };
 }
 
+/** Apply Aid's maximum and current HP increase cleanly, unwinding any prior Aid buff first. */
+export function applyAidBuff(
+  kind: TokenKind,
+  refId: string,
+  bonus: number,
+  condition: Condition,
+  rollId?: string,
+): Character | Monster | null {
+  const initial = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+  if (!initial || !Number.isFinite(bonus) || bonus <= 0 || isDeadEntity(kind, initial)) return null;
+  for (const c of initial.conditions) {
+    if (c.combatEffect?.spell === 'Aid' || c.combatEffect?.aidMaxHpBonus) {
+      clearCondition(kind, refId, c.id);
+    }
+  }
+  const entity = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+  if (!entity || isDeadEntity(kind, entity)) return null;
+  const add = Math.trunc(Math.min(1000, Math.max(1, bonus)));
+  const nextMax = Math.min(10000, entity.maxHp + add);
+  const nextCur = Math.min(nextMax, entity.curHp + add);
+  if (kind === 'pc') {
+    const ch = entity as Character;
+    const ds = nextCur > 0 && (ch.deathSaves.successes || ch.deathSaves.failures)
+      ? { successes: 0, failures: 0 }
+      : ch.deathSaves;
+    const conds = entity.curHp === 0 && nextCur > 0 ? clearDownedConditions(ch.conditions) : ch.conditions;
+    db.prepare(
+      'UPDATE characters SET max_hp = ?, cur_hp = ?, death_successes = ?, death_failures = ?, conditions = ? WHERE id = ?',
+    ).run(nextMax, nextCur, ds.successes, ds.failures, JSON.stringify(conds), refId);
+  } else {
+    db.prepare('UPDATE monsters SET max_hp = ?, cur_hp = ? WHERE id = ?').run(nextMax, nextCur, refId);
+  }
+  if (hpFxQueue.length < 200) {
+    hpFxQueue.push({
+      sessionId: entity.sessionId,
+      kind,
+      refId,
+      delta: add,
+      spell: 'Aid',
+      ...(rollId ? { rollId } : {}),
+    });
+  }
+  return setCondition(kind, refId, condition);
+}
+
 export function clearCondition(
   kind: TokenKind,
   refId: string,
@@ -3825,6 +3885,14 @@ export function clearCondition(
     const token=getToken(removed.combatEffect.summonTokenId),weapon=token?.kind==='monster'?getMonster(token.refId):null;
     if(weapon?.sessionId===entity.sessionId&&weapon.modelType==='spiritual-weapon'){
       deleteToken(token!.id);deleteMonster(weapon.id);
+    }
+  }
+  if (removed?.combatEffect?.aidMaxHpBonus && removed.combatEffect.aidMaxHpBonus > 0) {
+    const current = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+    if (current) {
+      const nextMax = Math.max(1, current.maxHp - removed.combatEffect.aidMaxHpBonus);
+      const nextCur = Math.min(current.curHp, nextMax);
+      db.prepare(`UPDATE ${table} SET max_hp = ?, cur_hp = ? WHERE id = ?`).run(nextMax, nextCur, refId);
     }
   }
   if (removed?.label.trim().toLowerCase() === 'haste' && removed.combatEffect?.spell.trim().toLowerCase() === 'haste') {

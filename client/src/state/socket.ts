@@ -4,7 +4,9 @@ import {partySpell} from '../../../shared/partySpells';
 import type {LiveDiceFrame} from '../../../shared/liveDiceTypes';
 import {resultTrayFor} from '../lib/rollTrayPresentation';
 import {spellAreaFor,type SpellArea} from '../../../shared/spellAreas';
-import {effectiveSheetAbility,spellInstanceCount} from '../../../shared/spellExecution';
+import {effectiveSheetAbility,isCanonicalAidProfile,isCanonicalBlessOrBaneProfile,spellInstanceCount} from '../../../shared/spellExecution';
+import {inferAbilityActionCost,type ActionType} from '../../../shared/spellPrep';
+import {isCommandSpell} from '../../../shared/commandSpell';
 import type {MapEnvironment} from '../../../shared/mapEnvironment';
 import {readGraphicsQuality} from '../lib/useEnvironmentQuality';
 import {readDiceRenderingMode} from '../lib/useDiceRendering';
@@ -113,7 +115,7 @@ type Store = {
   shareSpellArea:(payload:import('../../../shared/types').SpellAreaPreviewIntent|null)=>void;
   areaCast:{payload:AbilityRollPayload;spec:SpellArea;name:string;repeat?:import('../../../shared/types').SpellRepeatPayload}|null;
   clearAreaCast:()=>void;
-  rayCast:{payload:AbilityRollPayload;name:string;instances:number;rangeFt:number;kind:'rays'|'missiles';damageType?:string}|null;
+  rayCast:{payload:AbilityRollPayload;name:string;instances:number;minTargets?:number;distinct?:boolean;allowSelf?:boolean;humanoidOnly?:boolean;rangeFt:number;kind:'rays'|'missiles'|'targets'|'allies';damageType?:string}|null;
   clearRayCast:()=>void;
   socket: TypedSocket | null;
   status: Status;
@@ -207,10 +209,22 @@ type Store = {
   nudgeRightPanel: () => void;
   /** Right-clicking a token aims the Combat section's target dropdown at it
    *  (n bumps every time so re-clicking the same token re-applies). */
-  combatTarget: { id: string; n: number } | null;
+  combatTarget: { id: string; n: number; mode?: 'attack' | 'heal' | 'buff' } | null;
+  mapTargetPick: 'attack' | 'heal' | 'buff' | null;
+  setMapTargetPick: (mode: 'attack' | 'heal' | 'buff' | null) => void;
+  lastActionUsed: { refId: string; cost: ActionType; n: number } | null;
   showDeadTargets: boolean;
   setShowDeadTargets: (show: boolean) => void;
-  setCombatTarget: (id: string) => void;
+  showHealEnemies: boolean;
+  setShowHealEnemies: (show: boolean) => void;
+  showTargetLine: boolean;
+  setShowTargetLine: (show: boolean) => void;
+  toggleTargetLine: () => void;
+  combatPanelTarget: { attackerTokenId: string; targetTokenId: string; midLabel?: string; outOfRange?: boolean } | null;
+  setCombatPanelTarget: (target: { attackerTokenId: string; targetTokenId: string; midLabel?: string; outOfRange?: boolean } | null) => void;
+  floatingMenuTarget: { attackerTokenId: string; targetTokenId: string } | null;
+  setFloatingMenuTarget: (target: { attackerTokenId: string; targetTokenId: string } | null) => void;
+  setCombatTarget: (id: string, mode?: 'attack' | 'heal' | 'buff') => void;
   /** Armed "Apply damage" from a save/damage roll: clicking tokens rolls their
    *  save and auto-applies full/half. Null = not arming. (DM-only.) */
   orbTarget: { rollId: string; targetId?: string; mark?: {kind: TokenKind; refId: string; abilityId: string} } | null;
@@ -733,11 +747,53 @@ export const useStore = create<Store>((set, get) => ({
   setDetailsExpanded: (detailsExpanded) => set({ detailsExpanded }),
   rightPanelNudge: 0,
   nudgeRightPanel: () => set((s) => ({ rightPanelNudge: s.rightPanelNudge + 1 })),
+  setMapTargetPick: (mode) => set({ mapTargetPick: mode }),
+  lastActionUsed: null,
   combatTarget: null,
+  mapTargetPick: null,
+
   showDeadTargets: false,
   setShowDeadTargets: (showDeadTargets) => set({ showDeadTargets }),
-  setCombatTarget: (id) =>
-    set((s) => ({ combatTarget: { id, n: (s.combatTarget?.n ?? 0) + 1 } })),
+  showHealEnemies: false,
+  setShowHealEnemies: (showHealEnemies) => set({ showHealEnemies }),
+  showTargetLine: (() => {
+    try {
+      return localStorage.getItem('dnd.hideTargetLine') !== '1';
+    } catch {
+      return true;
+    }
+  })(),
+  setShowTargetLine: (showTargetLine) => {
+    safeSetItem('dnd.hideTargetLine', showTargetLine ? '0' : '1');
+    set({ showTargetLine });
+  },
+  toggleTargetLine: () =>
+    set((s) => {
+      const next = !s.showTargetLine;
+      safeSetItem('dnd.hideTargetLine', next ? '0' : '1');
+      return { showTargetLine: next };
+    }),
+  combatPanelTarget: null,
+  setCombatPanelTarget: (combatPanelTarget) =>
+    set((s) =>
+      s.combatPanelTarget?.attackerTokenId === combatPanelTarget?.attackerTokenId &&
+      s.combatPanelTarget?.targetTokenId === combatPanelTarget?.targetTokenId &&
+      s.combatPanelTarget?.midLabel === combatPanelTarget?.midLabel &&
+      s.combatPanelTarget?.outOfRange === combatPanelTarget?.outOfRange
+        ? s
+        : { combatPanelTarget },
+    ),
+  floatingMenuTarget: null,
+  setFloatingMenuTarget: (floatingMenuTarget) =>
+    set((s) =>
+      s.floatingMenuTarget?.attackerTokenId === floatingMenuTarget?.attackerTokenId &&
+      s.floatingMenuTarget?.targetTokenId === floatingMenuTarget?.targetTokenId
+        ? s
+        : { floatingMenuTarget },
+    ),
+  setCombatTarget: (id, mode) =>
+    set((s) => ({ combatTarget: { id, n: (s.combatTarget?.n ?? 0) + 1, ...(mode ? { mode } : {}) }, mapTargetPick: null })),
+
   orbTarget: null,
   setOrbTarget: (orbTarget) => set({ orbTarget, ...(orbTarget ? {saveResolve: null} : {}) }),
   saveResolve: null,
@@ -821,6 +877,8 @@ export const useStore = create<Store>((set, get) => ({
       manualAdvantage: {},
       weaponAttackOptions: {},
       combatTarget: null,
+  mapTargetPick: null,
+
       orbTarget: null,
       saveResolve: null,
     });
@@ -1384,6 +1442,73 @@ export const useStore = create<Store>((set, get) => ({
     if(a&&!payload.targetTokenIds){
       const exec=effectiveSheetAbility(a,payload.castLevel);
       const casterLevel=payload.kind==='pc'&&caster&&'level'in caster?caster.level:undefined;
+      const casterOnMap=!!(view?.map&&view.tokens.some(t=>t.mapId===view.map!.id&&t.kind===payload.kind&&t.refId===payload.refId));
+      const parseRange=(fallback:number)=>{
+        const m=/\b(\d+)\s*(?:ft|feet)\b/i.exec(a.meta??'')??/\b(\d+)\s*(?:ft|feet)\b/i.exec(a.description??'');
+        return m?Number(m[1]):fallback;
+      };
+      const openMultiPicker=(opts:{instances:number;minTargets?:number;distinct?:boolean;allowSelf?:boolean;humanoidOnly?:boolean;rangeFt:number;kind:'rays'|'missiles'|'targets'|'allies';damageType?:string})=>{
+        set({
+          rayCast:{payload:{...payload,targetTokenId:undefined},name:a.name,...opts},
+          areaCast:null,teleportCast:null,saveResolve:null,orbTarget:null,mapTargetPick:null,
+        });
+      };
+      if (casterOnMap) {
+        if (isCommandSpell(a) && payload.commandWord && (payload.castLevel ?? 1) > 1) {
+          openMultiPicker({ instances: payload.castLevel ?? 1, minTargets: 1, distinct: true, allowSelf: false, rangeFt: 60, kind: 'targets' });
+          return;
+        }
+        if (isCanonicalAidProfile(a)) {
+          openMultiPicker({ instances: 3, minTargets: 1, distinct: true, allowSelf: true, rangeFt: 30, kind: 'allies' });
+          return;
+        }
+        const blessOrBane = isCanonicalBlessOrBaneProfile(a);
+        if (blessOrBane) {
+          const slotLvl = Math.max(1, payload.castLevel ?? 1);
+          openMultiPicker({
+            instances: 3 + (slotLvl - 1),
+            minTargets: 1,
+            distinct: true,
+            allowSelf: blessOrBane === 'bless',
+            rangeFt: 30,
+            kind: blessOrBane === 'bless' ? 'allies' : 'targets',
+          });
+          return;
+        }
+        if (exec.roll?.kind === 'heal' && exec.roll.targetMode === 'multiple' && !spec) {
+          openMultiPicker({
+            instances: exec.roll.maxTargets ?? 6,
+            minTargets: 1,
+            distinct: true,
+            allowSelf: true,
+            rangeFt: parseRange(60),
+            kind: 'allies',
+          });
+          return;
+        }
+        const spellNameKey = a.name.trim().toLowerCase();
+        if (
+          a.type === 'spell' &&
+          a.source !== 'custom' &&
+          a.executionProfile !== 'manual' &&
+          (spellNameKey === 'hold person' || spellNameKey === 'hold monster')
+        ) {
+          const baseLvl = spellNameKey === 'hold monster' ? 5 : 2;
+          const slotLvl = payload.castLevel ?? baseLvl;
+          if (slotLvl > baseLvl) {
+            openMultiPicker({
+              instances: slotLvl - baseLvl + 1,
+              minTargets: 1,
+              distinct: true,
+              allowSelf: false,
+              humanoidOnly: spellNameKey === 'hold person',
+              rangeFt: spellNameKey === 'hold monster' ? 90 : 60,
+              kind: 'targets',
+            });
+            return;
+          }
+        }
+      }
       const instances=exec.roll?spellInstanceCount(exec.roll,payload.castLevel,casterLevel):0;
       if(instances>0&&exec.roll?.dice&&(exec.roll.kind==='attack'||exec.roll.kind==='damage')){
         const rangeMatch=/\b(\d+)\s*(?:ft|feet)\b/i.exec(a.meta??'')??/\b(\d+)\s*(?:ft|feet)\b/i.exec(a.description??'');
@@ -1404,6 +1529,10 @@ export const useStore = create<Store>((set, get) => ({
         });
         return;
       }
+    }
+    if (a) {
+      const cost = inferAbilityActionCost(a);
+      if (cost !== 'other') set((s) => ({ lastActionUsed: { refId: payload.refId, cost, n: (s.lastActionUsed?.n ?? 0) + 1 } }));
     }
     get().socket?.emit('ability:roll',payload);
   },
@@ -1495,7 +1624,14 @@ export const useStore = create<Store>((set, get) => ({
   rollDice: (payload) => get().socket?.emit('dice:roll', payload),
   clearRollLog: () => get().socket?.emit('dice:clearLog'),
   undo: () => get().socket?.emit('session:undo'),
-  combatAttack: (payload) => get().socket?.emit('combat:attack', payload),
+  combatAttack: (payload) => {
+    const tok = get().snapshot?.tokens.find((t) => t.id === payload.attackerTokenId);
+    if (tok && !payload.hasteAction) {
+      const cost: ActionType = payload.offhand ? 'bonus' : 'action';
+      set((s) => ({ lastActionUsed: { refId: tok.refId, cost, n: (s.lastActionUsed?.n ?? 0) + 1 } }));
+    }
+    get().socket?.emit('combat:attack', payload);
+  },
   repeatSpell: payload=>{
     const view=get().snapshot,caster=payload.kind==='pc'?view?.characters.find(c=>c.id===payload.refId):view?.monsters.find(c=>c.id===payload.refId),fx=caster?.conditions.find(c=>c.id===payload.conditionId)?.combatEffect;
     if(fx?.spell.toLowerCase()==='call lightning'&&!payload.area){const a=caster&&'sheetAbilities'in caster?caster.sheetAbilities.find(a=>a.id===fx.abilityId):undefined,spec=a&&spellAreaFor(a,fx.castLevel);if(a&&spec){set({areaCast:{payload:{kind:payload.kind,refId:payload.refId,abilityId:a.id,castLevel:fx.castLevel},spec,name:a.name,repeat:payload}});return;}}

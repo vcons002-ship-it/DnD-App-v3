@@ -5,7 +5,7 @@ import {linkedSpellProfile} from './linkedSpells.js';
 import {spellAreaFor} from './spellAreas.js';
 import type { SheetAbility } from './types.js';
 import { abilityKey, hitFeature, markSpell } from './hitFeatures.js';
-import { effectiveSheetAbility, isCanonicalHasteProfile } from './spellExecution.js';
+import { effectiveSheetAbility, isCanonicalAidProfile, isCanonicalArmorOfAgathysProfile, isCanonicalHasteProfile } from './spellExecution.js';
 import { matchesRevisedSpell2024, spellRevision2024For } from './spellRevisions.js';
 
 export type SpellCombatSupport = {
@@ -119,6 +119,7 @@ function isEditedUnsafeRoll(ability: SheetAbility, key: string): boolean {
 const DETAILS: Record<string, string[]> = {
   'hypnotic pattern': ['Apply Charmed/Incapacitated and remove them when the spell ends or its wake-up conditions occur.'],
   command: ['Choose a command and resolve its behavior on the next turn after a failed save.'],
+  'armor of agathys': ['Resolve the Cold melee retaliation against attackers while the temporary HP from this spell remain.'],
   'chill touch': ['Prevent healing for the stated duration; the app does not enforce that rider or its range.'],
   'ray of frost': ['Apply and expire the speed reduction.'],
   'shocking grasp': ['Apply the reaction restriction until the next turn.'],
@@ -201,6 +202,18 @@ export function spellCombatSupport(input: SpellInput): SpellCombatSupport | null
   }
   const linked=linkedSpellProfile(ability);
   if(isCommandSpell(ability))return {status:'partial',label:'Partial',automated:['Command choice, upcast target limits, Wisdom saves, next-turn effects, Halt restrictions, Grovel Prone, and turn-end cleanup.'],manual:['Movement routes and dropped items; optional custom words are DM-adjudicated.'],manualCastOnly:false};
+  if (isCanonicalAidProfile(ability)) {
+    return {
+      status: 'partial',
+      label: 'Partial',
+      automated: [
+        'Cast record and spell-slot bookkeeping.',
+        'Increases maximum and current HP for up to three chosen creatures (+5 per slot above 2nd) and restores maximum HP when the Aid condition ends.',
+      ],
+      manual: ['8-hour duration across rests or scene changes remains DM-managed.'],
+      manualCastOnly: false,
+    };
+  }
   if(linked) {
     const automated:Record<string,string>={
       'mirror image':'Three translucent copies of the caster; per-hit duplicate checks, removal, sight exceptions, and one-minute expiry.',
@@ -387,6 +400,8 @@ export function spellCastSummary(input: SpellInput): SpellCastSummary | null {
   const mark = markSpell(ability);
   if (mark) return { text: `Bonus mark · +1d6 ${mark} on hit · 1 target`, needsEdit: false };
   if (isCanonicalHasteProfile(ability)) return { text: 'Buff (+2 AC, 2× speed) · 1 ally', needsEdit: false };
+  if (isCanonicalAidProfile(ability)) return { text: 'Buff (+5 max & cur HP, +5/lvl) · up to 3 allies', needsEdit: false };
+  if (isCanonicalArmorOfAgathysProfile(ability)) return { text: 'Temp HP 5 (+5/lvl) + cold ward · self', needsEdit: false };
 
   if (support?.manualCastOnly) {
     const area = spellAreaFor(effective);

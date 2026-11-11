@@ -52,6 +52,7 @@ export type Condition = {
     saveBeforeDamage?: boolean; once?: boolean;
     auraRecipients?: {kind:TokenKind;refId:string}[];
     stealthBonus?: number;
+    aidMaxHpBonus?: number;
   };
 
 };

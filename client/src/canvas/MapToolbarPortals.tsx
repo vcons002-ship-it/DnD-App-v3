@@ -186,6 +186,8 @@ export function MapToolbarPortals({
   coverFog: (mapId: string, layer: FogLayer) => void;
   revealAll: (layer: FogLayer) => void;
 }) {
+  const showTargetLine = useStore((s) => s.showTargetLine);
+  const toggleTargetLine = useStore((s) => s.toggleTargetLine);
   if (!toolSlot) return null;
   return (
     <>
@@ -274,6 +276,15 @@ export function MapToolbarPortals({
               </button>
             </div>
             <TokenAppearanceControl toolbar forceCompact={actualDm} />
+            <button
+              className={`btn tiny ${showTargetLine ? 'on' : ''}`}
+              aria-label="Toggle combat target line"
+              aria-pressed={showTargetLine}
+              title="Show or hide the animated targeting line when a combat target is selected"
+              onClick={toggleTargetLine}
+            >
+              Target line: {showTargetLine ? 'On' : 'Off'}
+            </button>
             {!legacy && (map?.videoPath || tiles.some((t) => t.videoPath)) && (
               <button
                 className={`btn tiny ${animateMap ? 'on' : ''}`}

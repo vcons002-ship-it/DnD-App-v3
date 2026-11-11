@@ -1,4 +1,5 @@
 import type { Weapon } from '../../../shared/types';
+import { evaluateWeaponRange, formatWeaponRange, parseWeaponRange } from '../../../shared/weaponRange';
 
 /**
  * Shared list of weapon-attack buttons (icon + name + damage). The parent wires
@@ -13,28 +14,53 @@ export function WeaponButtons({
   variant = 'inline',
   twoHanded,
   disabled,
+  distanceFt,
+  onHoverWeapon,
 }: {
   weapons: Weapon[];
   onAttack: (index: number) => void;
   variant?: 'menu' | 'inline';
   twoHanded?: boolean;
   disabled?: boolean;
+  distanceFt?: number;
+  onHoverWeapon?: (index: number | null) => void;
 }) {
   const menu = variant === 'menu';
   return (
     <>
       {weapons.map((w, i) => {
         const dmg = twoHanded && w.versatileDamage?.trim() ? w.versatileDamage : w.damage;
+        const rangeEval = distanceFt !== undefined ? evaluateWeaponRange(w, distanceFt) : undefined;
+        const parsedRange = rangeEval ?? parseWeaponRange(w);
+        const rangeHint = formatWeaponRange(parsedRange);
+        const rangeTooltip =
+          rangeEval?.status === 'long'
+            ? `Long range (${Math.round(distanceFt!)} ft vs ${rangeHint}) — attacks at long range have disadvantage`
+            : rangeEval?.status === 'out'
+              ? `Out of normal/long range (${Math.round(distanceFt!)} ft vs ${rangeHint})`
+              : `Range: ${rangeHint}`;
         return (
           <button
             key={i}
-            className={menu ? 'floating-menu-item' : 'btn tiny attack-row'}
+            className={`${menu ? 'floating-menu-item weapon-attack-btn' : 'btn tiny attack-row weapon-attack-btn'}${rangeEval?.status === 'out' ? ' is-out-of-range' : rangeEval?.status === 'long' ? ' is-long-range' : ''}`}
             disabled={disabled}
+            title={rangeTooltip}
+            onMouseEnter={() => onHoverWeapon?.(i)}
+            onMouseLeave={() => onHoverWeapon?.(null)}
+            onFocus={() => onHoverWeapon?.(i)}
+            onBlur={() => onHoverWeapon?.(null)}
             onClick={() => onAttack(i)}
           >
-            {w.kind === 'ranged' ? '🏹' : '⚔️'} {w.name}
-            {menu && w.range && <span className="muted"> ({w.range})</span>}
-            {dmg ? menu ? ` (${dmg})` : <span className="muted"> {dmg}</span> : null}
+            <span>
+              {w.kind === 'ranged' ? '🏹' : '⚔️'} {w.name}
+              {menu && w.range && <span className="muted"> ({w.range})</span>}
+              {dmg ? menu ? ` (${dmg})` : <span className="muted"> {dmg}</span> : null}
+            </span>
+            {!menu && rangeEval && rangeEval.status !== 'normal' && (
+              <span className={`weapon-range-tag is-${rangeEval.status}`} aria-hidden="true">
+                {rangeEval.status === 'long' ? `Long (${rangeEval.normalFt}/${rangeEval.longFt})` : `Out (${rangeHint})`}
+              </span>
+            )}
           </button>
         );
       })}
