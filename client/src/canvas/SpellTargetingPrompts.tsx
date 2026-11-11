@@ -1,6 +1,7 @@
-import { memo, useEffect } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 import { tokenDistanceFt } from '../../../shared/distance';
 import type { StateSnapshot } from '../../../shared/types';
+import { formatTetherRangePill } from '../../../shared/weaponRange';
 import { resolveToken } from '../lib/entities';
 import { useStore } from '../state/socket';
 import { resolveTargetAffinity, SpellAreaShapes, SpellRayTargetShapes } from './SpellAreaShapes';
@@ -63,8 +64,15 @@ export const CombatTargetLine = memo(function CombatTargetLine({
   const showTargetLine = useStore((s) => s.showTargetLine);
   const floatingMenuTarget = useStore((s) => s.floatingMenuTarget);
   const combatPanelTarget = useStore((s) => s.combatPanelTarget);
+  const tokenDragPreview = useStore((s) => s.tokenDragPreview);
   const rayCast = useStore((s) => s.rayCast);
   const areaCast = useStore((s) => s.areaCast);
+  const hoveredWeapon = !floatingMenuTarget ? combatPanelTarget?.hoveredWeapon : undefined;
+  const weaponsOnlyList = !floatingMenuTarget ? combatPanelTarget?.weaponsOnlyList : undefined;
+  const formatMidLabel = useCallback(
+    (distFt: number) => formatTetherRangePill(distFt, { hoveredWeapon, weaponsOnlyList }),
+    [hoveredWeapon, weaponsOnlyList],
+  );
   if (!showTargetLine || rayCast || areaCast) return null;
   const active = floatingMenuTarget ?? combatPanelTarget;
   if (!active || active.attackerTokenId === active.targetTokenId) return null;
@@ -80,15 +88,23 @@ export const CombatTargetLine = memo(function CombatTargetLine({
       (t) => t.id === active.targetTokenId && t.mapId === mapId && !t.sharedSightOnly && !t.partiallyRevealed,
     );
   if (!caster || !target) return null;
+  const casterLivePos =
+    (getPosition ? getPosition(caster.id) : undefined) ??
+    (tokenDragPreview?.tokenId === caster.id ? { x: tokenDragPreview.x, y: tokenDragPreview.y } : undefined);
+  const targetLivePos =
+    (getPosition ? getPosition(target.id) : undefined) ??
+    (tokenDragPreview?.tokenId === target.id ? { x: tokenDragPreview.x, y: tokenDragPreview.y } : undefined);
   const affinityIds = storeSnapshot?.serverRendering?.enabled && storeSnapshot.legacyGeometry !== undefined ? new Set(storeSnapshot.legacyGeometry?.affinity ?? []) : undefined;
   const targetDisposition = resolveTargetAffinity(storeSnapshot?.monsters, caster, target, {
     role: storeSnapshot?.role,
     vision: storeSnapshot?.playerVision,
     map: storeSnapshot?.map,
     affinityIds,
-    targetPos: getPosition ? getPosition(target.id) : undefined,
-    casterPos: getPosition ? getPosition(caster.id) : undefined,
+    targetPos: targetLivePos,
+    casterPos: casterLivePos,
   });
+  const liveCasterForDist = casterLivePos ? { ...caster, x: casterLivePos.x, y: casterLivePos.y } : caster;
+  const liveTargetForDist = targetLivePos ? { ...target, x: targetLivePos.x, y: targetLivePos.y } : target;
   return (
     <SpellRayTargetShapes
       caster={caster}
@@ -99,7 +115,15 @@ export const CombatTargetLine = memo(function CombatTargetLine({
       getPosition={getPosition}
       getBaseWidthFt={getBaseWidthFt}
       is3dToken={is3dToken}
-      midLabel={!floatingMenuTarget && combatPanelTarget?.midLabel ? combatPanelTarget.midLabel : storeSnapshot?.map ? `${Math.round(tokenDistanceFt(caster, target, storeSnapshot.map))} ft` : undefined}
+      mapScale={storeSnapshot?.map}
+      formatMidLabel={storeSnapshot?.map ? formatMidLabel : undefined}
+      midLabel={
+        !floatingMenuTarget && combatPanelTarget?.midLabel
+          ? combatPanelTarget.midLabel
+          : storeSnapshot?.map
+            ? `${Math.round(tokenDistanceFt(liveCasterForDist, liveTargetForDist, storeSnapshot.map))} ft`
+            : undefined
+      }
       outOfRange={!floatingMenuTarget ? combatPanelTarget?.outOfRange : undefined}
       targets={[{ token: target, count: 1, tag: '', affinity: targetDisposition }]}
     />

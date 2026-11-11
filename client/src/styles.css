@@ -512,15 +512,64 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 
 /* Token right-click / long-press floating menu */
 .floating-menu {
-  position: fixed; z-index: 50; min-width: 150px;
-  max-width: min(320px, 85vw); max-height: 80vh; overflow-y: auto;
+  position: fixed; z-index: 50; min-width: 170px;
+  max-width: min(320px, 85vw); max-height: 76vh;
+  display: flex; flex-direction: column; overflow: hidden;
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 8px; padding: 4px; box-shadow: 0 6px 24px #0007;
 }
+.floating-menu-body {
+  overflow-y: auto; overscroll-behavior: contain; min-height: 0;
+  display: flex; flex-direction: column;
+}
 .floating-menu-title {
-  display: flex; align-items: center; gap: 8px;
-  font-weight: 700; font-size: 12px; padding: 4px 8px 6px;
-  border-bottom: 1px solid var(--line); margin-bottom: 4px;
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 700; font-size: 12px; padding: 3px 6px 5px;
+  border-bottom: 1px solid var(--line); margin-bottom: 3px; flex-shrink: 0;
+}
+.floating-menu.is-collapsed .floating-menu-title {
+  border-bottom: 0; margin-bottom: 0; padding-bottom: 3px;
+}
+.floating-menu.is-collapsed {
+  background: rgba(18, 20, 27, 0.88);
+  backdrop-filter: blur(6px);
+}
+.fm-title-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fm-title-actions {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;
+}
+.fm-head-btn {
+  padding: 2px 6px !important; min-width: 24px; line-height: 1.1; font-size: 12px;
+}
+.fm-act-as-row {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+}
+.fm-act-as-row select {
+  flex: 1; min-width: 0; margin: 0; padding: 3px 6px; font-size: 12px;
+}
+.fm-target-line-toggle {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; flex-shrink: 0;
+}
+.fm-dice-row {
+  padding: 3px 6px; gap: 4px; flex-wrap: wrap;
+}
+.fm-weapons-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); gap: 3px; padding: 2px 2px 4px;
+}
+.floating-menu.is-mobile-sheet {
+  width: min(344px, calc((100vw - 16px) / var(--player-ui-scale, 1)));
+  max-width: calc((100vw - 16px) / var(--player-ui-scale, 1));
+  max-height: min(36dvh, calc(248px / var(--player-ui-scale, 1)));
+  background: rgba(18, 20, 27, 0.93);
+  backdrop-filter: blur(6px);
+}
+.floating-menu.is-mobile-sheet .floating-menu-item {
+  padding: 5px 7px; font-size: 12px;
+}
+.floating-menu.is-mobile-sheet .fm-dmg {
+  padding: 2px 4px;
 }
 .floating-menu-item {
   display: block; width: 100%; text-align: left; background: none;
@@ -636,13 +685,15 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 /* Roll buttons shown next to a rollable action in the read view. */
 
 /* Floating menu: quick damage/heal + HP label */
-.floating-menu-title .fm-hp { margin-left: auto; color: var(--muted); font-weight: 600; }
+.floating-menu-title .fm-hp { color: var(--muted); font-weight: 600; flex-shrink: 0; }
+.fm-title-label { flex: 1; }
 .fm-dmg { display: flex; gap: 4px; align-items: center; padding: 4px; }
 .fm-dmg input { width: 52px; margin: 0; }
 .fm-attacks { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
 /* Make it obvious WHO the attack comes from before a weapon is clicked. */
 .fm-attacker {
-  padding: 5px 8px;
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  padding: 4px 7px;
   font-size: 12px;
   background: rgba(226, 59, 59, 0.12);
   border-bottom: 1px solid var(--line);

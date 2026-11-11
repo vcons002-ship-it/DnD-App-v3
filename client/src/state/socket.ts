@@ -60,6 +60,7 @@ import type {
   StateSnapshot,
   TokenKind,
   TokenShape,
+  Weapon,
 } from '../../../shared/types';
 import { playHit, playMiss, playHeal, playSkill } from '../lib/sfx';
 import { safeSetItem } from '../lib/storage';
@@ -220,8 +221,26 @@ type Store = {
   showTargetLine: boolean;
   setShowTargetLine: (show: boolean) => void;
   toggleTargetLine: () => void;
-  combatPanelTarget: { attackerTokenId: string; targetTokenId: string; midLabel?: string; outOfRange?: boolean } | null;
-  setCombatPanelTarget: (target: { attackerTokenId: string; targetTokenId: string; midLabel?: string; outOfRange?: boolean } | null) => void;
+  combatPanelTarget: {
+    attackerTokenId: string;
+    targetTokenId: string;
+    midLabel?: string;
+    outOfRange?: boolean;
+    hoveredWeapon?: Weapon;
+    weaponsOnlyList?: readonly Weapon[];
+  } | null;
+  setCombatPanelTarget: (
+    target: {
+      attackerTokenId: string;
+      targetTokenId: string;
+      midLabel?: string;
+      outOfRange?: boolean;
+      hoveredWeapon?: Weapon;
+      weaponsOnlyList?: readonly Weapon[];
+    } | null,
+  ) => void;
+  tokenDragPreview: { tokenId: string; x: number; y: number; key: string } | null;
+  setTokenDragPreview: (preview: { tokenId: string; x: number; y: number; key: string } | null) => void;
   floatingMenuTarget: { attackerTokenId: string; targetTokenId: string } | null;
   setFloatingMenuTarget: (target: { attackerTokenId: string; targetTokenId: string } | null) => void;
   setCombatTarget: (id: string, mode?: 'attack' | 'heal' | 'buff') => void;
@@ -779,10 +798,15 @@ export const useStore = create<Store>((set, get) => ({
       s.combatPanelTarget?.attackerTokenId === combatPanelTarget?.attackerTokenId &&
       s.combatPanelTarget?.targetTokenId === combatPanelTarget?.targetTokenId &&
       s.combatPanelTarget?.midLabel === combatPanelTarget?.midLabel &&
-      s.combatPanelTarget?.outOfRange === combatPanelTarget?.outOfRange
+      s.combatPanelTarget?.outOfRange === combatPanelTarget?.outOfRange &&
+      s.combatPanelTarget?.hoveredWeapon === combatPanelTarget?.hoveredWeapon &&
+      s.combatPanelTarget?.weaponsOnlyList === combatPanelTarget?.weaponsOnlyList
         ? s
         : { combatPanelTarget },
     ),
+  tokenDragPreview: null,
+  setTokenDragPreview: (tokenDragPreview) =>
+    set((s) => (s.tokenDragPreview?.key === tokenDragPreview?.key ? s : { tokenDragPreview })),
   floatingMenuTarget: null,
   setFloatingMenuTarget: (floatingMenuTarget) =>
     set((s) =>

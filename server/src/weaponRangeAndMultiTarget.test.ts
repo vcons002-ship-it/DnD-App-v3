@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { evaluateWeaponRange, formatWeaponRange, parseWeaponRange } from '../../shared/weaponRange.js';
+import { evaluateWeaponRange, formatTetherRangePill, formatWeaponRange, parseWeaponRange } from '../../shared/weaponRange.js';
 import { inferAbilityActionCost } from '../../shared/spellPrep.js';
 import { withDiceSource } from '../../shared/dice.js';
 import type { SheetAbility, Weapon } from '../../shared/types.js';
@@ -81,6 +81,36 @@ describe('shared weapon range parser & evaluator', () => {
     expect(inferAbilityActionCost(getSpell('Shield')!)).toBe('reaction');
     expect(inferAbilityActionCost(getSpell('Fireball')!)).toBe('action');
     expect(inferAbilityActionCost({ name: 'Cunning Strike', type: 'ability', actionType: 'bonus' })).toBe('bonus');
+  });
+
+  it('updates midpoint tether range pills live as dragged token distance crosses normal, long, and out-of-range thresholds', () => {
+    const longsword: Weapon = { name: 'Longsword', kind: 'melee', damage: '1d8', damageType: 'slashing' };
+    const handaxe: Weapon = { name: 'Handaxe', kind: 'melee', damage: '1d6', damageType: 'slashing' };
+
+    // Hovering a 5-ft melee weapon while dragging from 25 ft -> 5 ft:
+    expect(formatTetherRangePill(25, { hoveredWeapon: longsword })).toEqual({
+      midLabel: '25 ft · Out',
+      outOfRange: true,
+    });
+    expect(formatTetherRangePill(5, { hoveredWeapon: longsword })).toEqual({
+      midLabel: '5 ft',
+      outOfRange: false,
+    });
+
+    // Weapons-only loadout (Longsword 5 ft + Handaxe 20/60 ft) while dragging from 75 ft -> 35 ft -> 15 ft:
+    const weaponsOnlyList = [longsword, handaxe];
+    expect(formatTetherRangePill(75, { weaponsOnlyList })).toEqual({
+      midLabel: '75 ft · Out',
+      outOfRange: true,
+    });
+    expect(formatTetherRangePill(35, { weaponsOnlyList })).toEqual({
+      midLabel: '35 ft · Long',
+      outOfRange: false,
+    });
+    expect(formatTetherRangePill(15, { weaponsOnlyList })).toEqual({
+      midLabel: '15 ft',
+      outOfRange: false,
+    });
   });
 });
 

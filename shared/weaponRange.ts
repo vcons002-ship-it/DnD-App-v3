@@ -166,3 +166,28 @@ export function evaluateWeaponRange(
     pillText,
   };
 }
+
+/** Compute midpoint tether pill text and out-of-range state for a given live distance. */
+export function formatTetherRangePill(
+  distanceFt: number,
+  opts?: {
+    hoveredWeapon?: Pick<Weapon, 'name' | 'kind' | 'range' | 'tags'>;
+    weaponsOnlyList?: readonly Pick<Weapon, 'name' | 'kind' | 'range' | 'tags'>[];
+  },
+): { midLabel: string; outOfRange: boolean } {
+  const rounded = `${Math.max(0, Math.round(distanceFt))} ft`;
+  if (opts?.hoveredWeapon) {
+    const ev = evaluateWeaponRange(opts.hoveredWeapon, distanceFt);
+    return { midLabel: ev.pillText, outOfRange: ev.status === 'out' };
+  }
+  if (opts?.weaponsOnlyList && opts.weaponsOnlyList.length > 0) {
+    const evals = opts.weaponsOnlyList.map((w) => evaluateWeaponRange(w, distanceFt));
+    if (evals.every((e) => e.status === 'out')) {
+      return { midLabel: `${rounded} · Out`, outOfRange: true };
+    }
+    if (evals.every((e) => e.status !== 'normal') && evals.some((e) => e.status === 'long')) {
+      return { midLabel: `${rounded} · Long`, outOfRange: false };
+    }
+  }
+  return { midLabel: rounded, outOfRange: false };
+}

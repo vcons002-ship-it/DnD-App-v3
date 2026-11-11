@@ -39,17 +39,61 @@ type Props = {
  */
 export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y, onClose }: Props) {
   const [chosenAttacker, setChosenAttacker] = useState('');
+  const [collapsed, setCollapsed] = useState(false);
+  const [dockPref, setDockPref] = useState<'auto' | 'top' | 'bottom'>('auto');
+  const [isMobileSheet, setIsMobileSheet] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({left:x,top:y});
+  const [position, setPosition] = useState<{ left: number; top: number }>({ left: x, top: y });
   const socketId = useStore(s => s.socket?.id);
   const actors = snapshot.tokens.filter(t => !t.sharedSightOnly && !t.partiallyRevealed && t.mapId === token.mapId && (snapshot.role === 'dm' ||
     t.kind === 'pc' && snapshot.characters.some(c => c.id === t.refId && c.claimedBy === socketId) ||
     t.kind === 'monster' && snapshot.monsters.some(m => m.id === t.refId && m.disposition === 'friendly')) && !resolveToken(snapshot,t).objectKind);
   const attacker = actors.find(t => t.id === chosenAttacker) ?? defaultAttacker ?? actors.find(t => t.id === snapshot.activeTurnTokenId) ?? actors[0] ?? null;
   useLayoutEffect(() => {
-    const rect = menuRef.current?.getBoundingClientRect();
-    if (rect) setPosition({left:Math.max(8,Math.min(x,window.innerWidth-rect.width-8)),top:Math.max(8,Math.min(y,window.innerHeight-rect.height-8))});
-  }, [x,y,attacker?.id,token.id]);
+    const computePosition = () => {
+      const el = menuRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (!rect.width && !rect.height) return;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const scaleRatio = el.offsetWidth > 0 ? rect.width / el.offsetWidth : 1;
+      const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+      const mobile = vw <= 760 || vh <= 560 || (coarse && Math.min(vw, vh) <= 640);
+      setIsMobileSheet(mobile);
+
+      const tetherDx = attacker && attacker.id !== token.id ? attacker.x - token.x : 0;
+      const tetherDy = attacker && attacker.id !== token.id ? attacker.y - token.y : 0;
+
+      let leftPx: number;
+      let topPx: number;
+      if (mobile) {
+        const autoDock: 'top' | 'bottom' =
+          y > vh * 0.54 ? 'top' : y < vh * 0.46 ? 'bottom' : tetherDy > 8 ? 'top' : 'bottom';
+        const effectiveDock = dockPref === 'auto' ? autoDock : dockPref;
+        leftPx = Math.max(8, Math.min(Math.round((vw - rect.width) / 2), vw - rect.width - 8));
+        topPx =
+          effectiveDock === 'top'
+            ? 46
+            : Math.max(46, vh - rect.height - 10);
+      } else {
+        const offset = 24;
+        const preferLeft =
+          (tetherDx > 20 && x - rect.width - offset >= 8) || x + offset + rect.width > vw - 8;
+        const rawLeft = preferLeft ? x - rect.width - offset : x + offset;
+        leftPx = Math.max(8, Math.min(rawLeft, vw - rect.width - 8));
+        const rawTop = tetherDy > 20 && y - rect.height * 0.6 >= 8 ? y - rect.height * 0.5 : y - 16;
+        topPx = Math.max(8, Math.min(rawTop, vh - rect.height - 8));
+      }
+      setPosition({
+        left: Math.round(leftPx / (scaleRatio || 1)),
+        top: Math.round(topPx / (scaleRatio || 1)),
+      });
+    };
+    computePosition();
+    window.addEventListener('resize', computePosition);
+    return () => window.removeEventListener('resize', computePosition);
+  }, [x, y, attacker?.id, attacker?.x, attacker?.y, token.id, token.x, token.y, collapsed, dockPref]);
   const applyDamage = useStore((s) => s.applyDamage);
   const setTempHp = useStore((s) => s.setTempHp);
   const combatAttack = useStore((s) => s.combatAttack);
@@ -155,7 +199,7 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
 
   return (
     <div
-      className="floating-menu"
+      className={`floating-menu${isMobileSheet ? ' is-mobile-sheet' : ''}${collapsed ? ' is-collapsed' : ''}`}
       ref={menuRef}
       role="dialog" aria-label="Token actions"
       style={position}
@@ -164,118 +208,178 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="floating-menu-title">
-        {targetLabel(snapshot,token,attacker ?? undefined)}
+        <span className="fm-title-label">
+          {targetLabel(snapshot,token,attacker ?? undefined)}
+        </span>
         {canSeeHp && (
           <span className="fm-hp">
             {d.curHp}/{d.maxHp}
           </span>
         )}
+        <span className="fm-title-actions">
+          {isMobileSheet && (
+            <button
+              type="button"
+              className="btn tiny fm-head-btn"
+              aria-label="Move token actions top or bottom"
+              title="Move menu to opposite edge of screen"
+              onClick={() =>
+                setDockPref((prev) => {
+                  const vh = window.innerHeight;
+                  const tetherDy = attacker && attacker.id !== token.id ? attacker.y - token.y : 0;
+                  const cur =
+                    prev !== 'auto'
+                      ? prev
+                      : y > vh * 0.54
+                        ? 'top'
+                        : y < vh * 0.46
+                          ? 'bottom'
+                          : tetherDy > 8
+                            ? 'top'
+                            : 'bottom';
+                  return cur === 'top' ? 'bottom' : 'top';
+                })
+              }
+            >
+              ⇅
+            </button>
+          )}
+          <button
+            type="button"
+            className={`btn tiny fm-head-btn${collapsed ? ' on' : ''}`}
+            aria-label={collapsed ? 'Expand token actions' : 'Minimize menu to view targeting'}
+            aria-pressed={collapsed}
+            title={collapsed ? 'Expand actions' : 'Peek at battlefield & targeting line'}
+            onClick={() => setCollapsed((v) => !v)}
+          >
+            👁
+          </button>
+          <button
+            type="button"
+            className="btn tiny fm-head-btn"
+            aria-label="Close token actions"
+            title="Close"
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </span>
       </div>
 
-      <button className="btn tiny" aria-label="Close token actions" onClick={onClose}>Close</button>
-      {attacker&&attacker.id!==token.id&&d.conditions.some(c=>c.label==='Hypnotic Pattern')&&snapshot.map&&tokenDistanceFt(attacker,token,snapshot.map)<=5&&<button className="btn" onClick={()=>{useStore.getState().socket?.emit('spell:wake',{actorTokenId:attacker.id,targetTokenId:token.id});onClose();}}>Shake awake ? Action</button>}
-      {!!d.conditions.length && <p className="floating-menu-note">{d.conditions.map(c => c.label).join(', ')}</p>}
-      {!targetObjectKind && actors.length > 0 && <label className="floating-menu-note">
-        Act as <select aria-label="Act as" value={attacker?.id ?? ''} onChange={e => setChosenAttacker(e.target.value)}>
-          {actors.map(t => <option key={t.id} value={t.id}>{targetLabel(snapshot,t)}</option>)}
-        </select>
-      </label>}
+      {!collapsed && (
+        <div className="floating-menu-body">
+          {attacker&&attacker.id!==token.id&&d.conditions.some(c=>c.label==='Hypnotic Pattern')&&snapshot.map&&tokenDistanceFt(attacker,token,snapshot.map)<=5&&<button className="btn" onClick={()=>{useStore.getState().socket?.emit('spell:wake',{actorTokenId:attacker.id,targetTokenId:token.id});onClose();}}>Shake awake ? Action</button>}
+          {!!d.conditions.length && <p className="floating-menu-note">{d.conditions.map(c => c.label).join(', ')}</p>}
+          {!targetObjectKind && actors.length > 0 && <label className="floating-menu-note fm-act-as-row">
+            <span>Act as</span>
+            <select aria-label="Act as" value={attacker?.id ?? ''} onChange={e => setChosenAttacker(e.target.value)}>
+              {actors.map(t => <option key={t.id} value={t.id}>{targetLabel(snapshot,t)}</option>)}
+            </select>
+          </label>}
 
-      {/* Non-combat object: interact (toggle state, reveal/hide). */}
-      {targetObjectKind && (
-        <ObjectControls snapshot={snapshot} token={token} editable={isDm} />
-      )}
+          {/* Non-combat object: interact (toggle state, reveal/hide). */}
+          {targetObjectKind && (
+            <ObjectControls snapshot={snapshot} token={token} editable={isDm} />
+          )}
 
-      {/* Quick damage/heal — kept open so several can be applied in a row. */}
-      {canSeeHp && (
-        <DamageHealControls
-          compact
-          onApply={(delta) => applyDamage(token.kind, token.refId, delta)}
-          onTemp={(amt) => setTempHp(token.kind, token.refId, amt)}
-        />
-      )}
-
-      {(canAttackAsSelected || canCastAsSelected) && (
-        <div className="fm-attacks">
-          <div className="fm-attacker">
-            <span className="fm-attacker-icon">{targetingSelf ? '✨' : '⚔️'}</span>
-            {targetingSelf ? 'Casting as' : 'Attacking as'}{' '}
-            <strong>{resolveToken(snapshot, attacker!).name}</strong>
-            <span className="fm-attacker-target">
-              {' '}→ {targetingSelf ? 'self' : d.name}
-            </span>
-            {!targetingSelf && (
-              <label
-                className="muted spell-tag"
-                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
-                title="Show animated targeting tether to this target"
-              >
-                <input
-                  type="checkbox"
-                  checked={showTargetLine}
-                  onChange={(e) => setShowTargetLine(e.target.checked)}
-                />{' '}
-                Target Line
-              </label>
-            )}
-          </div>
-          {attacker && <div className="dice-row"><AdvantageToggle entityId={attacker.refId} />
-            {(() => {
-              const adv = previewAttackAdvantage(snapshot, attacker, token, useStore.getState().manualAdvantage[attacker.refId]);
-              const autoReasons = adv.reasons.filter((r) => r !== 'manual');
-              return autoReasons.length > 0 ? (
-                <span className={adv.state === 'adv' ? 'adv-up' : adv.state === 'dis' ? 'adv-down' : 'muted'} role="status">
-                  {adv.state === 'adv' ? 'Auto ADV' : adv.state === 'dis' ? 'Auto DIS' : 'Adv+Dis'}: {autoReasons.join(', ')}
-                </span>
-              ) : null;
-            })()}
-            {canAttackAsSelected && <button className={`btn tiny ${offhand ? 'on' : ''}`} onClick={() => toggleOption('offhand')}>Off hand</button>}
-            {aWeapons.some(w => w.versatileDamage) && <button className={`btn tiny ${twoHanded ? 'on' : ''}`} onClick={() => toggleOption('twoHanded')}>Two hands</button>}
-          </div>}
-          {canAttackAsSelected && (
-            <WeaponButtons
-              weapons={aWeapons}
-              twoHanded={twoHanded}
-              variant="menu"
-              onAttack={(i) =>
-                run(() =>
-                  combatAttack({
-                    attackerTokenId: attacker!.id,
-                    targetTokenId: token.id,
-                    weaponIndex: i,
-                    advantage: consumeAdvantage(attacker!.refId),
-                    offhand: offhand || undefined,
-                    twoHanded: twoHanded || undefined,
-                  }),
-                )()
-              }
+          {/* Quick damage/heal — kept open so several can be applied in a row. */}
+          {canSeeHp && (
+            <DamageHealControls
+              compact
+              onApply={(delta) => applyDamage(token.kind, token.refId, delta)}
+              onTemp={(amt) => setTempHp(token.kind, token.refId, amt)}
             />
           )}
-          {/* Targeting the right-clicked token: attack rolls resolve to-hit vs
-              its AC; save/damage rolls make IT roll and take the damage right
-              away; heals restore ITS HP on cast. */}
-          {canCastAsSelected && (
-            <AbilityButtons
-              variant="menu"
-              abilities={aChar ? pcAbilities : monAbilities}
-              kind={aChar ? 'pc' : 'monster'}
-              caster={(aChar ?? aMon) as Character | Monster}
-              targetTokenId={token.id}
-              healTargetId={token.id}
-              onAfter={onClose}
-            />
+
+          {(canAttackAsSelected || canCastAsSelected) && (
+            <div className="fm-attacks">
+              <div className="fm-attacker">
+                <span className="fm-attacker-icon">{targetingSelf ? '✨' : '⚔️'}</span>
+                {targetingSelf ? 'Casting as' : 'Attacking as'}{' '}
+                <strong>{resolveToken(snapshot, attacker!).name}</strong>
+                <span className="fm-attacker-target">
+                  {' '}→ {targetingSelf ? 'self' : d.name}
+                </span>
+                {!targetingSelf && (
+                  <label
+                    className="muted spell-tag fm-target-line-toggle"
+                    title="Show animated targeting tether to this target"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showTargetLine}
+                      onChange={(e) => setShowTargetLine(e.target.checked)}
+                    />{' '}
+                    Line
+                  </label>
+                )}
+              </div>
+              {attacker && <div className="dice-row fm-dice-row"><AdvantageToggle entityId={attacker.refId} />
+                {(() => {
+                  const adv = previewAttackAdvantage(snapshot, attacker, token, useStore.getState().manualAdvantage[attacker.refId]);
+                  const autoReasons = adv.reasons.filter((r) => r !== 'manual');
+                  return autoReasons.length > 0 ? (
+                    <span className={adv.state === 'adv' ? 'adv-up' : adv.state === 'dis' ? 'adv-down' : 'muted'} role="status">
+                      {adv.state === 'adv' ? 'Auto ADV' : adv.state === 'dis' ? 'Auto DIS' : 'Adv+Dis'}: {autoReasons.join(', ')}
+                    </span>
+                  ) : null;
+                })()}
+                {canAttackAsSelected && <button className={`btn tiny ${offhand ? 'on' : ''}`} onClick={() => toggleOption('offhand')}>Off hand</button>}
+                {aWeapons.some(w => w.versatileDamage) && <button className={`btn tiny ${twoHanded ? 'on' : ''}`} onClick={() => toggleOption('twoHanded')}>Two hands</button>}
+              </div>}
+              {canAttackAsSelected && (
+                <div className={aWeapons.length > 1 ? 'fm-weapons-grid' : undefined}>
+                  <WeaponButtons
+                    weapons={aWeapons}
+                    twoHanded={twoHanded}
+                    variant="menu"
+                    distanceFt={
+                      attacker && snapshot.map && attacker.mapId === token.mapId
+                        ? tokenDistanceFt(attacker, token, snapshot.map)
+                        : undefined
+                    }
+                    onAttack={(i) =>
+                      run(() =>
+                        combatAttack({
+                          attackerTokenId: attacker!.id,
+                          targetTokenId: token.id,
+                          weaponIndex: i,
+                          advantage: consumeAdvantage(attacker!.refId),
+                          offhand: offhand || undefined,
+                          twoHanded: twoHanded || undefined,
+                        }),
+                      )()
+                    }
+                  />
+                </div>
+              )}
+              {/* Targeting the right-clicked token: attack rolls resolve to-hit vs
+                  its AC; save/damage rolls make IT roll and take the damage right
+                  away; heals restore ITS HP on cast. */}
+              {canCastAsSelected && (
+                <AbilityButtons
+                  variant="menu"
+                  abilities={aChar ? pcAbilities : monAbilities}
+                  kind={aChar ? 'pc' : 'monster'}
+                  caster={(aChar ?? aMon) as Character | Monster}
+                  targetTokenId={token.id}
+                  healTargetId={token.id}
+                  onAfter={onClose}
+                />
+              )}
+            </div>
+          )}
+
+          {isDm ? (
+            <TokenAdminButtons token={token} variant="menu" onAfter={onClose} />
+          ) : (
+            !canSeeHp &&
+            !canAttackAsSelected &&
+            !canCastAsSelected && (
+              <div className="floating-menu-note muted">No actions available</div>
+            )
           )}
         </div>
-      )}
-
-      {isDm ? (
-        <TokenAdminButtons token={token} variant="menu" onAfter={onClose} />
-      ) : (
-        !canSeeHp &&
-        !canAttackAsSelected &&
-        !canCastAsSelected && (
-          <div className="floating-menu-note muted">No actions available</div>
-        )
       )}
     </div>
   );
