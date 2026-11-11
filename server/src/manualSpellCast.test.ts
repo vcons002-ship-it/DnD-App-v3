@@ -71,7 +71,7 @@ describe('recorded casts for spells with manual effects', () => {
     expect(listRollLog(f.session.id).find(entry => entry.label === 'Bless')!.detail).toMatch(/manual/i);
   });
 
-  it.each(['Aid', 'Armor of Agathys', 'True Strike'])
+  it.each(['True Strike'])
   ('%s records a manual cast instead of applying its misleading saved roll', name => {
     const f = fixture(name), before = getCharacter(f.caster.id)!, targetBefore = getMonster(f.monster.id)!;
     f.cast({ castLevel: f.ability.level, targetTokenId: f.target.id });

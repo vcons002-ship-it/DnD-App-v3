@@ -24,9 +24,10 @@
   padding-bottom: 5px;
   border-bottom: 1px solid #67563980;
 }
-.player-fantasy .compact-player-combat .combat-target-row select {
+.player-fantasy .compact-player-combat :is(.combat-target-row, .combat-heal-row, .combat-buff-target) { flex-wrap: wrap; row-gap: 3px; }
+.player-fantasy .compact-player-combat :is(.combat-target-row, .combat-heal-row, .combat-buff-target) select { flex: 1 1 calc(100% - 108px);
   min-width: 0;
-  width: 100%;
+  width: auto;
   margin: 0;
   padding: 4px 6px;
   min-height: 28px;
@@ -37,7 +38,8 @@
   width: 34px;
   flex-shrink: 0;
 }
-.player-fantasy .compact-player-combat .combat-target-row > label.spell-tag {
+.player-fantasy .compact-player-combat :is(.combat-target-row, .combat-heal-row) > label.spell-tag:first-of-type { margin-left: 39px; margin-right: 8px; }
+.player-fantasy .compact-player-combat :is(.combat-target-row, .combat-heal-row) > label.spell-tag {
   width: auto;
   flex-shrink: 0;
   white-space: nowrap;
@@ -116,7 +118,9 @@
   gap: 4px;
   margin-bottom: 5px;
 }
+.player-fantasy .compact-player-combat .target-pick-btn { flex: 0 0 auto; min-height: 28px; padding: 3px 6px; }
 .player-fantasy .compact-player-combat .combat-weapon-list .attack-row {
+  flex-wrap: wrap;
   min-width: 0;
   margin: 0;
   padding: 5px 7px;
@@ -144,6 +148,7 @@
   flex: 1 1 100%;
   margin: 0;
 }
+.player-fantasy .compact-player-combat .combat-ability-row:has(select) { padding: 5px 6px; margin: 5px 0; gap: 4px; }
 .player-fantasy .compact-player-combat .combat-ability-row {
   flex-wrap: wrap;
 }

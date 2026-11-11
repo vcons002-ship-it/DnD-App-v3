@@ -2017,7 +2017,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         if(!isStandardCommand(chosen)&&!getSessionById(sid)?.commandCustomWords){socket.emit('notice',{message:'The DM must enable custom Command words in Combat settings.'});return;}
         const slot=kind==='pc'?selectSpellSlot(getCharacter(refId)!,Math.max(1,cast??1),slotPool):undefined;
         if(kind==='pc'&&!slot?.remaining){socket.emit('notice',{message:'No spell slot available for Command.'});return;}
-        const error=castCommand(sid,roller,kind,refId,selectedAbility,slot?.level??Math.max(1,cast??1),chosen,tgt);
+        const error=castCommand(sid,roller,kind,refId,selectedAbility,slot?.level??Math.max(1,cast??1),chosen,tgt,targetTokenIds);
         if(error){socket.emit('notice',{message:error});return;}
         if(slot)spendSpellSlot(refId,slot.level,slot.pool);
         setAbilityRechargeSpent(kind,refId,selectedAbility.id,true);
@@ -2045,7 +2045,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         const m = getMonster(refId);
         const ability = m?.sheetAbilities.find((a) => a.id === abilityId);
         if (!m || !ability || !validDamageChoice(ability)) return;
-        const targetError=tgt && spellControlTargetError(sid,ability,tgt);
+        const targetError = (targetTokenIds?.length ? targetTokenIds : tgt ? [tgt] : []).map(tid => spellControlTargetError(sid, ability, tid)).find(Boolean);
         if(targetError){socket.emit('notice',{message:targetError});return;}
         // CR-based DC/to-hit; no spell slots for creatures. A limited-use action
         // (breath weapon) is spent by using it; the DM re-readies it manually.
@@ -2064,7 +2064,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       const c = getCharacter(refId);
       const ability = c?.sheetAbilities.find((a) => a.id === abilityId);
       if (!c || !ability || !validDamageChoice(ability)) return;
-      const targetError=tgt && spellControlTargetError(sid,ability,tgt);
+      const targetError = (targetTokenIds?.length ? targetTokenIds : tgt ? [tgt] : []).map(tid => spellControlTargetError(sid, ability, tid)).find(Boolean);
       if(targetError){socket.emit('notice',{message:targetError});return;}
       // Pact Magic: a Warlock's leveled spell is cast at the pact-slot level (the
       // only slots they have), so its dice scale like it — roll at that level.

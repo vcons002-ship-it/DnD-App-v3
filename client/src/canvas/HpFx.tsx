@@ -521,7 +521,7 @@ export const HpNumberLayer=memo(function HpNumberLayer({floaters,tokens,pxPerFoo
     const ground=mapToScreen(token.x,token.y,view,tilt),anchor=projectGround(ground.x,ground.y,width,height,tilt,rotation);
     if(!Number.isFinite(anchor.x)||!Number.isFinite(anchor.y))return [];
     const radius=token.widthFt*pxPerFoot*view.scale/2;
-    const position={x:anchor.x,y:anchor.y-Math.min(64,radius)-fontSize*.4},startAt=hpStackStart(numbers,f.numberStartAt??performance.now());
+    const position={x:anchor.x,y:anchor.y-Math.min(76,radius+10)-fontSize*1.05},startAt=hpStackStart(numbers,f.numberStartAt??performance.now());
     return <Group key={id} listening={false}>
       {hpNumberSequence(numbers).map(({number,delayMs,holdMs,fadeMs},i)=><FloaterText key={i} number={number} position={position} fontSize={fontSize} rise={fontSize*(number.impactTotal?.35:1.3)}
         startAt={startAt+delayMs} holdMs={holdMs} fadeMs={fadeMs} targetX={token.x} tokenId={token.id} headPosition={headPosition}/>)}

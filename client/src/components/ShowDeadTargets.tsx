@@ -8,3 +8,11 @@ export function ShowDeadTargets() {
     <input type="checkbox" checked={show} onChange={event => change(event.target.checked)}/> Show Dead
   </label>;
 }
+
+export function ShowHealEnemies() {
+  const show = useStore(s => s.showHealEnemies);
+  const change = useStore(s => s.setShowHealEnemies);
+  return <label className="muted spell-tag" style={{display:'inline-flex',alignItems:'center',gap:4}} title="Include enemy creatures in the heal target list">
+    <input type="checkbox" checked={show} onChange={event => change(event.target.checked)}/> Show Enemies
+  </label>;
+}

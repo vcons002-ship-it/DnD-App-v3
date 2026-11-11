@@ -330,9 +330,9 @@ export const SPELL_LIST: SpellEntry[] = [
     tags: ['abjuration', 'warlock', 'cold', 'buff'],
     meta: '1 action · Self · V,S,M',
     description:
-      'Frost coats you, granting temporary hit points. A creature that hits you with a melee attack takes cold damage. Both scale with slot level.',
-    upcast: '+5 temp HP and +5 cold per slot above 1st.',
-    roll: { kind: 'damage', dice: '5', scaleDice: '5', baseLevel: 1, damageType: 'cold' },
+      'Protective magical frost surrounds you for 1 hour. Gain 5 temporary HP. While you have temporary HP from this spell, a creature hitting you with a melee attack takes 5 Cold damage. Both temporary HP and Cold damage increase by 5 per slot above 1.',
+    upcast: '+5 temporary HP and +5 Cold melee retaliation per slot above 1st.',
+    roll: { kind: 'heal', dice: '5', scaleDice: '5', baseLevel: 1, damageType: 'healing', healingMode: 'temporary', healingBonus: 'none', healTarget: 'self' },
   },
   {
     name: 'Arms of Hadar',
@@ -1009,7 +1009,7 @@ export const SPELL_LIST: SpellEntry[] = [
     tags: ['abjuration', 'cleric', 'paladin', 'buff', 'healing'],
     meta: '1 action · 30 ft · V,S,M',
     description:
-      'For 8 hours, up to three creatures gain 5 to both current and maximum HP, plus 5 per slot above 2. Apply and later remove the maximum-HP increase manually; this is not ordinary healing.',
+      'For 8 hours, up to three creatures within 30 feet gain 5 to both current and maximum HP, plus 5 per slot above 2. Maximum HP returns to normal when the Aid condition ends.',
     upcast: '+5 current and maximum HP per slot above 2nd.',
   },
   {

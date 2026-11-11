@@ -67,7 +67,7 @@ import {resolvePlacedSpell} from './areaSpells.js';
 import {spellImpactName} from '../../shared/spellImpact.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import {mirrorIntercept,startSpellUse,spellCondition,sorcerousBonus,linkedHit,linkedDamageComplete,mixedSpellDamage,heatMetalDamage,resolveSpellArea,summonSpiritualWeapon,spiritualWeaponPlacementError} from './linkedSpells.js';
-import { isCanonicalHasteProfile } from '../../shared/spellExecution.js';
+import { isCanonicalAidProfile, isCanonicalArmorOfAgathysProfile, isCanonicalBlessOrBaneProfile, isCanonicalHasteProfile } from '../../shared/spellExecution.js';
 import {isValidDiceExpression,withDiceMetadata,usingPhysicalDice} from '../../shared/dice.js';
 import {rollSaveBatch} from './saveDiceBatch.js';
 import {isLiveCommand,presentLiveCalculation} from './liveRollContext.js';
@@ -106,6 +106,8 @@ import {
   endConcentration,
   setCondition,
   setTempHp,
+  applyAidBuff,
+  clearCondition,
 } from './sessions.js';
 import { newId } from './db.js';
 import {
@@ -1413,7 +1415,7 @@ export function resolveForcedSave(
         if(apply.effect?.commandWord)return pass?'Command resisted.':`Command: ${apply.effect.commandWord} takes effect next turn. ${commandInstruction(apply.effect.commandWord)}`;
         if(apply.amount>0)return `${pass?'Save passed':'Save failed'} - ${defended(pass)} ${apply.damageType??''} damage${pass?(apply.saveDamage==='none'?' (avoided)':' (save for half)'):''}.`;
         if(src?.label.trim().toLowerCase()==='pushing attack')return pass?'Push resisted - target stays in place.':'Push succeeds - move the target up to 15 ft.';
-        if(apply.effect)return pass?`${apply.effect.spell} resisted - not ${apply.effect.condition}.`:`${apply.effect.spell} successful - ${apply.effect.condition}; repeat the save at the end of each turn.`;
+        if(apply.effect)return pass?`${apply.effect.spell} resisted - not ${apply.effect.condition}.`:`${apply.effect.spell} successful - ${apply.effect.condition}${apply.effect.repeatSave ? '; repeat the save at the end of each turn' : ''}.`;
         if(apply.onFail)return pass?`${src?.label??'Effect'} resisted - no ${apply.onFail}.`:`${src?.label??'Effect'} successful - ${apply.onFail}.`;
         return `${src?.label??'Effect'} ${pass?'resisted':'successful'}!`;
       };
@@ -1449,7 +1451,7 @@ export function resolveForcedSave(
         saveReveal.effectOutcome = pass ? `${src.label} resisted!` : `${src.label} successful!`;
         if(src.label.trim().toLowerCase()==='pushing attack')saveReveal.effectOutcome=pass?'Push resisted - target stays in place.':'Push succeeds - move the target up to 15 ft.';
         else if(apply.effect?.commandWord)saveReveal.effectOutcome=saveEffect(pass);
-        else if(apply.effect) saveReveal.effectOutcome=pass?`${apply.effect.spell} resisted - not ${apply.effect.condition}.`:`${apply.effect.spell} successful - ${apply.effect.condition}; repeat the save at the end of each turn.`;
+        else if(apply.effect) saveReveal.effectOutcome=pass?`${apply.effect.spell} resisted - not ${apply.effect.condition}.`:`${apply.effect.spell} successful - ${apply.effect.condition}${apply.effect.repeatSave ? '; repeat the save at the end of each turn' : ''}.`;
         else if(apply.onFail)saveReveal.effectOutcome=pass?`${src.label} resisted - no ${apply.onFail}.`:`${src.label} successful - ${apply.onFail}.`;
 
       }
@@ -1784,6 +1786,7 @@ function resolveSheetAbilityFor(
     if(source&&!hasLineOfSight(source,target,getMap(target.mapId)?.walls))return false;
   }
   if (targetTokenId && spellControlTargetError(sessionId, ability, targetTokenId)) return false;
+  if (targetTokenIds?.some(tid => spellControlTargetError(sessionId, ability, tid))) return false;
   if(ability.type==='spell'&&partySpell(ability)!=='shield'&&partySpell(ability)!=='misty step')breakInvisibility(kind,entity.id,'casting a spell');
   const linkedProfile=linkedSpellProfile(ability),reuse=(ability as SheetAbility&{linkedReuse?:string}).linkedReuse;
   const linkedContext:LinkedSpellContext|undefined=linkedProfile?{spell:ability.name,abilityId:ability.id,casterKind:kind,casterId:entity.id,castLevel:castLevel??linkedProfile.level,
@@ -1838,7 +1841,7 @@ function resolveSheetAbilityFor(
     return true;
   }
   const support = spellCombatSupport(ability);
-  if (support?.manualCastOnly && !linkedProfile) {
+  if (support?.manualCastOnly && !linkedProfile && !(targetTokenIds?.length && isCanonicalBlessOrBaneProfile(ability))) {
     // A catalogue formula is not safe merely because it has dice. Record the
     // casting intent without interpreting temporary HP, a curse, mixed damage,
     // or an older-edition roll as ordinary damage/healing. The caller still
@@ -1859,6 +1862,137 @@ function resolveSheetAbilityFor(
   }
   if (hitFeature(ability)) return false; // Offered only on a qualifying hit.
   if (markSpell(ability)) return castMark(sessionId,kind,entity.id,ability,targetTokenId,castLevel ?? 1,false,damageTypeChoice);
+  const isAgathys = isCanonicalArmorOfAgathysProfile(ability);
+  if (isCanonicalAidProfile(ability)) {
+    const slotLvl = Math.max(2, castLevel ?? 2);
+    const bonus = 5 * (slotLvl - 1);
+    const chosenIds = targetTokenIds?.length ? targetTokenIds : targetTokenId ? [targetTokenId] : [];
+    if (chosenIds.length > 3) return false;
+    const recipients: { kind: TokenKind; refId: string; name: string }[] = [];
+    const seen = new Set<string>();
+    const activeMapId = getSessionById(sessionId)?.activeMapId;
+    const casterTok = activeMapId ? listTokens(activeMapId).find(t => t.kind === kind && t.refId === entity.id) : undefined;
+    if (chosenIds.length) {
+      for (const tid of chosenIds) {
+        const tok = spellTarget(sessionId, tid);
+        const rec = tok && (tok.kind === 'pc' ? getCharacter(tok.refId) : getMonster(tok.refId));
+        if (!tok || !rec || isDeadEntity(tok.kind, rec) || (tok.kind === 'monster' && (rec as Monster).objectKind)) return false;
+        if (casterTok && casterTok.mapId === tok.mapId) {
+          const map = getMap(tok.mapId);
+          if (map && tokenDistanceFt(casterTok, tok, map) > 30) return false;
+        }
+        const entKey = `${tok.kind}:${tok.refId}`;
+        if (seen.has(entKey)) return false;
+        seen.add(entKey);
+        recipients.push({ kind: tok.kind, refId: tok.refId, name: rec.name });
+      }
+    } else {
+      const selfEnt = kind === 'pc' ? getCharacter(entity.id) : getMonster(entity.id);
+      if (!selfEnt || isDeadEntity(kind, selfEnt) || (kind === 'monster' && (selfEnt as Monster).objectKind)) return false;
+      recipients.push({ kind, refId: entity.id, name: selfEnt.name });
+    }
+    const rollId = newId();
+    for (const rec of recipients) {
+      applyAidBuff(rec.kind, rec.refId, bonus, {
+        id: newId(),
+        label: `Aid (+${bonus} HP)`,
+        aura: 'green',
+        isConcentration: false,
+        customText: `+${bonus} maximum and current HP for 8 hours.`,
+        combatEffect: {
+          casterKind: kind,
+          casterId: entity.id,
+          spell: 'Aid',
+          castLevel: slotLvl,
+          aidMaxHpBonus: bonus,
+          expiresAt: Date.now() + 8 * 3600_000,
+        },
+      }, rollId);
+    }
+    setLastAttackRole(kind, entity.id, 'caster');
+    const upcastNote = slotLvl > 2 ? ` (L${slotLvl})` : '';
+    addRollLog(sessionId, {
+      roller,
+      label: 'Aid',
+      expr: `Aid${upcastNote}`,
+      total: bonus,
+      detail: `Aid${upcastNote} → ${recipients.map(r => r.name).join(', ')}: +${bonus} maximum and current HP (8 hours; maximum HP restores when ended).`,
+      description: ability.description || undefined,
+    }, rollId);
+    return true;
+  }
+  const blessOrBane = targetTokenIds?.length ? isCanonicalBlessOrBaneProfile(ability) : null;
+  if (blessOrBane && targetTokenIds?.length) {
+    const slotLvl = Math.max(1, castLevel ?? 1);
+    const maxTargets = 3 + (slotLvl - 1);
+    if (targetTokenIds.length > maxTargets) return false;
+    const seen = new Set<string>();
+    const activeMapId = getSessionById(sessionId)?.activeMapId;
+    const casterTok = activeMapId ? listTokens(activeMapId).find(t => t.kind === kind && t.refId === entity.id) : undefined;
+    const recipients: { tok: Token; name: string }[] = [];
+    for (const tid of targetTokenIds) {
+      const tok = spellTarget(sessionId, tid);
+      const rec = tok && (tok.kind === 'pc' ? getCharacter(tok.refId) : getMonster(tok.refId));
+      if (!tok || !rec || rec.curHp <= 0 || isDeadEntity(tok.kind, rec) || (tok.kind === 'monster' && (rec as Monster).objectKind)) return false;
+      if (casterTok && casterTok.mapId === tok.mapId) {
+        const map = getMap(tok.mapId);
+        if (map && tokenDistanceFt(casterTok, tok, map) > 30) return false;
+      }
+      const entKey = `${tok.kind}:${tok.refId}`;
+      if (seen.has(entKey)) return false;
+      seen.add(entKey);
+      recipients.push({ tok, name: rec.name });
+    }
+    const effect = timedConcentration(kind, entity.id, ability.name, 10, slotLvl);
+    if (!effect) return false;
+    setLastAttackRole(kind, entity.id, 'caster');
+    const upcastNote = slotLvl > 1 ? ` (L${slotLvl})` : '';
+    if (blessOrBane === 'bless') {
+      for (const { tok } of recipients) {
+        setCondition(tok.kind, tok.refId, {
+          id: newId(),
+          label: 'Bless (+1d4)',
+          aura: 'green',
+          isConcentration: false,
+          customText: '+1d4 to attack rolls and saving throws while concentrating.',
+          combatEffect: { ...effect, concentration: true },
+        });
+        queueSpellImpact(sessionId, tok.kind, tok.refId, 'Bless');
+      }
+      addRollLog(sessionId, {
+        roller,
+        label: 'Bless',
+        expr: `Bless${upcastNote}`,
+        total: 0,
+        detail: `Bless${upcastNote} → ${recipients.map(r => r.name).join(', ')}: +1d4 to attack rolls and saving throws while concentrating (up to 1 minute).`,
+        description: ability.description || undefined,
+      });
+      return true;
+    }
+    const castingAbil = kind === 'pc' ? spellcastingKeyFor(entity, ability) : undefined;
+    const profB = kind === 'pc' ? proficiencyBonus(entity.level || 1) : profBonusFor({ stats: entity.stats, level: entity.level, isMonster: true });
+    const baneDc = kind === 'pc' ? spellSaveDC(entity.level, entity.stats, castingAbil) : 8 + profB + spellcastingMod(entity.stats, castingAbil);
+    const baneEntry = addRollLog(sessionId, {
+      roller,
+      label: 'Bane',
+      expr: `Bane${upcastNote}`,
+      total: 0,
+      detail: `Bane${upcastNote}: ${recipients.map(r => r.name).join(', ')} make DC ${baneDc} CHA saves; failure subtracts 1d4 from attack rolls and saving throws while concentrating.`,
+      description: ability.description || undefined,
+      apply: {
+        amount: 0,
+        dc: baneDc,
+        save: 'CHA',
+        saveDamage: 'none',
+        targetMode: 'multiple',
+        maxTargets,
+        ...(kind === 'pc' ? { owner: entity.id } : {}),
+        effect: { ...effect, condition: 'Bane (-1d4)', durationRounds: 10 },
+      },
+    });
+    for (const tid of targetTokenIds) resolveForcedSave(sessionId, baneEntry.id, tid);
+    return true;
+  }
   if (isCanonicalHasteProfile(ability)) {
     const target = targetTokenId ? spellTarget(sessionId, targetTokenId) : undefined;
     if (!target) return false;
@@ -2192,6 +2326,62 @@ function resolveSheetAbilityFor(
     const val = Math.max(0, (healRoll?.total ?? 0) + castMod);
     const temporary = roll.healingMode === 'temporary';
     const multiple = !temporary && roll.targetMode === 'multiple';
+    if (multiple && targetTokenIds?.length) {
+      const maxT = roll.maxTargets ?? 6;
+      if (targetTokenIds.length > maxT) return false;
+      const seen = new Set<string>();
+      const healedParts: string[] = [];
+      let lastNote: RollEntry['hpNote'];
+      for (const tid of targetTokenIds) {
+        const tTok = spellTarget(sessionId, tid);
+        const res = tTok && resolve(tTok);
+        const rec = tTok && (tTok.kind === 'pc' ? getCharacter(tTok.refId) : getMonster(tTok.refId));
+        if (!tTok || !res || !rec || (tTok.kind === 'monster' && (rec as Monster).objectKind)) return false;
+        const entKey = `${tTok.kind}:${tTok.refId}`;
+        if (seen.has(entKey)) return false;
+        seen.add(entKey);
+      }
+      for (const tid of targetTokenIds) {
+        const tTok = getToken(tid)!;
+        const res = resolve(tTok)!;
+        const rec = (tTok.kind === 'pc' ? getCharacter(tTok.refId) : getMonster(tTok.refId))!;
+        const dead = isDeadEntity(tTok.kind, rec);
+        const blocked = rec.conditions.some(c => c.combatEffect?.preventsHealing);
+        if (dead) {
+          healedParts.push(`${res.name} (dead — no effect)`);
+        } else if (blocked) {
+          healedParts.push(`${res.name} (prevented)`);
+        } else {
+          if (val > 0) {
+            lastNote = applyDamageNoted(tTok.kind, tTok.refId, -val, undefined, undefined, false, healingId, ability.name) ?? lastNote;
+          }
+          healedParts.push(`${res.name} +${val} HP`);
+        }
+      }
+      addRollLog(sessionId, {
+        roller,
+        label: ability.name,
+        expr: title,
+        total: val,
+        detail: `${title}: ${val} healing [${healRoll?.rolls.join(' + ') ?? dice}${
+          castMod ? ` ${castMod > 0 ? '+' : '-'} ${Math.abs(castMod)} ${bonusLabel}` : ''
+        }] → ${healedParts.join(', ')}`,
+        description: ability.description || undefined,
+        hpNote: lastNote,
+        reveal: healRoll ? {
+          ...diceReveal(roller, healRoll, `${ability.name} — Healing`),
+          target: healedParts.map(p => p.split(' ')[0]).join(', '),
+          damage: val,
+          healing: val,
+          damageMods: [
+            ...(diceReveal(roller, healRoll).damageMods ?? []),
+            ...(castMod ? [{ label: bonusLabel, value: castMod }] : []),
+            ...(val !== healRoll.total + castMod ? [{ label: 'Minimum healing', value: val - healRoll.total - castMod }] : []),
+          ],
+        } : undefined,
+      }, healingId);
+      return true;
+    }
     // Targeted (floating menu / the heal-target dropdown): apply it right away.
     const tok = targetTokenId ? getToken(targetTokenId) : null;
     const target = multiple ? null : roll.healTarget === 'self'
@@ -2209,7 +2399,30 @@ function resolveSheetAbilityFor(
         ? applyDamageNoted(target.kind, target.refId, -val, undefined, undefined, false, healingId, ability.name)
         : undefined;
     const temporaryTotal = temporary && targetEntity ? Math.max(targetEntity.tempHp, val) : undefined;
-    if (temporary && target && temporaryTotal !== undefined) setTempHp(target.kind, target.refId, temporaryTotal);
+    if (temporary && target && temporaryTotal !== undefined) {
+      setTempHp(target.kind, target.refId, temporaryTotal);
+      if (isAgathys && val > 0) {
+        const cur = target.kind === 'pc' ? getCharacter(target.refId) : getMonster(target.refId);
+        for (const c of cur?.conditions ?? []) {
+          if (c.combatEffect?.spell === 'Armor of Agathys') clearCondition(target.kind, target.refId, c.id);
+        }
+        setCondition(target.kind, target.refId, {
+          id: newId(),
+          label: `Armor of Agathys (${val} cold)`,
+          aura: 'blue',
+          isConcentration: false,
+          customText: `Deals ${val} Cold damage to creatures that hit you with a melee attack while these temporary HP remain.`,
+          combatEffect: {
+            casterKind: kind,
+            casterId: entity.id,
+            spell: 'Armor of Agathys',
+            castLevel: castLevel ?? 1,
+            expiresAt: Date.now() + 3600_000,
+          },
+        });
+        queueSpellImpact(sessionId, target.kind, target.refId, 'Armor of Agathys', healingId);
+      }
+    }
     addRollLog(sessionId, {
       roller,
       label: ability.name,
@@ -2459,6 +2672,17 @@ function resolveSheetAbilityFor(
   // A selected single target belongs on the damage result as well as the later
   // save. Area casts keep their target selection workflow and have no one target.
   const selectedToken = targetTokenId && !isMultiTargetSpell(ability, castLevel) ? getToken(targetTokenId) : null;
+  if (targetTokenIds?.length && apply) {
+    if (apply.maxTargets && targetTokenIds.length > apply.maxTargets) return false;
+    const seen = new Set<string>();
+    for (const tid of targetTokenIds) {
+      const tok = spellTarget(sessionId, tid);
+      if (!tok) return false;
+      const entKey = `${tok.kind}:${tok.refId}`;
+      if (seen.has(entKey)) return false;
+      seen.add(entKey);
+    }
+  }
   const selectedTarget = selectedToken ? resolve(selectedToken) : null;
   const damageReveal:RollReveal|undefined = val > 0 && dmgRoll ? {
     kind:'damage', title:`${title} — Damage Roll`, attacker:(kind==='pc'?getCharacter(entity.id):getMonster(entity.id))?.name??roller,
@@ -2488,7 +2712,9 @@ function resolveSheetAbilityFor(
   // Fired at a single target (floating menu): a no-save (auto-hit) spell applies
   // now; a SAVE-for-half spell (often AOE) does NOT — its damage is applied per
   // target via "Apply damage" clicks, so it never auto-hits one creature.
-  if (controlEffect && targetTokenId) resolveForcedSave(sessionId, entry.id, targetTokenId);
+  if (targetTokenIds?.length && entry.apply) {
+    for (const tid of targetTokenIds) resolveForcedSave(sessionId, entry.id, tid);
+  } else if (controlEffect && targetTokenId) resolveForcedSave(sessionId, entry.id, targetTokenId);
   else autoApplyToTarget(sessionId, entry, targetTokenId);
   return true;
 }

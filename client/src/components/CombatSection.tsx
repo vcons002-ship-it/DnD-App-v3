@@ -1,6 +1,9 @@
 import {advancedSpell} from '../../../shared/advancedSpells';
+import {tokenDistanceFt} from '../../../shared/distance';
 import {partySpell} from '../../../shared/partySpells';
-import { useEffect, useMemo,useRef, useState } from 'react';
+import { inferAbilityActionCost } from '../../../shared/spellPrep';
+import { evaluateWeaponRange } from '../../../shared/weaponRange';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Character,
   Monster,
@@ -9,7 +12,7 @@ import type {
   TokenKind,
 } from '../../../shared/types';
 import { targetLists, targetLabel, previewAttackAdvantage } from '../lib/targets';
-import {ShowDeadTargets} from './ShowDeadTargets';
+import {ShowDeadTargets, ShowHealEnemies} from './ShowDeadTargets';
 import { useWeaponAttackOptions } from '../lib/useWeaponAttackOptions';
 import { useStore } from '../state/socket';
 import { AbilityButtons } from './AbilityButtons';
@@ -21,7 +24,7 @@ import { WeaponButtons } from './WeaponButtons';
 import { effectiveSheetAbility, isCanonicalHasteProfile } from '../../../shared/spellExecution';
 import { spellCombatSupport } from '../../../shared/spellSupport';
 import { spellSlotOptions, selectSpellSlot, type SpellSlotPool } from '../../../shared/spellSlotPools';
-import { confirmConcentration, spellBaseLevel, upcastable,isCastSpell } from '../lib/spellcasting';
+import { confirmConcentration, spellBaseLevel, upcastable, isCastSpell } from '../lib/spellcasting';
 import {SpellCastControl} from './SpellCastControl';
 
 import { activeHasteCondition, spellActionBlock, spellActionBlockMessage } from '../../../shared/spellBuffs';
@@ -57,6 +60,10 @@ export function CombatSection({
   compactPlayer?: boolean;
 }) {
   const combatAttack = useStore((s) => s.combatAttack);
+  const mapTargetPick = useStore((s) => s.mapTargetPick);
+  const setMapTargetPick = useStore((s) => s.setMapTargetPick);
+  const lastActionUsed = useStore((s) => s.lastActionUsed);
+  const [hoveredWeaponIdx, setHoveredWeaponIdx] = useState<number | null>(null);
   const [hasteAttackArmed, setHasteAttackArmed] = useState(false);
   const haste = activeHasteCondition(caster);
   const ownTurn = snapshot.activeTurnTokenId === attacker.id;
@@ -64,6 +71,44 @@ export function CombatSection({
   useEffect(() => {
     if (!haste || haste.combatEffect?.hasteActionUsed || !ownTurn) setHasteAttackArmed(false);
   }, [haste?.id, haste?.combatEffect?.hasteActionUsed, ownTurn, caster.id]);
+
+  // Soft Turn Economy Pips: reset each initiative turn, auto-mark on ownTurn rolls,
+  // and allow click-to-toggle without ever hard-locking buttons.
+  const turnEconomyKey = `${snapshot.round}:${snapshot.activeTurnTokenId ?? ''}:${attacker.id}`;
+  const [economyState, setEconomyState] = useState<{
+    key: string;
+    action: boolean;
+    bonus: boolean;
+    reactionOverride?: boolean;
+  }>({ key: turnEconomyKey, action: false, bonus: false });
+  useEffect(() => {
+    setEconomyState((prev) =>
+      prev.key === turnEconomyKey ? prev : { key: turnEconomyKey, action: false, bonus: false },
+    );
+  }, [turnEconomyKey]);
+  const seenActionNonce = useRef(lastActionUsed?.n ?? 0);
+  useEffect(() => {
+    if (!lastActionUsed || lastActionUsed.n === seenActionNonce.current) return;
+    seenActionNonce.current = lastActionUsed.n;
+    if (lastActionUsed.refId !== attacker.refId || snapshot.round <= 0) return;
+    if (lastActionUsed.cost === 'reaction') {
+      setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, reactionOverride: true }));
+    } else if (ownTurn && lastActionUsed.cost === 'action') {
+      setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, action: true }));
+    } else if (ownTurn && lastActionUsed.cost === 'bonus') {
+      setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, bonus: true }));
+    }
+  }, [lastActionUsed, attacker.refId, snapshot.round, ownTurn, turnEconomyKey]);
+  const serverReactionSpent = caster.conditions.some((c) =>
+    /^(reaction spent|riposte spent)$/i.test(c.label.trim()),
+  );
+  const actionSpent = economyState.key === turnEconomyKey ? economyState.action : false;
+  const bonusSpent = economyState.key === turnEconomyKey ? economyState.bonus : false;
+  const reactionSpent =
+    economyState.key === turnEconomyKey && economyState.reactionOverride !== undefined
+      ? economyState.reactionOverride
+      : serverReactionSpent;
+
   // Advantage/disadvantage is the attacking creature's shared per-entity toggle
   // (set in the skills panel for a PC, or the creature panel for a monster);
   // we just consume it when an attack fires.
@@ -101,61 +146,196 @@ export function CombatSection({
       castLevel: upcastable(a) ? summonLevel(a) : undefined,
       slotPool: 'spellSlots' in caster ? summonPools[a.id] ?? selectSpellSlot(caster, summonLevel(a))?.pool : undefined,
     });
+    if (ownTurn && snapshot.round > 0) {
+      const cost = inferAbilityActionCost(a);
+      if (cost === 'bonus') setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, bonus: true }));
+      else if (cost === 'action') setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, action: true }));
+    }
     notify(spectral?'Spiritual Weapon requested beside the selected target. Use its active spell attack; on later turns drag it up to 20 ft.':`Summon requested — drag ${a.summon?.name?.trim() || a.name} into place after it appears.`);
   };
 
   const showDead = useStore(s => s.showDeadTargets);
-  const {attack:targets,heal:healList}=useMemo(()=>targetLists(snapshot,attacker,showDead),[snapshot,attacker,showDead]);
+  const showHealEnemies = useStore(s => s.showHealEnemies);
+  const {attack:targets,heal:healList}=useMemo(()=>targetLists(snapshot,attacker,showDead,showHealEnemies),[snapshot,attacker,showDead,showHealEnemies]);
   const validDefault =
     defaultTargetId && targets.some((t) => t.id === defaultTargetId)
       ? defaultTargetId
       : undefined;
-  const [targetId, setTargetId] = useState(validDefault ?? targets[0]?.id ?? '');
+  const [targetId, setTargetId] = useState(validDefault ?? '');
+  const validAllyDefault =
+    defaultTargetId && defaultTargetId !== attacker.id && healList.some((t) => t.id === defaultTargetId)
+      ? defaultTargetId
+      : undefined;
+  const [lineSource, setLineSource] = useState<'attack' | 'ally' | 'heal' | 'buff'>(
+    validAllyDefault && !validDefault ? 'ally' : 'attack',
+  );
+  useEffect(() => {
+    setTargetId(validDefault ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attacker.id]);
   const { offhand, twoHanded, toggleOption } = useWeaponAttackOptions(attacker);
+
+  // Heals pick from allies instead (self first = default) and apply on cast.
+  const hasHeal = abilities.some((a) => effectiveSheetAbility(a).roll?.kind === 'heal');
+  const [healTargetId, setHealTargetId] = useState(validAllyDefault ?? healList[0]?.id ?? '');
+  const buffList = healList.filter(token => token.mapId === attacker.mapId && !token.sharedSightOnly && !token.partiallyRevealed);
+  const hasHasteSpell = abilities.some(isCanonicalHasteProfile);
+  const [buffTargetId, setBuffTargetId] = useState(validAllyDefault ?? attacker.id);
+
   // Pre-select the clicked token as the target when it changes.
   useEffect(() => {
-    if (validDefault) setTargetId(validDefault);
-  }, [validDefault]);
+    if (validDefault) {
+      setTargetId(validDefault);
+      setLineSource('attack');
+    } else if (validAllyDefault) {
+      setHealTargetId(validAllyDefault);
+      if (buffList.some((t) => t.id === validAllyDefault)) setBuffTargetId(validAllyDefault);
+      setLineSource('ally');
+    } else {
+      setLineSource('attack');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validDefault, validAllyDefault]);
 
-  // Right-clicking a token on the map aims this dropdown at it (same target the
-  // floating menu used), so closing the menu still leaves the panel set up.
-  // Only CHANGES count (the nonce ref) — a stale value never overrides the
-  // clicked-token default on mount.
+  // Right-clicking, Alt+Clicking, or using the 🎯 crosshair button on a token aims
+  // the matching dropdown at it. Only CHANGES count (the nonce ref).
   const combatTarget = useStore((s) => s.combatTarget);
   const seenTargetNonce = useRef(combatTarget?.n ?? 0);
   useEffect(() => {
     if (!combatTarget || combatTarget.n === seenTargetNonce.current) return;
     seenTargetNonce.current = combatTarget.n;
-    if (targets.some((t) => t.id === combatTarget.id)) setTargetId(combatTarget.id);
+    if (combatTarget.mode === 'heal') {
+      if (healList.some((t) => t.id === combatTarget.id)) {
+        setHealTargetId(combatTarget.id);
+        setLineSource(combatTarget.id !== attacker.id ? 'heal' : 'attack');
+      }
+      return;
+    }
+    if (combatTarget.mode === 'buff') {
+      if (buffList.some((t) => t.id === combatTarget.id)) {
+        setBuffTargetId(combatTarget.id);
+        setLineSource(combatTarget.id !== attacker.id ? 'buff' : 'attack');
+      }
+      return;
+    }
+    if (combatTarget.mode === 'attack') {
+      if (targets.some((t) => t.id === combatTarget.id)) {
+        setTargetId(combatTarget.id);
+        setLineSource('attack');
+      }
+      return;
+    }
+    if (targets.some((t) => t.id === combatTarget.id)) {
+      setTargetId(combatTarget.id);
+      setLineSource('attack');
+    } else if (combatTarget.id !== attacker.id && healList.some((t) => t.id === combatTarget.id)) {
+      setHealTargetId(combatTarget.id);
+      if (buffList.some((t) => t.id === combatTarget.id)) setBuffTargetId(combatTarget.id);
+      setLineSource('heal');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [combatTarget]);
-
-  // Heals pick from allies instead (self first = default) and apply on cast.
-  const hasHeal = abilities.some((a) => effectiveSheetAbility(a).roll?.kind === 'heal');
-  const [healTargetId, setHealTargetId] = useState(healList[0]?.id ?? '');
-  const buffList = healList.filter(token => token.mapId === attacker.mapId && !token.sharedSightOnly && !token.partiallyRevealed);
-  const hasHasteSpell = abilities.some(isCanonicalHasteProfile);
-  const [buffTargetId, setBuffTargetId] = useState(attacker.id);
-
-  const nothingRollable = weapons.length === 0 && abilities.length === 0;
-  const anyToggle = caster.sheetAbilities.some(hasToggle);
-  const isPc = 'resources' in caster;
-  if (nothingRollable && !anyToggle && !isPc && summonAbilities.length === 0)
-    return <><HasteExtraAction caster={caster} kind={kind} ownTurn={ownTurn} attackArmed={hasteAttackArmed} onArmAttack={setHasteAttackArmed} /><p className="muted">No attacks or rollable abilities.</p></>;
 
   // The select state can hold an id no longer in the list (the target token was
   // deleted, or the DM switched maps) — a stale-but-truthy id would leave the
   // attack buttons enabled while firing at a token the server drops silently.
   // Clamp to the live list for everything that reads it.
+  const nothingRollable = weapons.length === 0 && abilities.length === 0;
   const effectiveTargetId = targets.some((t) => t.id === targetId)
     ? targetId
     : targets[0]?.id ?? '';
+  const rootRef = useRef<HTMLDivElement>(null);
+  const showTargetLine = useStore((s) => s.showTargetLine);
+  const setShowTargetLine = useStore((s) => s.setShowTargetLine);
+  const setCombatPanelTarget = useStore((s) => s.setCombatPanelTarget);
+  const currentHealTargetId = healList.some((t) => t.id === healTargetId) ? healTargetId : healList[0]?.id ?? '';
+  const currentBuffTargetId = buffList.some((t) => t.id === buffTargetId) ? buffTargetId : buffList[0]?.id ?? '';
+  const lineTargetId =
+    lineSource === 'ally' && validAllyDefault
+      ? validAllyDefault
+      : lineSource === 'heal' && hasHeal && currentHealTargetId && currentHealTargetId !== attacker.id
+        ? currentHealTargetId
+        : lineSource === 'buff' && hasHasteSpell && currentBuffTargetId && currentBuffTargetId !== attacker.id
+          ? currentBuffTargetId
+          : effectiveTargetId;
+
+  const selectedTargetToken = targets.find((t) => t.id === effectiveTargetId);
+  const targetDistanceFt =
+    selectedTargetToken && snapshot.map && selectedTargetToken.mapId === attacker.mapId
+      ? tokenDistanceFt(attacker, selectedTargetToken, snapshot.map)
+      : undefined;
+
+  const tetherRangeMeta = useMemo(() => {
+    if (!lineTargetId || lineTargetId === attacker.id || !snapshot.map) return { midLabel: undefined, outOfRange: false };
+    const lineTok = snapshot.tokens.find((t) => t.id === lineTargetId && t.mapId === attacker.mapId);
+    if (!lineTok) return { midLabel: undefined, outOfRange: false };
+    const dist = tokenDistanceFt(attacker, lineTok, snapshot.map);
+    const rounded = `${Math.round(dist)} ft`;
+    if (lineTargetId === effectiveTargetId) {
+      const hoveredWeapon = hoveredWeaponIdx !== null ? weapons[hoveredWeaponIdx] : undefined;
+      if (hoveredWeapon) {
+        const ev = evaluateWeaponRange(hoveredWeapon, dist);
+        return { midLabel: ev.pillText, outOfRange: ev.status === 'out' };
+      }
+      if (weapons.length > 0 && abilities.length === 0) {
+        const evals = weapons.map((w) => evaluateWeaponRange(w, dist));
+        if (evals.every((e) => e.status === 'out')) {
+          return { midLabel: `${rounded} · Out`, outOfRange: true };
+        }
+        if (evals.every((e) => e.status !== 'normal') && evals.some((e) => e.status === 'long')) {
+          return { midLabel: `${rounded} · Long`, outOfRange: false };
+        }
+      }
+    }
+    return { midLabel: rounded, outOfRange: false };
+  }, [lineTargetId, attacker, snapshot.map, snapshot.tokens, effectiveTargetId, hoveredWeaponIdx, weapons, abilities.length]);
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) {
+      setCombatPanelTarget(null);
+      return;
+    }
+    const sync = () => {
+      const hiddenAncestor = el.closest('[hidden]');
+      if (!hiddenAncestor && !nothingRollable && lineTargetId && lineTargetId !== attacker.id) {
+        setCombatPanelTarget({
+          attackerTokenId: attacker.id,
+          targetTokenId: lineTargetId,
+          midLabel: tetherRangeMeta.midLabel,
+          outOfRange: tetherRangeMeta.outOfRange,
+        });
+      } else {
+        setCombatPanelTarget(null);
+      }
+    };
+    sync();
+    const dockWindow = el.closest('[data-dock-window]') ?? el.parentElement;
+    if (!dockWindow) return () => setCombatPanelTarget(null);
+    const obs = new MutationObserver(sync);
+    obs.observe(dockWindow, { attributes: true, subtree: true, attributeFilter: ['hidden', 'class'] });
+    return () => {
+      obs.disconnect();
+      setCombatPanelTarget(null);
+    };
+  }, [attacker.id, lineTargetId, nothingRollable, setCombatPanelTarget, tetherRangeMeta.midLabel, tetherRangeMeta.outOfRange]);
+
+  const anyToggle = caster.sheetAbilities.some(hasToggle);
+  const isPc = 'resources' in caster;
+  if (nothingRollable && !anyToggle && !isPc && summonAbilities.length === 0)
+    return <><HasteExtraAction caster={caster} kind={kind} ownTurn={ownTurn} attackArmed={hasteAttackArmed} onArmAttack={setHasteAttackArmed} /><p className="muted">No attacks or rollable abilities.</p></>;
+
   const effectiveHealId = healList.some((t) => t.id === healTargetId)
     ? healTargetId
     : healList[0]?.id ?? '';
   const effectiveBuffId = buffList.some(token => token.id === buffTargetId) ? buffTargetId : buffList[0]?.id ?? '';
-  const selectedTargetToken = targets.find((t) => t.id === effectiveTargetId);
-  const advPreview = previewAttackAdvantage(snapshot, attacker, selectedTargetToken, armedAdv);
+  const previewWeapon =
+    hoveredWeaponIdx !== null
+      ? weapons[hoveredWeaponIdx]
+      : weapons.length === 1 && abilities.length === 0
+        ? weapons[0]
+        : undefined;
+  const advPreview = previewAttackAdvantage(snapshot, attacker, selectedTargetToken, armedAdv, previewWeapon);
 
   // A 2H toggle only matters when some weapon is versatile (has 2H damage).
   const anyVersatile = weapons.some(
@@ -164,12 +344,44 @@ export function CombatSection({
       (w.tags ?? []).some((t) => t.toLowerCase() === 'versatile'),
   );
 
+  const economyBar = snapshot.round > 0 && (
+    <div className="turn-economy-bar" role="group" aria-label="Turn economy tracker">
+      <button
+        type="button"
+        className={`economy-pip is-action${actionSpent ? ' spent' : ''}`}
+        aria-pressed={actionSpent}
+        title="Action — soft reminder (click to toggle; never locks buttons)"
+        onClick={() => setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, action: !actionSpent }))}
+      >
+        ● Action{actionSpent ? ' ✓' : ''}
+      </button>
+      <button
+        type="button"
+        className={`economy-pip is-bonus${bonusSpent ? ' spent' : ''}`}
+        aria-pressed={bonusSpent}
+        title="Bonus Action — soft reminder (click to toggle; never locks buttons)"
+        onClick={() => setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, bonus: !bonusSpent }))}
+      >
+        ⚡ Bonus{bonusSpent ? ' ✓' : ''}
+      </button>
+      <button
+        type="button"
+        className={`economy-pip is-reaction${reactionSpent ? ' spent' : ''}`}
+        aria-pressed={reactionSpent}
+        title="Reaction — soft reminder (click to toggle; never locks buttons)"
+        onClick={() => setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, reactionOverride: !reactionSpent }))}
+      >
+        ↩ Reaction{reactionSpent ? ' ✓' : ''}
+      </button>
+    </div>
+  );
+
   const rollControls = (
     <>
       {!nothingRollable && (
         <div className="dice-row combat-target-row">
           <span className="muted spell-tag">Target</span>
-          <select aria-label="Attack target" value={effectiveTargetId} onChange={(e) => setTargetId(e.target.value)}>
+          <select aria-label="Attack target" value={effectiveTargetId} onChange={(e) => { setTargetId(e.target.value); setLineSource('attack'); }}>
             {!targets.length && <option value="">No living targets</option>}
             {targets.map((t) => (
               <option key={t.id} value={t.id}>
@@ -177,7 +389,29 @@ export function CombatSection({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            className={`btn tiny target-pick-btn${mapTargetPick === 'attack' ? ' on' : ''}`}
+            aria-label="Pick attack target on map"
+            aria-pressed={mapTargetPick === 'attack'}
+            title="Click a creature on the map to target (or Alt+Click anytime)"
+            onClick={() => setMapTargetPick(mapTargetPick === 'attack' ? null : 'attack')}
+          >
+            🎯
+          </button>
           <ShowDeadTargets/>
+          <label
+            className="muted spell-tag"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            title="Show animated targeting tether to the selected target"
+          >
+            <input
+              type="checkbox"
+              checked={showTargetLine}
+              onChange={(e) => setShowTargetLine(e.target.checked)}
+            />{' '}
+            Target Line
+          </label>
         </div>
       )}
       {!nothingRollable && (
@@ -201,6 +435,8 @@ export function CombatSection({
       weapons={weapons}
       twoHanded={twoHanded}
       disabled={!effectiveTargetId || !!actionBlock}
+      distanceFt={targetDistanceFt}
+      onHoverWeapon={setHoveredWeaponIdx}
       onAttack={(i) =>
         combatAttack({
           attackerTokenId: attacker.id,
@@ -216,8 +452,9 @@ export function CombatSection({
   );
 
   return (
-    <div className={`attack-controls${compactPlayer ? ' compact-player-combat' : ''}`}>
+    <div ref={rootRef} className={`attack-controls${compactPlayer ? ' compact-player-combat' : ''}`}>
       {'deathSaves' in caster && <DeathSaves character={caster} editable />}
+      {economyBar}
       <ActiveSpellActions caster={caster} kind={kind} ownTurn={ownTurn} targetTokenId={effectiveTargetId||undefined} />
       <HasteExtraAction caster={caster} kind={kind} ownTurn={ownTurn} attackArmed={hasteAttackArmed} onArmAttack={setHasteAttackArmed} />
       {actionBlock === 'Hold Person paralysis' && <div className="spell-action-block" role="status">
@@ -266,11 +503,12 @@ export function CombatSection({
         </>
       )}
       {hasHeal && healList.length > 0 && (
-        <div className="dice-row">
+        <div className="dice-row combat-heal-row">
           <span className="muted spell-tag">Heal target</span>
           <select
+            aria-label="Heal target"
             value={effectiveHealId}
-            onChange={(e) => setHealTargetId(e.target.value)}
+            onChange={(e) => { setHealTargetId(e.target.value); setLineSource(e.target.value !== attacker.id ? 'heal' : 'attack'); }}
           >
             {healList.map((t, i) => (
               <option key={t.id} value={t.id}>
@@ -279,13 +517,34 @@ export function CombatSection({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            className={`btn tiny target-pick-btn${mapTargetPick === 'heal' ? ' on' : ''}`}
+            aria-label="Pick heal target on map"
+            aria-pressed={mapTargetPick === 'heal'}
+            title="Click a creature on the map to heal (or Alt+Click anytime)"
+            onClick={() => setMapTargetPick(mapTargetPick === 'heal' ? null : 'heal')}
+          >
+            🎯
+          </button>
+          <ShowHealEnemies />
         </div>
       )}
       {hasHasteSpell && buffList.length > 0 && <div className="dice-row combat-buff-target">
         <span className="muted spell-tag">Buff target</span>
-        <select aria-label="Buff target" value={effectiveBuffId} onChange={event => setBuffTargetId(event.target.value)}>
+        <select aria-label="Buff target" value={effectiveBuffId} onChange={event => { setBuffTargetId(event.target.value); setLineSource(event.target.value !== attacker.id ? 'buff' : 'attack'); }}>
           {buffList.map(token => <option key={token.id} value={token.id}>{targetLabel(snapshot, token, attacker)}{token.id === attacker.id ? ' (you)' : ''}</option>)}
         </select>
+        <button
+          type="button"
+          className={`btn tiny target-pick-btn${mapTargetPick === 'buff' ? ' on' : ''}`}
+          aria-label="Pick buff target on map"
+          aria-pressed={mapTargetPick === 'buff'}
+          title="Click a creature on the map to buff"
+          onClick={() => setMapTargetPick(mapTargetPick === 'buff' ? null : 'buff')}
+        >
+          🎯
+        </button>
       </div>}
       <AbilityButtons
         abilities={abilities}
@@ -297,9 +556,9 @@ export function CombatSection({
       />
       {summonAbilities.length > 0 && (
         <div className="combat-summon-row">
-          {summonAbilities.map((a) => isCastSpell(a)?<div key={a.id} className="combat-ability-row"><SpellCastControl ability={a} caster={caster} kind={kind}/></div>:<div key={a.id} className="combat-ability-row">
+          {summonAbilities.map((a) => isCastSpell(a)?<div key={a.id} className="combat-ability-row is-spell"><SpellCastControl ability={a} caster={caster} kind={kind}/></div>:<div key={a.id} className={`combat-ability-row is-spell${upcastable(a) ? ' has-options' : ''}`}>
             <button
-              className="btn tiny"
+              className="btn tiny attack-row spell-attack-btn"
               disabled={!!actionBlock}
               title={`Summon ${a.summon?.name?.trim() || a.name}${(a.level ?? 0) >= 1 ? ' (spends a spell slot)' : ''}`}
               onClick={() => castSummon(a)}
@@ -307,9 +566,9 @@ export function CombatSection({
               {a.summon?.icon || '✋'} Summon {a.summon?.name?.trim() || a.name}
             </button>
 
-            {upcastable(a) && <select aria-label={`${a.name} summon level`} className="spell-level" value={summonLevel(a)} onChange={event => setSummonLevels(values => ({ ...values, [a.id]: Number(event.target.value) }))}>
+            {upcastable(a) && <><span className="combat-ability-options-tag" aria-hidden="true">↳ Slot</span><select aria-label={`${a.name} summon level`} className="spell-level" value={summonLevel(a)} onChange={event => setSummonLevels(values => ({ ...values, [a.id]: Number(event.target.value) }))}>
               {Array.from({ length: 10 - spellBaseLevel(a) }, (_, index) => spellBaseLevel(a) + index).map(level => <option key={level} value={level}>L{level}</option>)}
-            </select>}
+            </select></>}
             {'spellSlots' in caster && upcastable(a) && Object.keys(caster.spellSlots).some(key => /^P[1-5]$/.test(key)) && <select aria-label={`${a.name} summon slot pool`} value={summonPools[a.id] ?? selectSpellSlot(caster, summonLevel(a))?.pool ?? 'spellcasting'} onChange={event => {
               const pool = event.target.value as SpellSlotPool;
               setSummonPools(values => ({ ...values, [a.id]: pool }));

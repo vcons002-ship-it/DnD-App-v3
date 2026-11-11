@@ -4,7 +4,8 @@ import { tokenDistanceFt, tokensWithin5ft } from '../../../shared/distance';
 import { hasLineOfSight } from '../../../shared/mapWalls';
 import { fogVisionContainsToken, tokenRadiusPx, usesTokenVision } from '../../../shared/playerVision';
 import { resolveToken, tokenEntityIndex } from './entities';
-import type { StateSnapshot, Token } from '../../../shared/types';
+import type { StateSnapshot, Token, Weapon } from '../../../shared/types';
+import { evaluateWeaponRange } from '../../../shared/weaponRange';
 
 /**
  * The tokens a given attacker may target. Excludes the attacker's own token, and
@@ -28,9 +29,9 @@ function attackList(snapshot:StateSnapshot,attacker:Token,tokens:Token[]){
 export function validTargets(snapshot:StateSnapshot,attacker:Token,showDead=false){return attackList(snapshot,attacker,eligible(snapshot,attacker,showDead));}
 /** Combat uses this once per relevant update, sharing its wall/vision checks
  * between attack and heal controls without retaining stale entity results. */
-export function targetLists(snapshot:StateSnapshot,attacker:Token,showDead=false){
+export function targetLists(snapshot:StateSnapshot,attacker:Token,showDead=false,showHealEnemies=false){
  const tokens=eligible(snapshot,attacker,showDead);
- return {attack:attackList(snapshot,attacker,tokens),heal:[...((showDead||!resolveToken(snapshot,attacker).dead)?[attacker]:[]),...tokens.filter(t=>snapshot.role!=='player'||isFriendly(snapshot,t))]};
+ return {attack:attackList(snapshot,attacker,tokens),heal:buildHealList(snapshot,attacker,tokens,showDead,showHealEnemies)};
 }
 
 const isFriendly = (snapshot: StateSnapshot, t: Token): boolean => {
@@ -40,15 +41,33 @@ const isFriendly = (snapshot: StateSnapshot, t: Token): boolean => {
 
 /**
  * The tokens a caster may HEAL: themselves first (the default), then allies
- * (PCs + friendly creatures). The DM may heal anyone. Mirror of `validTargets`
- * so the heal dropdown can't drift from the attack one.
+ * (PCs + friendly creatures) and neutral creatures, plus enemies when opted in.
+ * Mirror of `validTargets` so the heal dropdown can't drift from the attack one.
  */
-export function healTargets(snapshot: StateSnapshot, caster: Token, showDead = false): Token[] {
-  return [
-    ...((showDead || !resolveToken(snapshot, caster).dead) ? [caster] : []),
-    ...eligible(snapshot,caster,showDead).filter(t=>snapshot.role!=='player'||isFriendly(snapshot,t)),
-  ];
+export function healTargets(snapshot: StateSnapshot, caster: Token, showDead = false, showEnemies = false): Token[] {
+  return buildHealList(snapshot, caster, eligible(snapshot, caster, showDead), showDead, showEnemies);
 }
+
+const isHealable = (snapshot: StateSnapshot, caster: Token, t: Token, showEnemies = false): boolean => {
+  if (t.kind === 'pc') return true;
+  const entities = tokenEntityIndex(snapshot);
+  const m = entities.monsters.get(t.refId);
+  if (m?.objectKind) return false;
+  if (snapshot.role !== 'player' && caster.kind === 'monster' && entities.monsters.get(caster.refId)?.disposition === 'enemy') return true;
+  const disp = m?.disposition ?? 'enemy';
+  return disp === 'friendly' || disp === 'neutral' || (showEnemies && disp === 'enemy');
+};
+
+const healRank = (snapshot: StateSnapshot, t: Token): number => {
+  if (t.kind === 'pc') return 0;
+  const disp = tokenEntityIndex(snapshot).monsters.get(t.refId)?.disposition ?? 'enemy';
+  return disp === 'friendly' ? 0 : disp === 'neutral' ? 1 : 2;
+};
+
+const buildHealList = (snapshot: StateSnapshot, caster: Token, tokens: Token[], showDead: boolean, showEnemies: boolean): Token[] => [
+  ...((showDead || !resolveToken(snapshot, caster).dead) ? [caster] : []),
+  ...tokens.filter(t => isHealable(snapshot, caster, t, showEnemies)).sort((a, b) => healRank(snapshot, a) - healRank(snapshot, b)),
+];
 
 /** Uses only the viewer's snapshot: never derives hidden monster numbers. */
 export function targetLabel(snapshot: StateSnapshot, token: Token, origin?: Token): string {
@@ -62,6 +81,7 @@ export function previewAttackAdvantage(
   attacker: Token,
   target?: Token,
   manual?: Advantage,
+  weapon?: Pick<Weapon, 'name' | 'kind' | 'range' | 'tags'>,
 ): { state?: Advantage; reasons: string[] } {
   const entities = tokenEntityIndex(snapshot);
   const attackerEnt = attacker.kind === 'pc' ? entities.characters.get(attacker.refId) : entities.monsters.get(attacker.refId);
@@ -82,7 +102,7 @@ export function previewAttackAdvantage(
   }
   const within5ft = tokensWithin5ft(attacker, target, snapshot.map);
   const distanceFt = tokenDistanceFt(attacker, target, snapshot.map);
-  return evaluateAttackContext({
+  const baseAdv = evaluateAttackContext({
     attackerConditions: attackerConds,
     targetConditions: targetConds,
     attackerEntity: {
@@ -101,4 +121,16 @@ export function previewAttackAdvantage(
     targetTokenId: target.id,
     includeArmedManeuvers: true,
   }).adv;
+  if (weapon) {
+    const rangeEval = evaluateWeaponRange(weapon, distanceFt);
+    if (rangeEval.disadvantage) {
+      const reasons = [...baseAdv.reasons, `long range (${weapon.name})`];
+      const hasAdv = baseAdv.state === 'adv' || (baseAdv.state === undefined && baseAdv.reasons.length > 0);
+      return {
+        state: hasAdv ? undefined : 'dis',
+        reasons,
+      };
+    }
+  }
+  return baseAdv;
 }

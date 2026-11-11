@@ -22,6 +22,62 @@ export const ACTION_ICON: Record<ActionType, { icon: string; label: string }> = 
   reaction: { icon: '↩', label: 'Reaction' },
 };
 
+export type InferredActionCost = ActionType | 'other';
+
+export const ACTION_SHORT_BADGE: Record<ActionType, string> = {
+  action: '1A',
+  bonus: 'BA',
+  reaction: 'Rxn',
+};
+
+const BONUS_ACTION_NAMES = new Set([
+  'healing word', 'mass healing word', 'misty step', 'spiritual weapon',
+  'hex', "hunter's mark", 'sanctuary', 'shield of faith', 'shillelagh',
+  'magic stone', 'flame blade', 'divine favor', 'compelled duel',
+  'divine smite', 'searing smite', 'thunderous smite', 'wrathful smite',
+  'branding smite', 'shining smite', 'blinding smite', 'staggering smite',
+  'banishing smite', 'ensnaring strike', 'hail of thorns', 'zephyr strike',
+  "ashardalon's stride", 'shadow blade', 'far step', 'swift quiver',
+  'second wind', 'cunning action', 'bardic inspiration', 'rage',
+  'flurry of blows', 'patient defense', 'step of the wind', 'innate sorcery',
+  'vow of enmity', 'lay on hands', 'wild shape', 'starry form',
+]);
+
+const REACTION_NAMES = new Set([
+  'shield', 'counterspell', 'absorb elements', 'hellish rebuke',
+  'feather fall', 'silvery barbs', 'uncanny dodge', 'deflect attacks',
+  'deflect missiles', 'parry', 'riposte', 'cutting words', 'rebuke the violent',
+  'warding flare', 'wrath of the storm',
+]);
+
+/** Infer whether a sheet spell/ability costs an Action, Bonus Action, Reaction, or longer casting time. */
+export function inferAbilityActionCost(ability: {
+  name: string;
+  type?: string;
+  meta?: string;
+  actionType?: ActionType;
+  roll?: unknown;
+}): InferredActionCost {
+  if (ability.actionType) return ability.actionType;
+  if (ability.meta) {
+    const m = ability.meta.toLowerCase();
+    if (m.includes('bonus action')) return 'bonus';
+    if (m.includes('reaction')) return 'reaction';
+    if (/\b\d+\s*(?:minute|minutes|min|hour|hours|hr|hrs)\b/.test(m) && !/\b1\s*action\b/.test(m)) {
+      return 'other';
+    }
+    if (m.includes('action')) return 'action';
+  }
+  const key = ability.name.trim().toLowerCase().replace(/[’‘]/g, "'");
+  if (BONUS_ACTION_NAMES.has(key)) return 'bonus';
+  if (REACTION_NAMES.has(key)) return 'reaction';
+  if (ability.roll || ability.type === 'spell') return 'action';
+  return 'other';
+}
+
+export const ACTION_COST_META: Record<string, never> = {
+};
+
 const abilityMod = (score: number | undefined): number =>
   Math.floor(((score ?? 10) - 10) / 2);
 

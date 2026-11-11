@@ -1643,11 +1643,19 @@ details.sheet-actions-traits[open] > summary::before { content: '▾ '; }
 /* Attack controls */
 .attack-controls { margin-top: 10px; }
 .attack-controls select { flex: 1; }
+.combat-target-row, .combat-heal-row, .combat-buff-target { flex-wrap: wrap; row-gap: 4px; }
+.combat-target-row select, .combat-heal-row select, .combat-buff-target select { flex: 1 1 calc(100% - 118px); min-width: 120px; }
+.btn.target-pick-btn { flex: 0 0 auto; padding: 3px 6px; min-width: 28px; line-height: 1; font-size: 13px; text-align: center; }
+.btn.target-pick-btn.on, :is(.player-fantasy, .dm-fantasy) .btn.target-pick-btn.on { background: linear-gradient(180deg, #274a78 0%, #162b47 100%); border-color: #7ab8ff; color: #fff; box-shadow: 0 0 8px rgba(99, 164, 255, 0.45); }
+:is(.combat-target-row, .combat-heal-row) > label.spell-tag { font-size: 11px; white-space: nowrap; }
+:is(.combat-target-row, .combat-heal-row) > label.spell-tag:first-of-type { margin-left: auto; margin-right: 6px; }
 /* Combat section ability rows: roll button + optional upcast level select. */
 .combat-summon-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .combat-ability-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.combat-ability-row:has(select) { padding: 4px; margin: 3px 0; border: 1px solid rgba(183, 155, 100, 0.24); border-radius: 5px; background: rgba(12, 15, 22, 0.45); }
-.combat-ability-row select { flex: 1 1 auto; width: auto; min-width: 0; margin: 0; }
+.combat-ability-row:has(select) { padding: 5px 6px; margin: 5px 0; border: 1px solid #4878bd; border-left: 3px solid #63a4ff; border-radius: 5px; background: linear-gradient(180deg, rgba(22, 40, 68, 0.78) 0%, rgba(12, 22, 38, 0.9) 100%); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(130, 185, 255, 0.14); }
+.combat-ability-row.is-ability:has(select) { border-color: #94743c; border-left-color: #dead54; background: linear-gradient(180deg, rgba(58, 44, 22, 0.72) 0%, rgba(32, 24, 12, 0.88) 100%); }
+.combat-ability-options-tag { color: #8ab8f5; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 0 3px 0 2px; white-space: nowrap; user-select: none; }
+.combat-ability-row select { flex: 1 1 auto; width: auto; min-width: 0; margin: 0; background: #0f1b2e; border: 1px solid #3d66a1; border-radius: 4px; color: #d8e9ff; }
 .combat-ability-row:has(.spell-cast-summary) { flex-wrap:wrap; }
 .spell-cast-summary { flex-basis:100%; color:var(--muted); font-size:11px; line-height:1.4; }
 .spell-cast-control { display:flex; flex-direction:column; gap:3px; align-items:flex-start; max-width:100%; }
@@ -1668,7 +1676,33 @@ details.sheet-actions-traits[open] > summary::before { content: '▾ '; }
 .combat-toggles { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; }
 .combat-toggle-row { display: flex; align-items: center; gap: 6px; }
 .combat-toggle-row .res-name { flex: 1; min-width: 0; }
-.attack-row { display: block; width: 100%; text-align: left; margin: 3px 0; }
+.attack-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; text-align: left; margin: 3px 0; }
+.attack-row > span:first-child { min-width: 0; flex: 1 1 auto; }
+.turn-economy-bar { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 6px; }
+.economy-pip { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 3px 7px; border-radius: 999px; font: 700 10.5px/1.25 system-ui, sans-serif; letter-spacing: 0.02em; cursor: pointer; border: 1px solid #4c6b94; background: rgba(22, 36, 58, 0.72); color: #d8ebff; transition: opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease; }
+.economy-pip.is-bonus { border-color: #9e7e2f; background: rgba(58, 44, 14, 0.72); color: #ffe394; }
+.economy-pip.is-reaction { border-color: #7856ad; background: rgba(42, 26, 68, 0.72); color: #e4d0ff; }
+.economy-pip:hover { filter: brightness(1.14); }
+.economy-pip.spent { opacity: 0.52; background: rgba(18, 20, 26, 0.6); border-style: dashed; text-decoration: line-through; }
+.ability-group-header { display: flex; align-items: center; gap: 6px; margin: 7px 0 3px; padding-bottom: 2px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #9fb4d1; user-select: none; }
+.ability-group-header.is-bonus { color: #f0cb69; border-bottom-color: rgba(240, 203, 105, 0.25); }
+.ability-group-header.is-reaction { color: #cfaeff; border-bottom-color: rgba(207, 174, 255, 0.25); }
+.ability-cost-badge { flex: 0 0 auto; font-size: 9.5px; font-weight: 700; letter-spacing: 0.03em; padding: 1px 5px; border-radius: 999px; line-height: 1.35; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(8, 12, 20, 0.48); color: #d6e4f7; }
+.ability-cost-badge.is-bonus { border-color: rgba(245, 197, 24, 0.55); background: rgba(68, 50, 10, 0.58); color: #ffe083; }
+.ability-cost-badge.is-reaction { border-color: rgba(186, 140, 255, 0.55); background: rgba(48, 26, 78, 0.58); color: #e2ccff; }
+.weapon-range-tag { flex: 0 0 auto; font-size: 9.5px; font-weight: 700; letter-spacing: 0.02em; padding: 1px 5px; border-radius: 999px; line-height: 1.35; white-space: nowrap; }
+.weapon-range-tag.is-long { background: rgba(74, 52, 10, 0.78); border: 1px solid #e0a938; color: #ffe08a; }
+.weapon-range-tag.is-out { background: rgba(58, 18, 20, 0.82); border: 1px solid #d95b5b; color: #ffb3b3; }
+.btn.weapon-attack-btn.is-long-range, :is(.player-fantasy, .dm-fantasy) .btn.weapon-attack-btn.is-long-range { border-left-color: #f0b43a; }
+.btn.weapon-attack-btn.is-out-of-range, :is(.player-fantasy, .dm-fantasy) .btn.weapon-attack-btn.is-out-of-range { opacity: 0.78; border-left-color: #8d95a5; }
+.btn.weapon-attack-btn, :is(.player-fantasy, .dm-fantasy) .btn.weapon-attack-btn { background: linear-gradient(180deg, #522422 0%, #301413 100%); border-color: #9e4740; border-left: 3px solid #e35d52; color: #f9e7e4; }
+.btn.weapon-attack-btn .muted, :is(.player-fantasy, .dm-fantasy) .btn.weapon-attack-btn .muted { color: #e3afa8; }
+.btn.weapon-attack-btn:not(:disabled):hover, :is(.player-fantasy, .dm-fantasy) .btn.weapon-attack-btn:not(:disabled):hover { background: linear-gradient(180deg, #682e2b 0%, #3f1a19 100%); border-color: #d97066; border-left-color: #ff7b70; box-shadow: 0 0 8px rgba(227, 93, 82, 0.25); }
+.btn.spell-attack-btn, :is(.player-fantasy, .dm-fantasy) .btn.spell-attack-btn { background: linear-gradient(180deg, #1f365c 0%, #122138 100%); border-color: #4878bd; border-left: 3px solid #63a4ff; color: #e8f2ff; }
+.btn.spell-attack-btn:not(:disabled):hover, :is(.player-fantasy, .dm-fantasy) .btn.spell-attack-btn:not(:disabled):hover { background: linear-gradient(180deg, #294778 0%, #182c4a 100%); border-color: #75abf2; border-left-color: #8cc0ff; box-shadow: 0 0 8px rgba(99, 164, 255, 0.28); }
+.combat-ability-row:has(select) .btn.spell-attack-btn, :is(.player-fantasy, .dm-fantasy) .combat-ability-row:has(select) .btn.spell-attack-btn { border-left-width: 1px; }
+.btn.ability-attack-btn, :is(.player-fantasy, .dm-fantasy) .btn.ability-attack-btn { background: linear-gradient(180deg, #47361c 0%, #291f10 100%); border-color: #94743c; border-left: 3px solid #dead54; color: #f7ebd4; }
+.btn.ability-attack-btn:not(:disabled):hover, :is(.player-fantasy, .dm-fantasy) .btn.ability-attack-btn:not(:disabled):hover { background: linear-gradient(180deg, #5c4624 0%, #362915 100%); border-color: #cfa65d; border-left-color: #f5c56c; box-shadow: 0 0 8px rgba(222, 173, 84, 0.25); }
 .recharge-chip {
   flex: none; align-self: center; margin: 0 2px; padding: 1px 7px; border-radius: 999px;
   font-size: 11px; line-height: 18px; white-space: nowrap; cursor: pointer;

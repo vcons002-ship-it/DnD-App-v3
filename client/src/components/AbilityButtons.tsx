@@ -5,7 +5,7 @@ import {COMMAND_WORDS,commandWord,commandInstruction,isCommandSpell} from '../..
 import {linkedSpellProfile,spellKey} from '../../../shared/linkedSpells';
 import {spellAreaFor} from '../../../shared/spellAreas';
 import { hitFeature, markSpell, abilityKey } from '../../../shared/hitFeatures';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import type {
   Character,
   Monster,
@@ -23,7 +23,8 @@ import {
 import { useStore } from '../state/socket';
 import { effectiveRecharge } from '../../../shared/monsterAttacks';
 import { RechargeChip } from './RechargeChip';
-import { isCanonicalHasteProfile, effectiveSheetAbility, isMultiTargetSpell, spellDamageTypeChoices } from '../../../shared/spellExecution';
+import { isCanonicalAidProfile, isCanonicalBlessOrBaneProfile, isCanonicalHasteProfile, effectiveSheetAbility, isMultiTargetSpell, spellDamageTypeChoices } from '../../../shared/spellExecution';
+import { ACTION_SHORT_BADGE, inferAbilityActionCost } from '../../../shared/spellPrep';
 import { spellSlotOptions, selectSpellSlot, type SpellSlotPool } from '../../../shared/spellSlotPools';
 import { spellCombatSupport } from '../../../shared/spellSupport';
 
@@ -136,6 +137,19 @@ export function AbilityButtons({
 
   const invisRequested=invisAbility ? selection(invisAbility).level : 2;
   const invisLevel=invisAbility&&'spellSlots'in caster ? selectSpellSlot(caster,invisRequested,slotPools[invisAbility.id])?.level??invisRequested : invisRequested;
+  const visibleAbilities = abilities.filter((a,idx,arr)=>!hitFeature(a)&&(!markSpell(a)||arr.findIndex(x=>markSpell(x)&&abilityKey(x)===abilityKey(a)&&(x.sourceClass??'')===(a.sourceClass??''))===idx));
+  const hasActionItems = !menu && visibleAbilities.some(a => { const c = inferAbilityActionCost(a); return c === 'action' || c === 'other'; });
+  const hasBonusItems = !menu && visibleAbilities.some(a => inferAbilityActionCost(a) === 'bonus');
+  const hasReactionItems = !menu && visibleAbilities.some(a => inferAbilityActionCost(a) === 'reaction');
+  const showActionGroups = !menu && [hasActionItems, hasBonusItems, hasReactionItems].filter(Boolean).length >= 2;
+  const orderedAbilities = showActionGroups
+    ? [
+        ...visibleAbilities.filter(a => { const c = inferAbilityActionCost(a); return c === 'action' || c === 'other'; }),
+        ...visibleAbilities.filter(a => inferAbilityActionCost(a) === 'bonus'),
+        ...visibleAbilities.filter(a => inferAbilityActionCost(a) === 'reaction'),
+      ]
+    : visibleAbilities;
+  let lastGroup: 'action' | 'bonus' | 'reaction' | null = null;
   return (
     <>
       {dispelAbility&&<div className="spell-target-dock" role="region" aria-label="Dispel Magic target">
@@ -160,7 +174,11 @@ export function AbilityButtons({
         <button className="btn" disabled={!invisTargets.length||invisTargets.length>invisLevel-1||selection(invisAbility).unavailable} onClick={()=>{cast(invisAbility,undefined,invisTargets);setInvisAbility(null);}}>Cast Invisibility · {costText(invisAbility)}</button>
         <button className="btn" onClick={()=>setInvisAbility(null)}>Cancel</button>
       </div>}
-      {abilities.filter((a,idx,arr)=>!hitFeature(a)&&(!markSpell(a)||arr.findIndex(x=>markSpell(x)&&abilityKey(x)===abilityKey(a)&&(x.sourceClass??'')===(a.sourceClass??''))===idx)).map((a) => {
+      {orderedAbilities.map((a) => {
+        const rawActionCost = inferAbilityActionCost(a);
+        const groupBucket: 'action' | 'bonus' | 'reaction' = rawActionCost === 'bonus' ? 'bonus' : rawActionCost === 'reaction' ? 'reaction' : 'action';
+        const showHeader = showActionGroups && groupBucket !== lastGroup;
+        lastGroup = groupBucket;
         const cost=selection(a),spell=isCastSpell(a),restriction=spell?spellCastRestriction(a):undefined;
         const level = upcastable(a) ? cost.level : undefined;
         const base=spellSlotBaseLevel(a);
@@ -175,10 +193,9 @@ export function AbilityButtons({
         const area=spellAreaFor(a,level);
         const summon=!!execution.summon&&!manualCast;
 
-
         const choosing=dispelAbility?.id===a.id||invisAbility?.id===a.id||commandAbility?.id===a.id;
 
-          const workflow = area ? 'Place the measured spell area, review affected bases, then confirm. Saves roll together; damage applies automatically. Ongoing or manual effects stay with the DM.' : selfSpell ? spellKey(a.name)==='mirror image' ? 'Create three duplicates of yourself.' : 'Create the blade, then attack using its Active spell actions button.' : manualCast ? 'Record this casting and spend its spell slot; resolve its effects manually.' : multiple
+        const workflow = area ? 'Place the measured spell area, review affected bases, then confirm. Saves roll together; damage applies automatically. Ongoing or manual effects stay with the DM.' : isCanonicalAidProfile(a) ? 'Choose up to three creatures within 30 ft to gain +5 maximum and current HP (+5/lvl).' : isCanonicalBlessOrBaneProfile(a) ? 'Choose up to three creatures within 30 ft (+1/lvl) on the map.' : selfSpell ? spellKey(a.name)==='mirror image' ? 'Create three duplicates of yourself.' : 'Create the blade, then attack using its Active spell actions button.' : manualCast ? 'Record this casting and spend its spell slot; resolve its effects manually.' : multiple
           ? execution.roll?.kind === 'attack' ? 'Cast once, then choose a target for each separate spell attack.' : saveOnly ? 'Cast, then choose targets to roll saving throws.' : 'Roll once, then apply to targets on the map.'
           : execution.roll?.healTarget === 'self' ? 'Restore your own health.'
             : saveOnly ? 'Cast and force the selected target to roll its saving throw.' : 'Cast at the selected target.';
@@ -187,12 +204,19 @@ export function AbilityButtons({
         const btn = (
           <button
             key={menu ? a.id : 'btn'}
-            className={`${menu ? 'btn tiny fm-spell-attack' : 'btn tiny attack-row'}${spent ? ' recharge-spent' : ''}`}
+            className={`${menu ? 'btn tiny fm-spell-attack' : 'btn tiny attack-row'}${spell || a.type === 'spell' ? ' spell-attack-btn' : ' ability-attack-btn'}${spent ? ' recharge-spent' : ''}`}
             title={[restriction, a.description || 'Ability', workflow, support?.manual.length ? `You handle: ${support.manual.join('; ')}` : '', manualRiderNote(a), spent ? 'Spent — ready it from its ⟳ chip after a successful recharge roll.' : ''].filter(Boolean).join('\n')}
             disabled={!!spellActionBlock(caster) || !!restriction || spell&&cost.unavailable || (!summon&&!isCommandSpell(a)&&!area && !manualCast && !menu && !selfSpell && !['invisibility','dispel magic'].includes(advancedSpell(a)??'') && !['misty step','pass without trace'].includes(partySpell(a)??'') && !multiple && (execution.roll?.kind === 'heal' ? execution.roll.healTarget !== 'self' && !healTargetId : !(isCanonicalHasteProfile(a) ? buffTargetId ?? targetTokenId : targetTokenId)))}
             onClick={() => cast(a)}
           >
-            {spell?'Cast':execution.roll?ROLL_ICON[execution.roll.kind]:'Use'} {a.name}{spell?` · ${cost.label}${a.prepared===false&&(a.level??0)>0?' (not prepared)':''}`:''}{menu && spent ? ' (spent)' : ''}
+            <span>
+              {spell?'Cast':execution.roll?ROLL_ICON[execution.roll.kind]:'Use'} {a.name}{spell?` · ${cost.label}${a.prepared===false&&(a.level??0)>0?' (not prepared)':''}`:''}{menu && spent ? ' (spent)' : ''}
+            </span>
+            {!menu && rawActionCost !== 'other' && (
+              <span className={`ability-cost-badge is-${rawActionCost}`} aria-hidden="true" title={rawActionCost === 'bonus' ? 'Bonus Action' : rawActionCost === 'reaction' ? 'Reaction' : 'Action'}>
+                {ACTION_SHORT_BADGE[rawActionCost]}
+              </span>
+            )}
           </button>
         );
         const damageTypeSelect = damageTypes.length > 0 && (
@@ -213,42 +237,47 @@ export function AbilityButtons({
           </select>
         );
         return (
-          <div key={a.id} className="combat-ability-row">
-            {choosing?null:btn}
-
-
-            <RechargeChip ability={a} kind={kind} refId={caster.id} />
-            {damageTypeSelect}
-            {abilityKey(a)==='hex'&&<select aria-label="Hex ability checks" value={hexAbility} onChange={e=>setHexAbility(e.target.value)}>{['STR','DEX','CON','INT','WIS','CHA'].map(k=><option key={k}>{k}</option>)}</select>}
-            {upcastable(a) && (
-              <select
-                className="spell-level"
-                value={level}
-                aria-label={`${a.name} cast level`}
-                title="Cast at level (upcast)"
-                onChange={(e) =>
-                  setCastLevel((c) => ({ ...c, [a.id]: Number(e.target.value) }))
-                }
-              >
-                {levels.map((v) => {
-                  return (
-                    <option key={v} value={v}>
-                      Level {v}{kind==='pc'&&'spellSlots'in caster?` · ${selectSpellSlot(caster,v,slotPools[a.id]??cost.slot?.pool)?.remaining??0} remaining`:''}
-                    </option>
-                  );
-                })}
-              </select>
+          <Fragment key={a.id}>
+            {showHeader && (
+              <div className={`ability-group-header is-${groupBucket}`}>
+                {groupBucket === 'bonus' ? '⚡ Bonus Actions' : groupBucket === 'reaction' ? '↩ Reactions' : '● Actions'}
+              </div>
             )}
-            {kind==='pc'&&'spellSlots' in caster&&Object.keys(caster.spellSlots).some(k=>/^P[1-5]$/.test(k))&&upcastable(a)&&
-              <select aria-label={`${a.name} slot pool`} value={slotPools[a.id]??selectSpellSlot(caster,level??spellBaseLevel(a))?.pool??'spellcasting'}
-                onChange={e=>{
-                  const pool=e.target.value as SpellSlotPool;setSlotPools(p=>({...p,[a.id]:pool}));
-                  const option=spellSlotOptions(caster,spellBaseLevel(a)).find(o=>o.pool===pool&&o.remaining>0);
-                  if(option)setCastLevel(p=>({...p,[a.id]:option.level}));
-                }}>
-                <option value="spellcasting">Spellcasting</option><option value="pact">Pact Magic</option>
-              </select>}
-          </div>
+            <div className={`combat-ability-row${spell || a.type === 'spell' ? ' is-spell' : ' is-ability'}${damageTypeSelect || abilityKey(a) === 'hex' || upcastable(a) ? ' has-options' : ''}`}>
+              {choosing?null:btn}
+              <RechargeChip ability={a} kind={kind} refId={caster.id} />
+              {(damageTypeSelect || abilityKey(a) === 'hex' || upcastable(a)) && <span className="combat-ability-options-tag" aria-hidden="true">{upcastable(a) && !damageTypeSelect && abilityKey(a) !== 'hex' ? '↳ Slot' : '↳'}</span>}{damageTypeSelect}
+              {abilityKey(a)==='hex'&&<select aria-label="Hex ability checks" value={hexAbility} onChange={e=>setHexAbility(e.target.value)}>{['STR','DEX','CON','INT','WIS','CHA'].map(k=><option key={k}>{k}</option>)}</select>}
+              {upcastable(a) && (
+                <select
+                  className="spell-level"
+                  value={level}
+                  aria-label={`${a.name} cast level`}
+                  title="Cast at level (upcast)"
+                  onChange={(e) =>
+                    setCastLevel((c) => ({ ...c, [a.id]: Number(e.target.value) }))
+                  }
+                >
+                  {levels.map((v) => {
+                    return (
+                      <option key={v} value={v}>
+                        Level {v}{kind==='pc'&&'spellSlots'in caster?` · ${selectSpellSlot(caster,v,slotPools[a.id]??cost.slot?.pool)?.remaining??0} remaining`:''}
+                      </option>
+                    );
+                  })}
+                </select>
+              )}
+              {kind==='pc'&&'spellSlots' in caster&&Object.keys(caster.spellSlots).some(k=>/^P[1-5]$/.test(k))&&upcastable(a)&&
+                <select aria-label={`${a.name} slot pool`} value={slotPools[a.id]??selectSpellSlot(caster,level??spellBaseLevel(a))?.pool??'spellcasting'}
+                  onChange={e=>{
+                    const pool=e.target.value as SpellSlotPool;setSlotPools(p=>({...p,[a.id]:pool}));
+                    const option=spellSlotOptions(caster,spellBaseLevel(a)).find(o=>o.pool===pool&&o.remaining>0);
+                    if(option)setCastLevel(p=>({...p,[a.id]:option.level}));
+                  }}>
+                  <option value="spellcasting">Spellcasting</option><option value="pact">Pact Magic</option>
+                </select>}
+            </div>
+          </Fragment>
         );
       })}
       {commandAbility&&<div className="modal-backdrop" onClick={()=>setCommandAbility(null)}><div className="modal" role="dialog" aria-label="Choose Command" onClick={e=>e.stopPropagation()}>

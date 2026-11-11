@@ -83,8 +83,12 @@ describe('Spellbook capabilities cover the actual catalogue without promising un
       needsEdit: false,
     });
     expect(spellCastSummary(spell('Aid'))).toEqual({
-      text: 'No roll · cast only',
-      needsEdit: true,
+      text: 'Buff (+5 max & cur HP, +5/lvl) · up to 3 allies',
+      needsEdit: false,
+    });
+    expect(spellCastSummary(spell('Armor of Agathys'))).toEqual({
+      text: 'Temp HP 5 (+5/lvl) + cold ward · self',
+      needsEdit: false,
     });
     expect(spellCastSummary({
       ...spell('Aid'),
@@ -96,7 +100,7 @@ describe('Spellbook capabilities cover the actual catalogue without promising un
     });
   });
   it.each([
-    'Aid', 'Armor of Agathys', 'True Strike',
+    'True Strike',
     'Mass Heal', 'Prayer of Healing', 'Conjure Animals',
     'Conjure Woodland Beings', 'Elemental Weapon', 'Bestow Curse',
     'Dream', 'Earthquake', 'Glyph of Warding',
@@ -106,7 +110,7 @@ describe('Spellbook capabilities cover the actual catalogue without promising un
     expect(spellCombatSupport(entry)).toMatchObject({ status: 'manual', manualCastOnly: true });
     expect(entry).toEqual(before);
   });
-  it.each(['Ice Knife','Ice Storm','Flame Strike','Meteor Swarm'])('enables reviewed linked damage for %s without rewriting the saved sheet',name=>{
+  it.each(['Ice Knife','Ice Storm','Flame Strike','Meteor Swarm','Aid','Armor of Agathys'])('enables reviewed linked damage for %s without rewriting the saved sheet',name=>{
     const entry=spell(name),before=structuredClone(entry);
     expect(spellCombatSupport(entry)).toMatchObject({status:'partial',manualCastOnly:false});expect(entry).toEqual(before);
   });

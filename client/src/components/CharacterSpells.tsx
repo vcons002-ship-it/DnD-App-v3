@@ -14,7 +14,7 @@ import type {
   TokenKind,
 } from '../../../shared/types';
 import { healTargets, validTargets, targetLabel } from '../lib/targets';
-import {ShowDeadTargets} from './ShowDeadTargets';
+import {ShowDeadTargets, ShowHealEnemies} from './ShowDeadTargets';
 import { useStore } from '../state/socket';
 import { classProgression2024, type CoreClass } from '../../../shared/characterProgression';
 import { classLevelFor, resolveClassRoster, resourceNameForClass, spellcastingAbilityForClass } from '../../../shared/multiclass';
@@ -171,7 +171,8 @@ export function CharacterSpells({
     if (validDefault) setTargetId(validDefault);
   }, [validDefault]);
   // Heals pick from allies instead (self first = default) and apply on cast.
-  const healList = snapshot && attackerToken ? healTargets(snapshot, attackerToken, showDead) : [];
+  const showHealEnemies = useStore(s => s.showHealEnemies);
+  const healList = snapshot && attackerToken ? healTargets(snapshot, attackerToken, showDead, showHealEnemies) : [];
   const effectiveTargetId = targets.some(t => t.id === targetId) ? targetId : targets[0]?.id ?? '';
   const hasHealSpell = character.sheetAbilities.some((a) => a.roll?.kind === 'heal');
   const [healTargetId, setHealTargetId] = useState(healList[0]?.id ?? '');
@@ -1118,7 +1119,7 @@ export function CharacterSpells({
             </div>
           );
         })()}
-      {!rollsElsewhere && snapshot && attackerToken && (hasAttackSpell || hasHealSpell || character.sheetAbilities.some(a=>a.stance?.targeted)) && <ShowDeadTargets/>}
+      {!rollsElsewhere && snapshot && attackerToken && (hasAttackSpell || hasHealSpell || character.sheetAbilities.some(a=>a.stance?.targeted)) && <><ShowDeadTargets/>{hasHealSpell && <ShowHealEnemies/>}</>}
       {!rollsElsewhere && hasAttackSpell && (
         <div className="dice-row">
           <span className="muted spell-tag">Spell target</span>
