@@ -598,7 +598,8 @@ function MapStageInner({
   const privateDrag = useRef(false);
   const [doorDragPreview,setDoorDragPreview]=useState<{tokenId:string;ids:string[]}|null>(null);
   const [doorApproachTokenId,setDoorApproachTokenId]=useState<string|null>(null);
-  useEffect(()=>{setDoorDragPreview(null);setDoorApproachTokenId(null);},[map?.id,mySocketId]);
+  useEffect(()=>{setDoorDragPreview(null);setDoorApproachTokenId(null);useStore.getState().setTokenDragPreview(null);},[map?.id,mySocketId]);
+  useEffect(()=>()=>{useStore.getState().setTokenDragPreview(null);},[]);
   const handleDragActive = useStableCallback((active: boolean) => {
     privateDrag.current=active;
     for(const line of gridRef.current?.getChildren()??[]){line.setAttrs({stroke:active||measureActive?'#ffffffcc':'#ffffff5c',strokeWidth:active||measureActive?1.5:1});}
@@ -642,7 +643,17 @@ function MapStageInner({
   const dragPreviewPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const getLiveTokenPosition = useCallback((id: string) => dragPreviewPosRef.current.get(id) ?? (presentation.moving() ? presentation.position(id) : undefined), [presentation]);
   const handleTokenDragPreview = useStableCallback((tok: Token, point: {x:number;y:number;facing:number}|null) => {
-    if (point) dragPreviewPosRef.current.set(tok.id, { x: point.x, y: point.y }); else dragPreviewPosRef.current.delete(tok.id);
+    if (point) {
+      dragPreviewPosRef.current.set(tok.id, { x: point.x, y: point.y });
+      const qx = Math.round((point.x / pxPerFoot) * 2);
+      const qy = Math.round((point.y / pxPerFoot) * 2);
+      useStore.getState().setTokenDragPreview({ tokenId: tok.id, x: point.x, y: point.y, key: `${tok.id}:${qx}:${qy}` });
+    } else {
+      dragPreviewPosRef.current.delete(tok.id);
+      if (useStore.getState().tokenDragPreview?.tokenId === tok.id) {
+        useStore.getState().setTokenDragPreview(null);
+      }
+    }
     miniatureRef.current?.previewMove(tok.id, point);
     if(!point||(!actualDm&&(tok.kind!=='pc'||!snapshot.characters.some(c=>c.id===tok.refId&&c.claimedBy===mySocketId)))||doors.some(d=>d.tokenId===tok.id)){
       setDoorDragPreview(old=>old?.tokenId===tok.id?null:old);return;

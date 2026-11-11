@@ -1,7 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import type {StateSnapshot,Token,Character,Monster,MonsterPublic} from '../../../shared/types';
 import {resolveToken,sameTokenDisplay} from './entities';
-import {validTargets,healTargets} from './targets';
+import {validTargets,healTargets,targetLists,targetLabel} from './targets';
 
 function fixture(role:'player'|'dm'='dm') {
   const token=(id:string,kind:'pc'|'monster',x=50,extra:Partial<Token>={}):Token=>({id,kind,refId:id,mapId:'map',x,y:50,widthFt:5,isHidden:false,...extra} as Token);
@@ -37,5 +37,21 @@ describe('confirmed death and target lists',()=>{
     const withNeutral={...snapshot,tokens:[...snapshot.tokens,{id:'neutral-npc',kind:'monster',refId:'neutral-npc',mapId:'map',x:75,y:50,widthFt:5,isHidden:false} as Token],monsters:[...snapshot.monsters,{id:'neutral-npc',name:'Neutral NPC',curHp:10,maxHp:20,conditions:[],icon:'',disposition:'neutral'} as unknown as Monster]} as StateSnapshot;
     expect(healTargets(withNeutral,caster,false,false).map(t=>t.id)).toEqual(['caster','downed','neutral-npc']);
     expect(healTargets(withNeutral,caster,false,true).map(t=>t.id)).toEqual(['caster','downed','neutral-npc','living']);
+  });
+  it('exposes eligible visible allies for explicit attack targeting without polluting default player attack targets, and updates targetLabel with dragged origin',()=>{
+    const {snapshot,caster}=fixture('player');
+    const lists=targetLists(snapshot,caster,false,false);
+    // Default attack dropdown keeps allies out so nearest-enemy fallback stays enemy/neutral-only.
+    expect(lists.attack.map(t=>t.id)).toEqual(['chest','living']);
+    // Explicit map attack-target picker can still target visible living/downed allies, never self or hidden/shared tokens.
+    expect(lists.eligible.map(t=>t.id)).toContain('downed');
+    expect(lists.eligible.map(t=>t.id)).not.toContain('caster');
+    expect(lists.eligible.map(t=>t.id)).not.toContain('shared');
+    expect(lists.eligible.map(t=>t.id)).not.toContain('partial');
+    expect(lists.eligible.map(t=>t.id)).not.toContain('dead-pc');
+    // Dragging the attacker ghost toward 'living' (at x=150) updates targetLabel distance live.
+    const livingTok=snapshot.tokens.find(t=>t.id==='living')!;
+    expect(targetLabel(snapshot,livingTok,caster)).toBe('living · 15 ft');
+    expect(targetLabel(snapshot,livingTok,{...caster,x:100})).toBe('living · 5 ft');
   });
 });

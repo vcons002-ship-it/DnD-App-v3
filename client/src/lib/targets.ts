@@ -31,7 +31,7 @@ export function validTargets(snapshot:StateSnapshot,attacker:Token,showDead=fals
  * between attack and heal controls without retaining stale entity results. */
 export function targetLists(snapshot:StateSnapshot,attacker:Token,showDead=false,showHealEnemies=false){
  const tokens=eligible(snapshot,attacker,showDead);
- return {attack:attackList(snapshot,attacker,tokens),heal:buildHealList(snapshot,attacker,tokens,showDead,showHealEnemies)};
+ return {attack:attackList(snapshot,attacker,tokens),heal:buildHealList(snapshot,attacker,tokens,showDead,showHealEnemies),eligible:tokens};
 }
 
 const isFriendly = (snapshot: StateSnapshot, t: Token): boolean => {

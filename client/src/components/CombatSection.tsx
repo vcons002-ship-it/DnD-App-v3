@@ -2,7 +2,7 @@ import {advancedSpell} from '../../../shared/advancedSpells';
 import {tokenDistanceFt} from '../../../shared/distance';
 import {partySpell} from '../../../shared/partySpells';
 import { inferAbilityActionCost } from '../../../shared/spellPrep';
-import { evaluateWeaponRange } from '../../../shared/weaponRange';
+import { formatTetherRangePill } from '../../../shared/weaponRange';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Character,
@@ -156,31 +156,59 @@ export function CombatSection({
 
   const showDead = useStore(s => s.showDeadTargets);
   const showHealEnemies = useStore(s => s.showHealEnemies);
-  const {attack:targets,heal:healList}=useMemo(()=>targetLists(snapshot,attacker,showDead,showHealEnemies),[snapshot,attacker,showDead,showHealEnemies]);
+  const tokenDragPreview = useStore((s) => s.tokenDragPreview);
+  const withDragPreview = <T extends Token>(t: T): T =>
+    tokenDragPreview && tokenDragPreview.tokenId === t.id
+      ? { ...t, x: tokenDragPreview.x, y: tokenDragPreview.y }
+      : t;
+  const previewAttacker = useMemo(
+    () =>
+      tokenDragPreview && tokenDragPreview.tokenId === attacker.id
+        ? { ...attacker, x: tokenDragPreview.x, y: tokenDragPreview.y }
+        : attacker,
+    [attacker, tokenDragPreview],
+  );
+  const { attack: baseTargets, heal: healList, eligible: eligibleTokens } = useMemo(
+    () => targetLists(snapshot, attacker, showDead, showHealEnemies),
+    [snapshot, attacker, showDead, showHealEnemies],
+  );
   const validDefault =
-    defaultTargetId && targets.some((t) => t.id === defaultTargetId)
+    defaultTargetId && baseTargets.some((t) => t.id === defaultTargetId)
       ? defaultTargetId
       : undefined;
   const [targetId, setTargetId] = useState(validDefault ?? '');
+  const explicitAllyAttackTarget =
+    targetId && !baseTargets.some((t) => t.id === targetId)
+      ? eligibleTokens.find((t) => t.id === targetId)
+      : undefined;
+  const targets = useMemo(
+    () => (explicitAllyAttackTarget ? [explicitAllyAttackTarget, ...baseTargets] : baseTargets),
+    [baseTargets, explicitAllyAttackTarget],
+  );
+  // Heals pick from allies instead (self first = default) and apply on cast.
+  const hasHeal = abilities.some((a) => effectiveSheetAbility(a).roll?.kind === 'heal');
   const validAllyDefault =
     defaultTargetId && defaultTargetId !== attacker.id && healList.some((t) => t.id === defaultTargetId)
       ? defaultTargetId
       : undefined;
-  const [lineSource, setLineSource] = useState<'attack' | 'ally' | 'heal' | 'buff'>(
-    validAllyDefault && !validDefault ? 'ally' : 'attack',
+  const [healTargetId, setHealTargetId] = useState(validAllyDefault ?? healList[0]?.id ?? '');
+  const buffList = healList.filter(token => token.mapId === attacker.mapId && !token.sharedSightOnly && !token.partiallyRevealed);
+  const hasHasteSpell = abilities.some(isCanonicalHasteProfile);
+  const [buffTargetId, setBuffTargetId] = useState(validAllyDefault ?? attacker.id);
+  const [lineSource, setLineSource] = useState<'attack' | 'heal' | 'buff'>(
+    validAllyDefault && !validDefault
+      ? hasHeal
+        ? 'heal'
+        : hasHasteSpell && buffList.some((t) => t.id === validAllyDefault)
+          ? 'buff'
+          : 'attack'
+      : 'attack',
   );
   useEffect(() => {
     setTargetId(validDefault ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attacker.id]);
   const { offhand, twoHanded, toggleOption } = useWeaponAttackOptions(attacker);
-
-  // Heals pick from allies instead (self first = default) and apply on cast.
-  const hasHeal = abilities.some((a) => effectiveSheetAbility(a).roll?.kind === 'heal');
-  const [healTargetId, setHealTargetId] = useState(validAllyDefault ?? healList[0]?.id ?? '');
-  const buffList = healList.filter(token => token.mapId === attacker.mapId && !token.sharedSightOnly && !token.partiallyRevealed);
-  const hasHasteSpell = abilities.some(isCanonicalHasteProfile);
-  const [buffTargetId, setBuffTargetId] = useState(validAllyDefault ?? attacker.id);
 
   // Pre-select the clicked token as the target when it changes.
   useEffect(() => {
@@ -189,8 +217,9 @@ export function CombatSection({
       setLineSource('attack');
     } else if (validAllyDefault) {
       setHealTargetId(validAllyDefault);
-      if (buffList.some((t) => t.id === validAllyDefault)) setBuffTargetId(validAllyDefault);
-      setLineSource('ally');
+      const inBuff = buffList.some((t) => t.id === validAllyDefault);
+      if (inBuff) setBuffTargetId(validAllyDefault);
+      setLineSource(hasHeal ? 'heal' : hasHasteSpell && inBuff ? 'buff' : 'attack');
     } else {
       setLineSource('attack');
     }
@@ -219,19 +248,29 @@ export function CombatSection({
       return;
     }
     if (combatTarget.mode === 'attack') {
-      if (targets.some((t) => t.id === combatTarget.id)) {
+      if (combatTarget.id === attacker.id) {
+        notify('You cannot target yourself with an attack.');
+        return;
+      }
+      if (eligibleTokens.some((t) => t.id === combatTarget.id)) {
         setTargetId(combatTarget.id);
         setLineSource('attack');
+      } else {
+        notify('That creature cannot be targeted from here (check sight and walls).');
       }
       return;
     }
-    if (targets.some((t) => t.id === combatTarget.id)) {
+    if (baseTargets.some((t) => t.id === combatTarget.id)) {
       setTargetId(combatTarget.id);
       setLineSource('attack');
-    } else if (combatTarget.id !== attacker.id && healList.some((t) => t.id === combatTarget.id)) {
+    } else if (combatTarget.id !== attacker.id && (hasHeal || hasHasteSpell) && healList.some((t) => t.id === combatTarget.id)) {
       setHealTargetId(combatTarget.id);
-      if (buffList.some((t) => t.id === combatTarget.id)) setBuffTargetId(combatTarget.id);
-      setLineSource('heal');
+      const inBuff = buffList.some((t) => t.id === combatTarget.id);
+      if (inBuff) setBuffTargetId(combatTarget.id);
+      setLineSource(hasHeal ? 'heal' : 'buff');
+    } else if (eligibleTokens.some((t) => t.id === combatTarget.id)) {
+      setTargetId(combatTarget.id);
+      setLineSource('attack');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [combatTarget]);
@@ -251,44 +290,52 @@ export function CombatSection({
   const currentHealTargetId = healList.some((t) => t.id === healTargetId) ? healTargetId : healList[0]?.id ?? '';
   const currentBuffTargetId = buffList.some((t) => t.id === buffTargetId) ? buffTargetId : buffList[0]?.id ?? '';
   const lineTargetId =
-    lineSource === 'ally' && validAllyDefault
-      ? validAllyDefault
-      : lineSource === 'heal' && hasHeal && currentHealTargetId && currentHealTargetId !== attacker.id
-        ? currentHealTargetId
-        : lineSource === 'buff' && hasHasteSpell && currentBuffTargetId && currentBuffTargetId !== attacker.id
-          ? currentBuffTargetId
-          : effectiveTargetId;
+    lineSource === 'heal' && hasHeal && currentHealTargetId && currentHealTargetId !== attacker.id
+      ? currentHealTargetId
+      : lineSource === 'buff' && hasHasteSpell && currentBuffTargetId && currentBuffTargetId !== attacker.id
+        ? currentBuffTargetId
+        : effectiveTargetId;
 
   const selectedTargetToken = targets.find((t) => t.id === effectiveTargetId);
+  const previewSelectedTarget = selectedTargetToken ? withDragPreview(selectedTargetToken) : undefined;
   const targetDistanceFt =
-    selectedTargetToken && snapshot.map && selectedTargetToken.mapId === attacker.mapId
-      ? tokenDistanceFt(attacker, selectedTargetToken, snapshot.map)
+    previewSelectedTarget && snapshot.map && previewSelectedTarget.mapId === attacker.mapId
+      ? tokenDistanceFt(previewAttacker, previewSelectedTarget, snapshot.map)
+      : undefined;
+
+  const tetherHoveredWeapon =
+    lineTargetId === effectiveTargetId && hoveredWeaponIdx !== null ? weapons[hoveredWeaponIdx] : undefined;
+  const tetherWeaponsOnlyList =
+    lineTargetId === effectiveTargetId && !tetherHoveredWeapon && weapons.length > 0 && abilities.length === 0
+      ? weapons
       : undefined;
 
   const tetherRangeMeta = useMemo(() => {
-    if (!lineTargetId || lineTargetId === attacker.id || !snapshot.map) return { midLabel: undefined, outOfRange: false };
+    if (!lineTargetId || lineTargetId === attacker.id || !snapshot.map) {
+      return { midLabel: undefined, outOfRange: false };
+    }
     const lineTok = snapshot.tokens.find((t) => t.id === lineTargetId && t.mapId === attacker.mapId);
     if (!lineTok) return { midLabel: undefined, outOfRange: false };
-    const dist = tokenDistanceFt(attacker, lineTok, snapshot.map);
-    const rounded = `${Math.round(dist)} ft`;
-    if (lineTargetId === effectiveTargetId) {
-      const hoveredWeapon = hoveredWeaponIdx !== null ? weapons[hoveredWeaponIdx] : undefined;
-      if (hoveredWeapon) {
-        const ev = evaluateWeaponRange(hoveredWeapon, dist);
-        return { midLabel: ev.pillText, outOfRange: ev.status === 'out' };
-      }
-      if (weapons.length > 0 && abilities.length === 0) {
-        const evals = weapons.map((w) => evaluateWeaponRange(w, dist));
-        if (evals.every((e) => e.status === 'out')) {
-          return { midLabel: `${rounded} · Out`, outOfRange: true };
-        }
-        if (evals.every((e) => e.status !== 'normal') && evals.some((e) => e.status === 'long')) {
-          return { midLabel: `${rounded} · Long`, outOfRange: false };
-        }
-      }
-    }
-    return { midLabel: rounded, outOfRange: false };
-  }, [lineTargetId, attacker, snapshot.map, snapshot.tokens, effectiveTargetId, hoveredWeaponIdx, weapons, abilities.length]);
+    const previewLineTok =
+      tokenDragPreview && tokenDragPreview.tokenId === lineTok.id
+        ? { ...lineTok, x: tokenDragPreview.x, y: tokenDragPreview.y }
+        : lineTok;
+    const dist = tokenDistanceFt(previewAttacker, previewLineTok, snapshot.map);
+    return formatTetherRangePill(dist, {
+      hoveredWeapon: tetherHoveredWeapon,
+      weaponsOnlyList: tetherWeaponsOnlyList,
+    });
+  }, [
+    lineTargetId,
+    attacker.id,
+    attacker.mapId,
+    previewAttacker,
+    tokenDragPreview,
+    snapshot.map,
+    snapshot.tokens,
+    tetherHoveredWeapon,
+    tetherWeaponsOnlyList,
+  ]);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -304,6 +351,8 @@ export function CombatSection({
           targetTokenId: lineTargetId,
           midLabel: tetherRangeMeta.midLabel,
           outOfRange: tetherRangeMeta.outOfRange,
+          hoveredWeapon: tetherHoveredWeapon,
+          weaponsOnlyList: tetherWeaponsOnlyList,
         });
       } else {
         setCombatPanelTarget(null);
@@ -318,7 +367,16 @@ export function CombatSection({
       obs.disconnect();
       setCombatPanelTarget(null);
     };
-  }, [attacker.id, lineTargetId, nothingRollable, setCombatPanelTarget, tetherRangeMeta.midLabel, tetherRangeMeta.outOfRange]);
+  }, [
+    attacker.id,
+    lineTargetId,
+    nothingRollable,
+    setCombatPanelTarget,
+    tetherRangeMeta.midLabel,
+    tetherRangeMeta.outOfRange,
+    tetherHoveredWeapon,
+    tetherWeaponsOnlyList,
+  ]);
 
   const anyToggle = caster.sheetAbilities.some(hasToggle);
   const isPc = 'resources' in caster;
@@ -335,7 +393,7 @@ export function CombatSection({
       : weapons.length === 1 && abilities.length === 0
         ? weapons[0]
         : undefined;
-  const advPreview = previewAttackAdvantage(snapshot, attacker, selectedTargetToken, armedAdv, previewWeapon);
+  const advPreview = previewAttackAdvantage(snapshot, previewAttacker, previewSelectedTarget, armedAdv, previewWeapon);
 
   // A 2H toggle only matters when some weapon is versatile (has 2H damage).
   const anyVersatile = weapons.some(
@@ -385,7 +443,8 @@ export function CombatSection({
             {!targets.length && <option value="">No living targets</option>}
             {targets.map((t) => (
               <option key={t.id} value={t.id}>
-                {targetLabel(snapshot, t, attacker)}
+                {targetLabel(snapshot, withDragPreview(t), previewAttacker)}
+                {explicitAllyAttackTarget?.id === t.id ? ' (ally)' : ''}
               </option>
             ))}
           </select>
@@ -512,7 +571,7 @@ export function CombatSection({
           >
             {healList.map((t, i) => (
               <option key={t.id} value={t.id}>
-                {targetLabel(snapshot, t, attacker)}
+                {targetLabel(snapshot, withDragPreview(t), previewAttacker)}
                 {i === 0 && t.refId === caster.id ? ' (you)' : ''}
               </option>
             ))}
@@ -533,7 +592,7 @@ export function CombatSection({
       {hasHasteSpell && buffList.length > 0 && <div className="dice-row combat-buff-target">
         <span className="muted spell-tag">Buff target</span>
         <select aria-label="Buff target" value={effectiveBuffId} onChange={event => { setBuffTargetId(event.target.value); setLineSource(event.target.value !== attacker.id ? 'buff' : 'attack'); }}>
-          {buffList.map(token => <option key={token.id} value={token.id}>{targetLabel(snapshot, token, attacker)}{token.id === attacker.id ? ' (you)' : ''}</option>)}
+          {buffList.map(token => <option key={token.id} value={token.id}>{targetLabel(snapshot, withDragPreview(token), previewAttacker)}{token.id === attacker.id ? ' (you)' : ''}</option>)}
         </select>
         <button
           type="button"
