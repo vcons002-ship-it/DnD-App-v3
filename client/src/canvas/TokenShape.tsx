@@ -55,6 +55,7 @@ type Props = {
   presentation?: TokenPresentation;
   sharedDarkvision?: boolean;
   display: TokenDisplay;
+  showHpNumbers?: boolean;
   gridSizePx: number;
   /** Pixels per foot (from the map scale) — sizes the token by its real width. */
   pxPerFoot: number;
@@ -110,6 +111,7 @@ function TokenShapeInner({
   presentation,
   sharedDarkvision=false,
   display,
+  showHpNumbers=false,
   gridSizePx,
   pxPerFoot,
   draggable,
@@ -357,7 +359,16 @@ function TokenShapeInner({
       if (menuOpened.current) return;
       menuOpened.current = true;
     }
-    openMenu(e.evt.clientX, e.evt.clientY);
+    const fallback = touchStart.current;
+    const cx =
+      typeof e.evt.clientX === 'number' && (e.evt.clientX !== 0 || e.evt.clientY !== 0)
+        ? e.evt.clientX
+        : (fallback?.x ?? 0);
+    const cy =
+      typeof e.evt.clientY === 'number' && (e.evt.clientX !== 0 || e.evt.clientY !== 0)
+        ? e.evt.clientY
+        : (fallback?.y ?? 0);
+    openMenu(cx, cy);
   };
 
   const handleTouchStart = (e: KonvaEventObject<TouchEvent>) => {
@@ -465,7 +476,11 @@ function TokenShapeInner({
   }, [display.name, preferredPlayerNameSize, monsterNameSize, token.kind, radius, monsterLabelWidth]);
   const labelFontSize = token.kind === 'pc' ? playerNameSize : monsterNameSize;
   const roleBadgeR = Math.max(11, radius * 0.36);
-  const labelY = radius + Math.max(hpFrac !== null ? 14 : 4,
+  const hpFontSize = Math.max(9, Math.min(12, Math.round(gridSizePx * 0.13)));
+  const showExactHp = !isDead && hpFrac !== null && showHpNumbers && display.curHp !== undefined && display.maxHp !== undefined;
+  const hpText = showExactHp ? `${display.curHp}/${display.maxHp}` : null;
+  const hpNumbersOffset = showExactHp ? hpFontSize + 2 : 0;
+  const labelY = radius + Math.max(hpFrac !== null ? 14 + hpNumbersOffset : 4,
     token.combatRole ? roleBadgeR - radius * .28 + 4 : 4);
   const nameY = token.kind === 'pc' ? radius + 4 : labelY;
   const initiativeFontSize = Math.max(8, Math.min(11, labelFontSize * .8));
@@ -547,7 +562,7 @@ function TokenShapeInner({
   // External/vector portraits retain their own bitmap fallback. Prepared flat
   // art and GPU miniature labels already have independent reusable pixels.
   const conditionAppearanceKey = display.conditions.map(c => `${c.id}:${c.label}:${c.aura ?? ''}:${c.isConcentration ? 1 : 0}`).join('|');
-  const appearance = `${display.name}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${display.tempHp ?? ''}|${display.disposition ?? ''}|${display.dead ? 1 : 0}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${display.icon}|${conditionAppearanceKey}|${shape}|${radius}|${selected ? 1 : 0}|${isDead ? 1 : 0}|${activeTurn ? 1 : 0}|${initiativeRank ?? ''}|${hideAffinity ? 1 : 0}|${viewRotation}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${sharedDarkvision ? 1 : 0}|${token.revealTag ?? ''}|${token.combatRole ?? ''}|${(token.markLabels ?? []).join(',')}|${token.invisible ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`;
+  const appearance = `${display.name}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${display.tempHp ?? ''}|${showHpNumbers ? 1 : 0}|${display.disposition ?? ''}|${display.dead ? 1 : 0}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${display.icon}|${conditionAppearanceKey}|${shape}|${radius}|${selected ? 1 : 0}|${isDead ? 1 : 0}|${activeTurn ? 1 : 0}|${initiativeRank ?? ''}|${hideAffinity ? 1 : 0}|${viewRotation}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${sharedDarkvision ? 1 : 0}|${token.revealTag ?? ''}|${token.combatRole ?? ''}|${(token.markLabels ?? []).join(',')}|${token.invisible ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`;
   useLayoutEffect(()=>{
     const art=tokenArt.current;if(!art)return;
     art.clearCache();
@@ -571,7 +586,7 @@ function TokenShapeInner({
       retainedRadius={radius*1.4+4}
       miniatureReady={miniatureReady}
       miniaturePending={miniaturePending}
-      tokenLabelVersion={`${display.name}|${token.kind}|${isDead ? 1 : 0}|${radius}|${nameY}|${nameWidth}|${tagWidth}|${labelY}|${labelFontSize}|${playerNameSize}|${monsterNameSize}|${token.revealTag ?? ''}|${hpFrac ?? ''}|${display.tempHp ?? ''}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`}
+      tokenLabelVersion={`${display.name}|${token.kind}|${isDead ? 1 : 0}|${radius}|${nameY}|${nameWidth}|${tagWidth}|${labelY}|${labelFontSize}|${playerNameSize}|${monsterNameSize}|${token.revealTag ?? ''}|${hpFrac ?? ''}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${showHpNumbers ? 1 : 0}|${display.tempHp ?? ''}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`}
       x={presentation?.position(token.id)?.x??token.x}
       y={presentation?.position(token.id)?.y??token.y}
       listening={listening}
@@ -770,6 +785,27 @@ function TokenShapeInner({
 
             />
           )}
+          {hpText !== null && (() => {
+            const hpBoxW = Math.max(radius * 2 + 28, 72);
+            return (
+              <Text
+                name="token-hp-value"
+                text={hpText}
+                fontSize={hpFontSize}
+                fontStyle="bold"
+                fill="#f8f1e1"
+                stroke="#000"
+                strokeWidth={2.5}
+                fillAfterStrokeEnabled
+                lineJoin="round"
+                align="center"
+                wrap="none"
+                width={hpBoxW}
+                x={radius - hpBoxW / 2}
+                y={token.kind === 'pc' && (display.curHp ?? 1) <= 0 && display.deathSaves ? 24 : 8}
+              />
+            );
+          })()}
         </Group>
       )}
       {!isDead && token.revealTag && (
@@ -943,6 +979,7 @@ export const TokenShape = memo(
     p.serverLayer===n.serverLayer && p.serverSprite?.body.key === n.serverSprite?.body.key && p.serverSprite?.hud.key === n.serverSprite?.hud.key && p.serverSprite?.grayscale===n.serverSprite?.grayscale && p.cacheArtwork===n.cacheArtwork &&
     p.presentation === n.presentation &&
     p.sharedDarkvision === n.sharedDarkvision &&
+    p.showHpNumbers === n.showHpNumbers &&
     sameTokenDisplay(p.display, n.display) &&
     p.gridSizePx === n.gridSizePx &&
     p.pxPerFoot === n.pxPerFoot &&

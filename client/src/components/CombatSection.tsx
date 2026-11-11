@@ -16,7 +16,7 @@ import {ShowDeadTargets, ShowHealEnemies} from './ShowDeadTargets';
 import { useWeaponAttackOptions } from '../lib/useWeaponAttackOptions';
 import { useStore } from '../state/socket';
 import { AbilityButtons } from './AbilityButtons';
-import { AbilityToggles, hasToggle } from './AbilityToggles';
+import { AbilityToggles, hasShieldToggle, hasToggle } from './AbilityToggles';
 import { AdvantageToggle } from './AdvantageToggle';
 import { CharacterResources } from './CharacterResources';
 import { DeathSaves } from './DeathSaves';
@@ -378,7 +378,7 @@ export function CombatSection({
     tetherWeaponsOnlyList,
   ]);
 
-  const anyToggle = caster.sheetAbilities.some(hasToggle);
+  const anyToggle = caster.sheetAbilities.some(hasToggle) || hasShieldToggle(caster);
   const isPc = 'resources' in caster;
   if (nothingRollable && !anyToggle && !isPc && summonAbilities.length === 0)
     return <><HasteExtraAction caster={caster} kind={kind} ownTurn={ownTurn} attackArmed={hasteAttackArmed} onArmAttack={setHasteAttackArmed} /><p className="muted">No attacks or rollable abilities.</p></>;

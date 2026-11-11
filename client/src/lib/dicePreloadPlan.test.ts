@@ -7,9 +7,10 @@ it('warms party dice before a player claims a character, including DM saves',()=
 });
 it('prioritizes the selected character and deduplicates multiclass themes',()=>{
  expect(dicePreloadPlan(['Fighter','Fighter / Wizard','Ranger','Sorcerer','Druid'],'Druid',false).map(t=>t.id))
-  .toEqual(['druid','fighter','ranger','dm-neutral-roll']);
+  .toEqual(['druid','fighter','ranger','sorcerer','dm-neutral-roll']);
 });
-it('only prepares the DM material for the DM and remains bounded',()=>{
- expect(dicePreloadPlan(['Fighter','Ranger'],'Fighter',true).map(t=>t.id)).toEqual(['dm-neutral-roll']);
+it('prioritizes the DM board first for the DM while warming party boards and staying bounded',()=>{
+ expect(dicePreloadPlan(['Fighter','Ranger','Sorcerer','Druid','Cleric'],'Fighter',true).map(t=>t.id))
+  .toEqual(['dm-neutral-roll','fighter','ranger','sorcerer','druid']);
  expect(dicePreloadPlan([],undefined,false).map(t=>t.id)).toEqual(['dm-neutral-roll']);
 });

@@ -1,7 +1,8 @@
 import {diceFlightPoint,diceFlightKeyframes,DIE_FLASH_MS,DIE_REVEAL_MS} from '../lib/diceFlightPosition';
-import {useContext,useEffect,useRef,useState,type CSSProperties} from 'react';
+import {useContext,useEffect,useLayoutEffect,useRef,useState,type CSSProperties} from 'react';
 import {DiceThemeContext,ThreeDie} from './ThreeDie';
 import {useDiceRendering,reportDiceGraphicsFailure} from '../lib/useDiceRendering';
+import {drawPrewarmedDiceBoard} from '../lib/diceBoardAssets';
 import {physicalDice,diceRevealTimes,dieResultEmphasis,dieResultTier,dieResultLabel,type TrayDie,type Toss,type DiceEntrySide} from '../lib/diceTrayTypes';
 import './PhysicsDiceTray.css';
 import {createDiceSound,rollingSpeeds} from '../lib/diceSfx';
@@ -17,6 +18,9 @@ export function PhysicsDiceTray({dice,onSettled,label='Dice tray',comparison,rol
   const root=useRef<HTMLDivElement>(null), flights=useRef<(HTMLSpanElement|null)[]>([]), boxes=useRef<(HTMLSpanElement|null)[]>([]);
   const [arrived,setArrived]=useState<number[]>([]);
   const key=JSON.stringify(dice),[status,setStatus]=useState<'loading'|'rolling'|'settled'|'fallback'>('loading');
+  useLayoutEffect(()=>{
+    if(!twoDimensional&&canvas.current)drawPrewarmedDiceBoard(canvas.current,theme.id,Math.min(2,devicePixelRatio||1));
+  },[key,theme.id,rollKey,twoDimensional]);
   useEffect(()=>{
     let dead=false,raf=0,renderer:ReturnType<typeof import('../lib/diceTrayRenderer').createTrayRenderer>|undefined;
     let worker:Worker|undefined;

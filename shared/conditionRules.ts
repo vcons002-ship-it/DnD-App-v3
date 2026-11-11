@@ -33,6 +33,8 @@ export const CONDITION_RULES: Record<string, string> = {
     'Incapacitated, can’t move or speak, unaware, drops what it holds and falls prone. Auto-fails Strength and Dexterity saves. Attacks have advantage, and any hit from within 5 ft is a critical hit.',
   exhaustion:
     'Tracked in levels (1–6). Each level gives −2 to all d20 tests (checks, attacks, saves) and −5 ft speed, cumulatively; 6 levels means death. A long rest removes one level.',
+  shield:
+    'Shield spell buff: +5 AC and immunity to Magic Missile until the start of your next turn.',
 };
 
 /** The rules text for a condition label (case-insensitive), or '' if unknown. */

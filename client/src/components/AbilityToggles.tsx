@@ -1,5 +1,7 @@
 import { hitFeature, markSpell } from '../../../shared/hitFeatures';
 import { isOnHitManeuver } from '../../../shared/maneuvers';
+import { partySpell } from '../../../shared/partySpells';
+import { activeShieldCondition } from '../../../shared/spellBuffs';
 import type {
   Character,
   Monster,
@@ -18,6 +20,16 @@ export const hasToggle = (a: SheetAbility): boolean => !hitFeature(a) && !markSp
   (a.type === 'mastery' && !!a.mastery?.effect) ||
   (a.type === 'maneuver' && !!a.maneuver && !isOnHitManeuver(a) && a.name.trim().toLowerCase() !== 'riposte') ||
   (a.type === 'stance' && !!a.stance));
+
+/** Show a manual/removable Shield (+5 AC) buff switch when the creature knows
+ *  Shield (prepared) or currently has an active Shield buff condition. */
+export const hasShieldToggle = (
+  character: Pick<Character | Monster, 'sheetAbilities' | 'conditions'>,
+): boolean =>
+  Boolean(activeShieldCondition(character)) ||
+  character.sheetAbilities.some(
+    (a) => partySpell(a) === 'shield' && (a.prepared !== false || (a.level ?? 0) === 0),
+  );
 
 /**
  * The ONE implementation of the toggle actions (used by the Combat section's
@@ -125,7 +137,31 @@ export function useAbilityToggles(
     }
   };
 
-  return { toggleStance, patchStance, patchMastery, patchManeuver, moveMark };
+  const toggleShield = () => {
+    const active = character.conditions.filter(
+      (c) =>
+        c.label.trim().toLowerCase() === 'shield' &&
+        (!c.combatEffect || c.combatEffect.spell.trim().toLowerCase() === 'shield'),
+    );
+    if (active.length > 0) {
+      for (const cond of active) clearCondition(kind, character.id, cond.id);
+      return;
+    }
+    setCondition(kind, character.id, {
+      label: 'Shield',
+      aura: 'blue',
+      isConcentration: false,
+      combatEffect: {
+        casterKind: kind,
+        casterId: character.id,
+        spell: 'Shield',
+        castLevel: 1,
+        untilCasterTurn: true,
+      },
+    });
+  };
+
+  return { toggleStance, toggleShield, patchStance, patchMastery, patchManeuver, moveMark };
 }
 
 /**
@@ -147,16 +183,41 @@ export function AbilityToggles({
   targets: Token[];
   currentTargetId?: string;
 }) {
-  const { toggleStance, patchMastery, patchManeuver, moveMark } = useAbilityToggles(
+  const { toggleStance, toggleShield, patchMastery, patchManeuver, moveMark } = useAbilityToggles(
     kind,
     character,
     snapshot,
   );
   const entries = character.sheetAbilities.filter(hasToggle);
-  if (entries.length === 0) return null;
+  const showShield = hasShieldToggle(character);
+  const shieldActive = Boolean(activeShieldCondition(character));
+  if (entries.length === 0 && !showShield) return null;
 
   return (
     <div className="combat-toggles">
+      {showShield && (
+        <div className="combat-toggle-row">
+          <span
+            className="res-name"
+            title="Shield spell buff: +5 AC and blocks Magic Missile until the start of your next turn"
+          >
+            Shield (+5 AC)
+          </span>
+          <button
+            type="button"
+            className={`btn tiny ${shieldActive ? 'on' : ''}`}
+            aria-pressed={shieldActive}
+            title={
+              shieldActive
+                ? 'Active (+5 AC until the start of your next turn) — click to remove buff'
+                : 'Off — click to apply +5 AC Shield buff manually (no spell slot spent; auto-clears on your next turn in combat)'
+            }
+            onClick={toggleShield}
+          >
+            {shieldActive ? 'On' : 'Off'}
+          </button>
+        </div>
+      )}
       {entries.map((a) => (
         <div key={a.id} className="combat-toggle-row">
           <span className="res-name" title={a.description || a.name}>

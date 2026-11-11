@@ -114,7 +114,7 @@ export async function renderedSnapshot(id:string,s:StateSnapshot,legacy:boolean,
 }
 export function renderingLayerKey(view:StateSnapshot,index?:{characters:Map<string,any>;monsters:Map<string,any>}){
  const idx=index??{characters:new Map(view.characters.map(c=>[c.id,c])),monsters:new Map(view.monsters.map(m=>[m.id,m]))};
- return [view.map,view.tokens,view.playerVision,view.exploredTerrain,view.mapImages,view.serverRendering?.enabled,view.tokens.map(t=>resolveToken(view,t,idx))];
+ return [view.role,view.map,view.tokens,view.playerVision,view.exploredTerrain,view.mapImages,view.serverRendering?.enabled,view.tokens.map(t=>resolveToken(view,t,idx))];
 }
 /** Only inputs that affect artwork or visibility; chat/roll/panel updates reuse it. */
 export function renderingInputKey(s:StateSnapshot){

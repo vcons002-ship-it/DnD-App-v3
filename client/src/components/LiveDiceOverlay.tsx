@@ -19,6 +19,7 @@ import {saveRollHeading} from '../lib/saveRollHeading';
 import {ThreeDie,DiceThemeContext} from './ThreeDie';
 import {useDiceRendering,reportDiceGraphicsFailure} from '../lib/useDiceRendering';
 import {useLegacyMode} from '../lib/useEnvironmentQuality';
+import {diceTableBackgroundSync,drawPrewarmedDiceBoard} from '../lib/diceBoardAssets';
 
 /** Render authoritative poses with a short interpolation buffer. No local physics,
  * face reassignment, trajectory retry, or client-generated result. */
@@ -90,9 +91,12 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
    to.getAnimations().forEach(animation=>animation.cancel());
    to.style.opacity='1';to.dataset.phase='waiting';
   }
+  if(!twoDimensional&&canvas.current&&!result&&!frame.done){
+   drawPrewarmedDiceBoard(canvas.current,nextTheme,legacy?1:Math.min(2,devicePixelRatio||1));
+  }
   previousId.current=frame.id;
 
- },[frame.id,compact,!!result,reduced]);
+ },[frame.id,compact,!!result,reduced,twoDimensional,legacy]);
  const boxes=useRef<(HTMLSpanElement|null)[]>([]),flights=useRef<(HTMLSpanElement|null)[]>([]);
  const saveLabels=useRef<(HTMLSpanElement|null)[]>([]);
  const [arrived,setArrived]=useState<number[]>([]),[failed,setFailed]=useState(false),[prepared,setPrepared]=useState(false);
@@ -329,13 +333,14 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
  };
  const target=resultHeader?resultHeader.target:frame.target;
  const heading=saveRollHeading(frame,title??frame.label,resultHeader?.attacker);
+ const prewarmedWoodBg=!twoDimensional?diceTableBackgroundSync():'';
  return <div className={`roll-reveal-backdrop${compact?' is-impact':''}`} data-live-dice={result||compact?undefined:'true'} data-live-calculation={frame.calculation?'true':undefined} data-result-hold-ms={frame.resultHoldMs} data-private-roll={hiddenPrivate||undefined} data-reviewing={!!hiddenReview} data-awaiting-start={pendingStart||undefined} data-dice-presentation={result?'result':'live'} data-roll-id={frame.id}><div ref={card} className={`roll-reveal${naturalCritical?' roll-reveal-crit':''}`} data-roll-id={rollId??frame.id} data-reveal-kind={revealKind} data-dice-theme={theme.id} data-impact-ready={impactReady} role="status" aria-label="Live dice roll" onClick={skip} title={hiddenReview||pendingStart?undefined:"Click or tap to skip animation"}>
   <div className="roll-reveal-title" role="heading" aria-level={2} title={heading}>{heading}</div>
   <div className="roll-reveal-who">{frame.saveDice&&!frame.saveDice[0]?.rollKind?'Triggered by ':''}{frame.attacker??resultHeader?.attacker??frame.roller}{target&&<span className="rr-arrow"> &rarr; {target}</span>}{!!frame.advantageReasons?.length&&<span className={`rr-adv-reason is-${frame.advantageState??frame.mode??'straight'}`}> &middot; {(frame.advantageState??frame.mode)==='adv'?'Advantage':(frame.advantageState??frame.mode)==='dis'?'Disadvantage':'Straight (adv + dis)'}: {frame.advantageReasons.join(', ')}</span>}</div>
   {naturalTwenty&&!compact&&!hiddenReview&&<NaturalTwentyCelebration key={frame.id}/>}
   {naturalCritical&&!compact&&!hiddenReview&&<div className="roll-reveal-outcome tray-natural-critical" role="status" aria-label="Roll result">CRITICAL HIT!</div>}
   <div ref={root} className="physics-dice-tray" style={resultLayout} data-renderer={twoDimensional?'2d':'3d'} data-dense-results={denseResults||undefined} data-status={frame.done?'settled':'rolling'} data-theme={theme.id} data-entry-side={own?'bottom':'top'} data-mode={frame.mode} data-material={twoDimensional?'canvas2d':failed?'unavailable':!prepared?'loading':theme.id==='sorcerer'?'volumetric-glass':theme.id==='fighter'?'obsidian-gold':theme.id==='ranger'?'forest-resin':theme.id.startsWith('dm-')?'purple-resin':theme.id} role="group" aria-label="Live dice tray">
-   <div className="dice-tray-viewport"><div className="dice-tray-stage">
+   <div className="dice-tray-viewport"><div className="dice-tray-stage" data-surface={prewarmedWoodBg?'plain-wood':undefined} style={prewarmedWoodBg?{backgroundImage:`url("${prewarmedWoodBg}")`}:undefined}>
    {twoDimensional&&<div className="dice-2d-animation" data-testid="dice-2d-animation">{frame.sides.slice(0,24).map((sides,i)=><DiceThemeContext.Provider key={`${frame.id}:${i}`} value={dieThemes?.[i]??theme}><ThreeDie big={frame.sides.length<=2} sides={sides} value={frame.values[i]===null?1:frame.percentile[i]==='tens'?(frame.values[i]!-1)*10:frame.percentile[i]==='ones'?frame.values[i]!-1:frame.values[i]!} percentilePart={frame.percentile[i]??undefined} rolling={!frame.done&&!pendingStart} crit={frame.critical[i]}/></DiceThemeContext.Provider>)}{frame.sides.length>24&&<span>+{frame.sides.length-24} dice shown in the results</span>}</div>}
    <canvas className="dice-tray-canvas" ref={canvas} aria-label={result?'Settled dice':'Server dice rolling live'}/>
    <canvas className="dice-tray-transition" ref={outgoing} data-phase="idle" aria-hidden="true"/>

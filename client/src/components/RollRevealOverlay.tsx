@@ -4,6 +4,8 @@ import {useDiceRendering} from '../lib/useDiceRendering';
 import {HiddenRollReview} from './HiddenRollReview';
 import {diceTriggerForTray,rollThemeForPresentation} from '../lib/rollTrayPresentation';
 import {dicePreloadPlan} from '../lib/dicePreloadPlan';
+import {preloadDiceBoardAssets} from '../lib/diceBoardAssets';
+import {cancelLoadingTask,completeLoadingTask,startLoadingTask,updateLoadingTaskStage} from '../lib/loadingProgress';
 import {physicalRollTimeline,liveNaturalCritical,liveNaturalTwenty} from '../lib/diceFinaleTiming';
 import {DICE_TRIGGER_HOLD_MS} from '../../../shared/diceTriggers';
 import {LiveDiceOverlay} from './LiveDiceOverlay';
@@ -161,22 +163,72 @@ const FullRollRevealOverlay = memo(function FullRollRevealOverlay() {
   const rollAnimations = useStore(s => s.showRollAnim);
   const preloadBusy = useStore(s => !!s.liveDice || !!s.rollFx);
   useEffect(() => {
-    if (legacy || diceMode==='2d' || !rollAnimations || reducedMotion || preloadBusy || !preloadContext) return;
+    const taskId = 'preload:dice-boards';
+    if (diceMode==='2d' || !rollAnimations || reducedMotion || preloadBusy || !preloadContext) {
+      cancelLoadingTask(taskId);
+      return;
+    }
     let cancelled = false;
+    let finished = false;
+    const themes = JSON.parse(preloadThemes) as ReturnType<typeof dicePreloadPlan>;
     // Start as soon as the session loads, including the character chooser.
     // Yield UI paint and avoid starting another theme during an active roll.
     const timer = setTimeout(() => {
-      void import('../lib/diceTrayRenderer').then(async m => {
-        const canStart = () => !cancelled && !useStore.getState().liveDice && !useStore.getState().rollFx;
-        for (const theme of JSON.parse(preloadThemes) as ReturnType<typeof dicePreloadPlan>) {
-          if (!canStart()) break;
-          await m.preloadDiceGraphics(theme, canStart,preloadContext);
-          document.documentElement.dataset.dicePreloadedThemes=JSON.stringify(
-            (JSON.parse(preloadThemes) as ReturnType<typeof dicePreloadPlan>).filter(t=>m.diceGraphicsPreloaded(t.id)).map(t=>t.id));
+      const canStart = () => !cancelled && !useStore.getState().liveDice && !useStore.getState().rollFx;
+      if (!canStart()) return;
+      startLoadingTask({
+        id: taskId,
+        category: 'preload',
+        label: 'Preparing Dice Boards…',
+        weight: 2,
+        progress: 0.08,
+        stageCeiling: legacy ? 0.92 : 0.45,
+        showDelayMs: 120,
+      });
+      void (async () => {
+        await preloadDiceBoardAssets(themes.map(t => t.id), canStart, (done, total) => {
+          if (!canStart()) return;
+          const frac = done / Math.max(1, total);
+          updateLoadingTaskStage(
+            taskId,
+            'preload',
+            legacy ? 0.1 + frac * 0.85 : 0.08 + frac * 0.32,
+            legacy ? 0.96 : 0.5,
+            { label: 'Preparing Dice Boards…', weight: 2 },
+          );
+        });
+        if (!canStart()) { cancelLoadingTask(taskId); return; }
+        if (legacy) {
+          finished = true;
+          completeLoadingTask(taskId);
+          return;
         }
-      }).catch(() => {});
+        const m = await import('../lib/diceTrayRenderer');
+        let idx = 0;
+        for (const theme of themes) {
+          if (!canStart()) { cancelLoadingTask(taskId); return; }
+          const base = 0.4 + (idx / Math.max(1, themes.length)) * 0.55;
+          const ceil = Math.min(0.96, 0.4 + ((idx + 1) / Math.max(1, themes.length)) * 0.56);
+          updateLoadingTaskStage(taskId, 'preload', base, ceil, { label: 'Preparing Dice Boards…', weight: 2 });
+          await m.preloadDiceGraphics(theme, canStart, preloadContext);
+          idx++;
+          document.documentElement.dataset.dicePreloadedThemes = JSON.stringify(
+            themes.filter(t => m.diceGraphicsPreloaded(t.id)).map(t => t.id),
+          );
+        }
+        if (canStart()) {
+          finished = true;
+          completeLoadingTask(taskId);
+        } else {
+          cancelLoadingTask(taskId);
+        }
+      })().catch(() => { cancelLoadingTask(taskId); });
     }, 0);
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      if (!finished) cancelLoadingTask(taskId);
+    };
   }, [legacy,diceMode,preloadContext, preloadThemes, reducedMotion, rollAnimations, preloadBusy]);
   const preparationRoll=useStore(s=>s.rollFx?.backgroundPrepared&&!s.rollFx.impactReady?s.rollFx.rollId:'');
   useEffect(()=>{
