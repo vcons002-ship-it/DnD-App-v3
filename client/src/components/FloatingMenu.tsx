@@ -2,7 +2,7 @@ import {partySpell} from '../../../shared/partySpells';
 import {tokenDistanceFt} from '../../../shared/distance';
 import { AdvantageToggle } from './AdvantageToggle';
 import { targetLabel, previewAttackAdvantage } from '../lib/targets';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { isHasteSpell, effectiveSheetAbility } from '../../../shared/spellExecution';
 import { spellCombatSupport } from '../../../shared/spellSupport';
 import type {
@@ -33,6 +33,59 @@ type Props = {
   onClose: () => void;
 };
 
+type MobileDock = 'left' | 'right';
+
+type ViewportMetrics = {
+  vw: number;
+  vh: number;
+  mobile: boolean;
+  safeTop: number;
+};
+
+function readSafeTopPx(): number {
+  if (typeof document === 'undefined') return 52;
+  const topbar = document.querySelector('.layout > .topbar');
+  const bottom = topbar ? topbar.getBoundingClientRect().bottom : 0;
+  return Math.max(8, Math.round((bottom || 44) + 6));
+}
+
+function readViewport(): ViewportMetrics {
+  if (typeof window === 'undefined') {
+    return { vw: 1024, vh: 768, mobile: false, safeTop: 52 };
+  }
+  const vw = window.innerWidth;
+  const vh = Math.round(window.visualViewport?.height ?? window.innerHeight);
+  const coarse =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches;
+  const hasTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+  const mobile =
+    coarse || vw <= 820 || vh <= 600 || (hasTouch && Math.min(vw, vh) <= 820);
+  return { vw, vh, mobile, safeTop: readSafeTopPx() };
+}
+
+function computeMobileAutoDock(
+  x: number,
+  vp: ViewportMetrics,
+  tetherDx: number,
+): MobileDock {
+  const sx = Number.isFinite(x) ? x : vp.vw * 0.5;
+  const midX = vp.vw * 0.5;
+  const sheetW = Math.min(210, Math.round(vp.vw * 0.47));
+  const leftZoneEnd = 6 + sheetW;
+  const rightZoneStart = vp.vw - sheetW - 6;
+  // When the tapped target sits in the open center strip (clear of both side
+  // rails), dock opposite the horizontal tether direction so the attacker ->
+  // target line stays unobstructed; default right so the bottom-left player
+  // HUD orb stays clear too.
+  if (sx > leftZoneEnd - 8 && sx < rightZoneStart + 8) {
+    if (tetherDx > 8) return 'left';
+    if (tetherDx < -8) return 'right';
+    return sx > midX + 20 ? 'left' : 'right';
+  }
+  return sx > midX ? 'left' : 'right';
+}
+
 /**
  * Right-click / long-press action menu anchored at a token. Quick combat actions
  * (damage/heal where HP is visible) for everyone; DM gets the editing actions.
@@ -40,51 +93,54 @@ type Props = {
 export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y, onClose }: Props) {
   const [chosenAttacker, setChosenAttacker] = useState('');
   const [collapsed, setCollapsed] = useState(false);
-  const [dockPref, setDockPref] = useState<'auto' | 'top' | 'bottom'>('auto');
-  const [isMobileSheet, setIsMobileSheet] = useState(false);
+  const [dockPref, setDockPref] = useState<'auto' | MobileDock>('auto');
+  const [viewport, setViewport] = useState<ViewportMetrics>(readViewport);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ left: number; top: number }>({ left: x, top: y });
+  const [position, setPosition] = useState<{ left: number; top: number }>(() => ({
+    left: Number.isFinite(x) ? x : 16,
+    top: Number.isFinite(y) ? y : 16,
+  }));
+  useEffect(() => {
+    setDockPref('auto');
+    setCollapsed(false);
+  }, [token.id]);
   const socketId = useStore(s => s.socket?.id);
   const actors = snapshot.tokens.filter(t => !t.sharedSightOnly && !t.partiallyRevealed && t.mapId === token.mapId && (snapshot.role === 'dm' ||
     t.kind === 'pc' && snapshot.characters.some(c => c.id === t.refId && c.claimedBy === socketId) ||
     t.kind === 'monster' && snapshot.monsters.some(m => m.id === t.refId && m.disposition === 'friendly')) && !resolveToken(snapshot,t).objectKind);
   const attacker = actors.find(t => t.id === chosenAttacker) ?? defaultAttacker ?? actors.find(t => t.id === snapshot.activeTurnTokenId) ?? actors[0] ?? null;
+  const isMobileSheet = viewport.mobile;
+  const tetherDx = attacker && attacker.id !== token.id ? attacker.x - token.x : 0;
+  const tetherDy = attacker && attacker.id !== token.id ? attacker.y - token.y : 0;
+  const autoDock = computeMobileAutoDock(x, viewport, tetherDx);
+  const effectiveDock: MobileDock = dockPref !== 'auto' ? dockPref : autoDock;
+
   useLayoutEffect(() => {
     const computePosition = () => {
+      const vp = readViewport();
+      setViewport((prev) =>
+        prev.vw === vp.vw &&
+        prev.vh === vp.vh &&
+        prev.mobile === vp.mobile &&
+        prev.safeTop === vp.safeTop
+          ? prev
+          : vp,
+      );
+      if (vp.mobile) return;
       const el = menuRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
       if (!rect.width && !rect.height) return;
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
       const scaleRatio = el.offsetWidth > 0 ? rect.width / el.offsetWidth : 1;
-      const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
-      const mobile = vw <= 760 || vh <= 560 || (coarse && Math.min(vw, vh) <= 640);
-      setIsMobileSheet(mobile);
-
-      const tetherDx = attacker && attacker.id !== token.id ? attacker.x - token.x : 0;
-      const tetherDy = attacker && attacker.id !== token.id ? attacker.y - token.y : 0;
-
-      let leftPx: number;
-      let topPx: number;
-      if (mobile) {
-        const autoDock: 'top' | 'bottom' =
-          y > vh * 0.54 ? 'top' : y < vh * 0.46 ? 'bottom' : tetherDy > 8 ? 'top' : 'bottom';
-        const effectiveDock = dockPref === 'auto' ? autoDock : dockPref;
-        leftPx = Math.max(8, Math.min(Math.round((vw - rect.width) / 2), vw - rect.width - 8));
-        topPx =
-          effectiveDock === 'top'
-            ? 46
-            : Math.max(46, vh - rect.height - 10);
-      } else {
-        const offset = 24;
-        const preferLeft =
-          (tetherDx > 20 && x - rect.width - offset >= 8) || x + offset + rect.width > vw - 8;
-        const rawLeft = preferLeft ? x - rect.width - offset : x + offset;
-        leftPx = Math.max(8, Math.min(rawLeft, vw - rect.width - 8));
-        const rawTop = tetherDy > 20 && y - rect.height * 0.6 >= 8 ? y - rect.height * 0.5 : y - 16;
-        topPx = Math.max(8, Math.min(rawTop, vh - rect.height - 8));
-      }
+      const sx = Number.isFinite(x) ? x : vp.vw * 0.5;
+      const sy = Number.isFinite(y) ? y : vp.vh * 0.5;
+      const offset = 24;
+      const preferLeft =
+        (tetherDx > 20 && sx - rect.width - offset >= 8) || sx + offset + rect.width > vp.vw - 8;
+      const rawLeft = preferLeft ? sx - rect.width - offset : sx + offset;
+      const leftPx = Math.max(8, Math.min(rawLeft, vp.vw - rect.width - 8));
+      const rawTop = tetherDy > 20 && sy - rect.height * 0.6 >= 8 ? sy - rect.height * 0.5 : sy - 16;
+      const topPx = Math.max(8, Math.min(rawTop, vp.vh - rect.height - 8));
       setPosition({
         left: Math.round(leftPx / (scaleRatio || 1)),
         top: Math.round(topPx / (scaleRatio || 1)),
@@ -92,8 +148,13 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
     };
     computePosition();
     window.addEventListener('resize', computePosition);
-    return () => window.removeEventListener('resize', computePosition);
-  }, [x, y, attacker?.id, attacker?.x, attacker?.y, token.id, token.x, token.y, collapsed, dockPref]);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', computePosition);
+    return () => {
+      window.removeEventListener('resize', computePosition);
+      vv?.removeEventListener('resize', computePosition);
+    };
+  }, [x, y, tetherDx, tetherDy, collapsed, isMobileSheet]);
   const applyDamage = useStore((s) => s.applyDamage);
   const setTempHp = useStore((s) => s.setTempHp);
   const combatAttack = useStore((s) => s.combatAttack);
@@ -200,17 +261,27 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
   return (
     <div
       className={`floating-menu${isMobileSheet ? ' is-mobile-sheet' : ''}${collapsed ? ' is-collapsed' : ''}`}
+      data-dock={isMobileSheet ? effectiveDock : undefined}
       ref={menuRef}
       role="dialog" aria-label="Token actions"
-      style={position}
+      style={
+        isMobileSheet
+          ? ({ '--fm-safe-top': `${viewport.safeTop}px` } as CSSProperties)
+          : position
+      }
       onWheel={(e) => e.stopPropagation()}
       // Stop the menu's own pointerdown from triggering the outside-click close.
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="floating-menu-title">
-        <span className="fm-title-label">
-          {targetLabel(snapshot,token,attacker ?? undefined)}
+        <span className="fm-title-label" title={targetLabel(snapshot, token, attacker ?? undefined)}>
+          {targetLabel(snapshot, token)}
         </span>
+        {attacker && attacker.id !== token.id && snapshot.map && attacker.mapId === token.mapId && (
+          <span className="fm-title-dist">
+            {Math.round(tokenDistanceFt(attacker, token, snapshot.map))} ft
+          </span>
+        )}
         {canSeeHp && (
           <span className="fm-hp">
             {d.curHp}/{d.maxHp}
@@ -221,27 +292,13 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
             <button
               type="button"
               className="btn tiny fm-head-btn"
-              aria-label="Move token actions top or bottom"
-              title="Move menu to opposite edge of screen"
+              aria-label="Move token actions to opposite edge"
+              title="Move menu to opposite side of screen"
               onClick={() =>
-                setDockPref((prev) => {
-                  const vh = window.innerHeight;
-                  const tetherDy = attacker && attacker.id !== token.id ? attacker.y - token.y : 0;
-                  const cur =
-                    prev !== 'auto'
-                      ? prev
-                      : y > vh * 0.54
-                        ? 'top'
-                        : y < vh * 0.46
-                          ? 'bottom'
-                          : tetherDy > 8
-                            ? 'top'
-                            : 'bottom';
-                  return cur === 'top' ? 'bottom' : 'top';
-                })
+                setDockPref(() => (effectiveDock === 'left' ? 'right' : 'left'))
               }
             >
-              ⇅
+              ⇄
             </button>
           )}
           <button
@@ -269,51 +326,56 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
       {!collapsed && (
         <div className="floating-menu-body">
           {attacker&&attacker.id!==token.id&&d.conditions.some(c=>c.label==='Hypnotic Pattern')&&snapshot.map&&tokenDistanceFt(attacker,token,snapshot.map)<=5&&<button className="btn" onClick={()=>{useStore.getState().socket?.emit('spell:wake',{actorTokenId:attacker.id,targetTokenId:token.id});onClose();}}>Shake awake ? Action</button>}
-          {!!d.conditions.length && <p className="floating-menu-note">{d.conditions.map(c => c.label).join(', ')}</p>}
-          {!targetObjectKind && actors.length > 0 && <label className="floating-menu-note fm-act-as-row">
-            <span>Act as</span>
-            <select aria-label="Act as" value={attacker?.id ?? ''} onChange={e => setChosenAttacker(e.target.value)}>
-              {actors.map(t => <option key={t.id} value={t.id}>{targetLabel(snapshot,t)}</option>)}
-            </select>
-          </label>}
+          {!!d.conditions.length && <p className="floating-menu-note fm-conditions-note">{d.conditions.map(c => c.label).join(', ')}</p>}
+          {!targetObjectKind && (actors.length > 0 || ((canAttackAsSelected || canCastAsSelected) && attacker)) && (
+            <div className={`fm-actor-bar${canAttackAsSelected || canCastAsSelected ? ' is-combat' : ''}`}>
+              <span className="fm-actor-label">
+                {(canAttackAsSelected || canCastAsSelected) && (
+                  <span className="fm-attacker-icon">{targetingSelf ? '✨' : '⚔️'}</span>
+                )}
+                {canAttackAsSelected || canCastAsSelected
+                  ? targetingSelf
+                    ? 'Casting as'
+                    : 'Attacking as'
+                  : 'Act as'}
+              </span>
+              {actors.length > 0 ? (
+                <select
+                  aria-label="Act as"
+                  value={attacker?.id ?? ''}
+                  onChange={(e) => setChosenAttacker(e.target.value)}
+                >
+                  {actors.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {targetLabel(snapshot, t)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                attacker && <strong className="fm-actor-static">{resolveToken(snapshot, attacker).name}</strong>
+              )}
+              {(canAttackAsSelected || canCastAsSelected) && !targetingSelf && (
+                <button
+                  type="button"
+                  className={`btn tiny fm-line-btn${showTargetLine ? ' on' : ''}`}
+                  aria-label="Toggle targeting line"
+                  aria-pressed={showTargetLine}
+                  title="Toggle animated targeting tether to this target"
+                  onClick={() => setShowTargetLine(!showTargetLine)}
+                >
+                  🎯
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Non-combat object: interact (toggle state, reveal/hide). */}
           {targetObjectKind && (
             <ObjectControls snapshot={snapshot} token={token} editable={isDm} />
           )}
 
-          {/* Quick damage/heal — kept open so several can be applied in a row. */}
-          {canSeeHp && (
-            <DamageHealControls
-              compact
-              onApply={(delta) => applyDamage(token.kind, token.refId, delta)}
-              onTemp={(amt) => setTempHp(token.kind, token.refId, amt)}
-            />
-          )}
-
           {(canAttackAsSelected || canCastAsSelected) && (
             <div className="fm-attacks">
-              <div className="fm-attacker">
-                <span className="fm-attacker-icon">{targetingSelf ? '✨' : '⚔️'}</span>
-                {targetingSelf ? 'Casting as' : 'Attacking as'}{' '}
-                <strong>{resolveToken(snapshot, attacker!).name}</strong>
-                <span className="fm-attacker-target">
-                  {' '}→ {targetingSelf ? 'self' : d.name}
-                </span>
-                {!targetingSelf && (
-                  <label
-                    className="muted spell-tag fm-target-line-toggle"
-                    title="Show animated targeting tether to this target"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={showTargetLine}
-                      onChange={(e) => setShowTargetLine(e.target.checked)}
-                    />{' '}
-                    Line
-                  </label>
-                )}
-              </div>
               {attacker && <div className="dice-row fm-dice-row"><AdvantageToggle entityId={attacker.refId} />
                 {(() => {
                   const adv = previewAttackAdvantage(snapshot, attacker, token, useStore.getState().manualAdvantage[attacker.refId]);
@@ -324,11 +386,29 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
                     </span>
                   ) : null;
                 })()}
-                {canAttackAsSelected && <button className={`btn tiny ${offhand ? 'on' : ''}`} onClick={() => toggleOption('offhand')}>Off hand</button>}
-                {aWeapons.some(w => w.versatileDamage) && <button className={`btn tiny ${twoHanded ? 'on' : ''}`} onClick={() => toggleOption('twoHanded')}>Two hands</button>}
+                {canAttackAsSelected && (
+                  <button
+                    className={`btn tiny ${offhand ? 'on' : ''}`}
+                    aria-label="Off hand"
+                    title="Off-hand bonus attack"
+                    onClick={() => toggleOption('offhand')}
+                  >
+                    {isMobileSheet ? 'Off' : 'Off hand'}
+                  </button>
+                )}
+                {aWeapons.some(w => w.versatileDamage) && (
+                  <button
+                    className={`btn tiny ${twoHanded ? 'on' : ''}`}
+                    aria-label="Two hands"
+                    title="Use weapon two-handed"
+                    onClick={() => toggleOption('twoHanded')}
+                  >
+                    {isMobileSheet ? '2H' : 'Two hands'}
+                  </button>
+                )}
               </div>}
               {canAttackAsSelected && (
-                <div className={aWeapons.length > 1 ? 'fm-weapons-grid' : undefined}>
+                <div className="fm-weapons-list">
                   <WeaponButtons
                     weapons={aWeapons}
                     twoHanded={twoHanded}
@@ -368,6 +448,15 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
                 />
               )}
             </div>
+          )}
+
+          {/* Quick damage/heal — kept open so several can be applied in a row. */}
+          {canSeeHp && (
+            <DamageHealControls
+              compact
+              onApply={(delta) => applyDamage(token.kind, token.refId, delta)}
+              onTemp={(amt) => setTempHp(token.kind, token.refId, amt)}
+            />
           )}
 
           {isDm ? (

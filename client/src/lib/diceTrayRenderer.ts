@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import {createMaterialDie,getDiceStage} from './materialDice';
 import {trayFaceValues,type Toss,type TrayDie} from './diceTrayTypes';
-import {diePhysicalScale} from '../../../shared/diceTrayLayout';
-import {FIXED_DICE_RADIUS} from '../../../shared/diceTrayLayout';
+import {diceTrayLayoutForPool,diePhysicalScale} from '../../../shared/diceTrayLayout';
 import type {DiceTheme} from '../../../shared/diceThemes';
 import {createDiceTrails} from './diceTrail';
 import {createWoodlandWake} from './diceWoodlandWake';
 import {createShatterWorld} from './diceShatterPhysics';
 import {createDiceTableScene,createPlainDiceTableSurface,preloadDiceTableTexture} from './diceTableScene';
+import {getPrewarmedBoardCanvas,normalizeTrayArtKey,preloadTrayArtImage,setPrewarmedBoardCanvas} from './diceBoardAssets';
 import type {DiceTableSeat} from './diceTableCamera';
 import type {StateSnapshot} from '../../../shared/types';
 import {createDiceRendererCache} from './diceRendererCache';
@@ -17,24 +17,58 @@ import {diceGraphicsGeneration} from './useDiceRendering';
 export type DiceAppearanceTest={liquidInk?:boolean;molten?:boolean;lightning?:boolean;dmGlow?:number;denseDm?:boolean;varisTrail?:boolean;mossAgate?:boolean;enchantedAmber?:boolean;woodlandWake?:boolean};
 
 const trayTextures=new Map<string,Promise<THREE.Texture>>();
+let residentFeltMap:THREE.CanvasTexture|undefined;
+let residentOcclusionMap:THREE.CanvasTexture|undefined;
+let residentShadowMap:THREE.CanvasTexture|undefined;
+
+function getSharedTrayMaps(renderer:THREE.WebGLRenderer){
+  if(!residentFeltMap){
+    const felt=document.createElement('canvas');felt.width=felt.height=128;
+    const feltCtx=felt.getContext('2d')!;feltCtx.fillStyle='#1b3029';feltCtx.fillRect(0,0,128,128);
+    for(let k=0;k<6000;k++){feltCtx.fillStyle=k%2?'#ffffff08':'#00000012';feltCtx.fillRect((k*73)%128,Math.floor(k*41.7)%128,1,1);}
+    residentFeltMap=new THREE.CanvasTexture(felt);residentFeltMap.colorSpace=THREE.SRGBColorSpace;
+    residentFeltMap.wrapS=residentFeltMap.wrapT=THREE.RepeatWrapping;residentFeltMap.repeat.set(10,7);
+    renderer.initTexture(residentFeltMap);
+  }
+  if(!residentOcclusionMap){
+    const occlusionCanvas=document.createElement('canvas');occlusionCanvas.width=occlusionCanvas.height=128;
+    const oc=occlusionCanvas.getContext('2d')!;
+    const edgeShade=oc.createLinearGradient(0,0,0,128);
+    edgeShade.addColorStop(0,'#0009');edgeShade.addColorStop(.35,'#0004');edgeShade.addColorStop(1,'#0000');
+    oc.fillStyle=edgeShade;oc.fillRect(0,0,128,128);
+    residentOcclusionMap=new THREE.CanvasTexture(occlusionCanvas);
+    renderer.initTexture(residentOcclusionMap);
+  }
+  if(!residentShadowMap){
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=64;
+    const c=canvas.getContext('2d')!,gradient=c.createRadialGradient(32,32,4,32,32,32);
+    gradient.addColorStop(0,'#000a');gradient.addColorStop(1,'#0000');c.fillStyle=gradient;c.fillRect(0,0,64,64);
+    residentShadowMap=new THREE.CanvasTexture(canvas);
+    renderer.initTexture(residentShadowMap);
+  }
+  return {feltMap:residentFeltMap,occlusionMap:residentOcclusionMap,shadowMap:residentShadowMap};
+}
+
 export const warmTrayGraphics=()=>{getDiceStage();};
 export async function loadTrayTexture(themeId:string){
-  if(themeId.startsWith('dm-'))themeId='dm';
-  if(!['fighter','ranger','sorcerer','dm'].includes(themeId))return undefined;
+  const key=normalizeTrayArtKey(themeId);
+  if(!key)return undefined;
   try{
-    let promise=trayTextures.get(themeId);
+    let promise=trayTextures.get(key);
     if(!promise){
-      promise=new THREE.TextureLoader().loadAsync(`/art/dice-trays/${themeId}-v1.webp`).then(texture=>{
-        texture.colorSpace=THREE.SRGBColorSpace;
+      promise=(async()=>{
+        const decoded=await preloadTrayArtImage(key);
+        const texture=decoded?new THREE.Texture(decoded):await new THREE.TextureLoader().loadAsync(`/art/dice-trays/${key}-v1.webp`);
+        texture.colorSpace=THREE.SRGBColorSpace;texture.needsUpdate=true;
         const stage=getDiceStage();texture.anisotropy=stage.renderer.capabilities.getMaxAnisotropy();
         // Retain a resident source, so disposing a throw's clones does not
         // delete/re-upload the same full-resolution artwork on the next roll.
         stage.renderer.initTexture(texture);return texture;
-      });
-      trayTextures.set(themeId,promise);
+      })();
+      trayTextures.set(key,promise);
     }
     return (await promise).clone();
-  }catch{trayTextures.delete(themeId);return undefined;}
+  }catch{trayTextures.delete(key);return undefined;}
 }
 // Retain a small representative scene so Three.js keeps the compiled material
 // programs resident. Disposing it immediately would undo the shader preload.
@@ -47,7 +81,7 @@ export const waitForDiceGraphics = (themeId?:string) => themeId===undefined?grap
 export const diceGraphicsPreloaded = (themeId: string) => warmedDice.has(themeId);
 export const prepareDiceTableTexture = preloadDiceTableTexture;
 export {diceTableBackground} from './diceTableScene';
-const liveRenderers=createDiceRendererCache<ReturnType<typeof createTrayRenderer>>();
+const liveRenderers=createDiceRendererCache<ReturnType<typeof createTrayRenderer>>(12,36);
 let liveRendererContext='';
 export function acquireLiveTrayRenderer(context:string,dice:TrayDie[],toss:Toss,theme:DiceTheme,art?:THREE.Texture,dieThemes?:readonly DiceTheme[]){
   if(context!==liveRendererContext){liveRenderers.clear();liveRendererContext=context;}
@@ -62,11 +96,14 @@ export function preloadDiceGraphics(theme: DiceTheme, canStart: () => boolean,co
     if (!canStart()) return;
     await preloadDiceTableTexture();
     if (!canStart()) return;
+    const warmWidth=typeof window!=='undefined'?Math.max(320,Math.min(760,(window.innerWidth||800)-28)):600;
+    const warmHeight=warmWidth*10.2/15.2;
+    const warmDpr=typeof window!=='undefined'?Math.min(2,window.devicePixelRatio||1):1;
     if(!warmedDice.has(theme.id)){
       const art = await loadTrayTexture(theme.id);
       if (!canStart()) { art?.dispose(); return; }
       // Prepare every geometry/number variant, including percentile and critical
-      // materials, before the player needs it. Keep at most four theme samples.
+      // materials, before the player needs it. Keep up to six theme samples.
       const dice:TrayDie[]=[4,6,8,10,12,20,10,10,6].map((sides,index)=>({
         sides,value:1,index,set:0,tens:index===6,ones:index===7,crit:index===8,
       }));
@@ -74,23 +111,42 @@ export function preloadDiceGraphics(theme: DiceTheme, canStart: () => boolean,co
         frameCount: 2, step: 1, radius: .65, trayScale: 1, topFaces: dice.map(()=>0), duration: 1};
       const renderer = createTrayRenderer(dice, toss, theme, undefined, art, true);
       try {
-        await renderer.prepare(320, 320 * 10.2 / 15.2, 1,canStart);
+        await renderer.prepare(warmWidth, warmHeight, warmDpr, canStart);
+        if(canStart()&&!getPrewarmedBoardCanvas(theme.id)){
+          const snap=document.createElement('canvas');
+          const snapW=760,snapH=Math.round(760*10.2/15.2);
+          snap.width=snapW;snap.height=snapH;
+          const snapCtx=snap.getContext('2d');
+          if(snapCtx){
+            renderer.setActiveCount(0);
+            renderer.draw(snapCtx,snapW,snapH,1,0,performance.now());
+            renderer.setActiveCount(dice.length);
+            setPrewarmedBoardCanvas(theme.id,snap);
+          }
+        }
         warmedDice.set(theme.id, renderer);
         // Bound browser-session cache when a viewer switches among characters.
-        if (warmedDice.size > 4) {
+        if (warmedDice.size > 6) {
           const oldest = warmedDice.keys().next().value!;
           warmedDice.get(oldest)!.dispose(); warmedDice.delete(oldest);
         }
       } catch (error) { renderer.dispose(); throw error; }
     }
     if(context&&canStart()){
-      const art=await loadTrayTexture(theme.id);
-      if(!canStart()){art?.dispose();return;}
-      const toss:Toss={settleTimes:[],wallHits:0,frames:new Float32Array(14),frameCount:2,
-        step:1,radius:FIXED_DICE_RADIUS,trayScale:1,topFaces:[0],duration:1};
-      const lease=acquireLiveTrayRenderer(context,[{sides:20,value:1,index:0,set:0}],toss,theme,art);
-      try {await lease.value.prepare(320,320*10.2/15.2,1,canStart);}
-      finally {lease.release();}
+      for(const pool of [
+        [{sides:20,value:1,index:0,set:0}],
+        [{sides:20,value:1,index:0,set:0},{sides:20,value:1,index:1,set:1}],
+      ] as TrayDie[][]){
+        if(!canStart())break;
+        const art=await loadTrayTexture(theme.id);
+        if(!canStart()){art?.dispose();break;}
+        const layout=diceTrayLayoutForPool(pool.length);
+        const toss:Toss={settleTimes:[],wallHits:0,frames:new Float32Array(pool.length*14),frameCount:2,
+          step:1,radius:layout.radius,trayScale:layout.scale,topFaces:pool.map(()=>0),duration:1};
+        const lease=acquireLiveTrayRenderer(context,pool,toss,theme,art);
+        try {await lease.value.prepare(warmWidth,warmHeight,warmDpr,canStart);}
+        finally {lease.release();}
+      }
     }
   }).catch(() => {}); // Disabled WebGL retains the normal roll fallback.
   const task=graphicsPreload.finally(()=>graphicsPending.delete(theme.id));
@@ -121,10 +177,7 @@ export function createTrayRenderer(dice:TrayDie[],toss:Toss,theme:DiceTheme,kept
   box(0,0,-.30,15.05,10.05,.44,0x100e13);
   const floor=box(0,0,-.17,14.4,9.4,.3,0x182a27);
   floor.name='tray-bed';
-  const felt=document.createElement('canvas');felt.width=felt.height=128;
-  const feltCtx=felt.getContext('2d')!;feltCtx.fillStyle='#1b3029';feltCtx.fillRect(0,0,128,128);
-  for(let k=0;k<6000;k++){feltCtx.fillStyle=k%2?'#ffffff08':'#00000012';feltCtx.fillRect((k*73)%128,Math.floor(k*41.7)%128,1,1);}
-  const feltMap=new THREE.CanvasTexture(felt);feltMap.colorSpace=THREE.SRGBColorSpace;feltMap.wrapS=feltMap.wrapT=THREE.RepeatWrapping;feltMap.repeat.set(10,7);textures.push(feltMap);
+  const {feltMap,occlusionMap,shadowMap}=getSharedTrayMaps(stage.renderer);
   if(trayArt){trayArt.anisotropy=stage.renderer.capabilities.getMaxAnisotropy();textures.push(trayArt);}
   const feltMaterial=new THREE.MeshStandardMaterial({map:trayArt??feltMap,roughness:.94,metalness:0,bumpMap:feltMap,bumpScale:.012,envMapIntensity:.35});materials.push(feltMaterial);floor.material=feltMaterial;
   const trim=theme.id.startsWith('dm-')?0x9ba5b1:theme.id==='fighter'?0xa27632:theme.id==='ranger'?0x784825:theme.id==='sorcerer'?0x454956:0x49413a;
@@ -140,20 +193,11 @@ export function createTrayRenderer(dice:TrayDie[],toss:Toss,theme:DiceTheme,kept
     const metal=lip.material as THREE.MeshStandardMaterial;metal.metalness=.7;metal.roughness=.5;metal.envMapIntensity=.12;
   }
   // Soft contact occlusion anchors the recessed bed even under bright tray art.
-  const occlusionCanvas=document.createElement('canvas');occlusionCanvas.width=occlusionCanvas.height=128;
-  const oc=occlusionCanvas.getContext('2d')!;
-  const edgeShade=oc.createLinearGradient(0,0,0,128);
-  edgeShade.addColorStop(0,'#0009');edgeShade.addColorStop(.35,'#0004');edgeShade.addColorStop(1,'#0000');
-  oc.fillStyle=edgeShade;oc.fillRect(0,0,128,128);
-  const occlusionMap=new THREE.CanvasTexture(occlusionCanvas);textures.push(occlusionMap);
   for(const [x,y,w,h,rotation] of [[0,4.49,14,.48,0],[0,-4.49,14,.48,Math.PI],[-6.99,0,9,.48,Math.PI/2],[6.99,0,9,.48,-Math.PI/2]]){
     const g=new THREE.PlaneGeometry(w,h),m=new THREE.MeshBasicMaterial({map:occlusionMap,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1});
     const mesh=new THREE.Mesh(g,m);mesh.position.set(x,y,.004);mesh.rotation.z=rotation;tray.add(mesh);geometry.push(g);materials.push(m);
   }
-  const canvas=document.createElement('canvas');canvas.width=canvas.height=64;
-  const c=canvas.getContext('2d')!,gradient=c.createRadialGradient(32,32,4,32,32,32);gradient.addColorStop(0,'#000a');gradient.addColorStop(1,'#0000');c.fillStyle=gradient;c.fillRect(0,0,64,64);
-  const texture=new THREE.CanvasTexture(canvas);textures.push(texture);
-  const shadows=dice.map(()=>{const g=new THREE.PlaneGeometry(2,2),m=new THREE.MeshBasicMaterial({map:texture,transparent:true,depthWrite:false});const mesh=new THREE.Mesh(g,m);scene.add(mesh);geometry.push(g);materials.push(m);return mesh;});
+  const shadows=dice.map(()=>{const g=new THREE.PlaneGeometry(2,2),m=new THREE.MeshBasicMaterial({map:shadowMap,transparent:true,depthWrite:false});const mesh=new THREE.Mesh(g,m);scene.add(mesh);geometry.push(g);materials.push(m);return mesh;});
   const handles=dice.map((d,i)=>{const dieTheme=dieThemes?.[i]??theme;const h=createMaterialDie(d.sides,dieTheme,!!d.crit,!!d.tens,!!d.ones);h.setMossAgate(!!appearance?.mossAgate);h.setEnchantedAmber(!!appearance?.enchantedAmber);h.setMoltenCracks(!!appearance?.molten);h.setInternalLightning(!!appearance?.lightning);h.setInnerGlow(appearance?.dmGlow??0);h.setLiquidInk(!!appearance?.liquidInk);h.setDenseResin(!!appearance?.denseDm);h.setFaceValues(fixedFaces?Array.from({length:d.sides},(_,j)=>d.tens?j*10:d.ones?j:j+1):trayFaceValues(d,toss.topFaces[i]),fixedFaces);h.object.scale.setScalar(toss.radius*diePhysicalScale(d.sides));h.setTrayLighting(true);
     // The standard shadow pass cannot transmit resin or discard this custom
     // inlay shader's empty areas. Keep its soft contact shadow instead of an

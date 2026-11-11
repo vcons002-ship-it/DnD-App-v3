@@ -1841,6 +1841,7 @@ function MapStageInner({
         reducedEffects={legacy}
         sharedDarkvision={!!t.sharedSightOnly&&!!snapshot.playerVision?.heavy}
         display={d}
+        showHpNumbers={snapshot.role==='dm'}
         gridSizePx={grid}
         pxPerFoot={pxPerFoot}
         miniatureReady={miniatures}

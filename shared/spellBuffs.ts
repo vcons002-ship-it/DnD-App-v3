@@ -19,7 +19,14 @@ export function activeHasteCondition(source: SpellBuffSource): Condition | undef
 }
 
 export const hasteAcBonus = (source: SpellBuffSource): number => activeHasteCondition(source) ? 2 : 0;
-export const shieldAcBonus = (source: SpellBuffSource): number => (source.conditions??[]).some(c=>c.label==='Shield'&&c.combatEffect?.spell==='Shield')?5:0;
+
+/** Reaction-cast Shield and manual "Shield" buff chips grant +5 AC (never stacks). */
+export function activeShieldCondition(source: SpellBuffSource): Condition | undefined {
+  return (source.conditions ?? []).find(c => label(c.label) === 'shield' &&
+    (!c.combatEffect || label(c.combatEffect.spell) === 'shield'));
+}
+
+export const shieldAcBonus = (source: SpellBuffSource): number => activeShieldCondition(source) ? 5 : 0;
 export const isHypnotized = (source:SpellBuffSource):boolean => (source.conditions??[]).some(c=>c.label==='Hypnotic Pattern'&&c.combatEffect?.spell==='Hypnotic Pattern');
 
 function holdPersonCondition(source: SpellBuffSource): Condition | undefined {

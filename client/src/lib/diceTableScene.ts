@@ -1,29 +1,18 @@
 import * as THREE from 'three';
 import {DICE_TABLE_PAN_MS,diceTableCameraPose,type DiceTableSeat} from './diceTableCamera';
 import {createDiceTableMap} from './diceTableMap';
+import {diceTableBackgroundSync,prepareDiceWoodSurface} from './diceBoardAssets';
 import type {StateSnapshot} from '../../../shared/types';
 
 // The lacquer grain is identical for every seat and throw. Keep one browser-
 // session texture instead of rasterizing and uploading 263,000 points per roll.
 let tableGrain:THREE.CanvasTexture|undefined;
 let tableWarmup:Promise<void>|undefined;
-let tableBackground='';
-export const diceTableBackground=()=>tableBackground;
+export const diceTableBackground=diceTableBackgroundSync;
 export function preloadDiceTableTexture(){
- return tableWarmup??= (async()=>{
-  const started=performance.now();
-  const wood=document.createElement('canvas');wood.width=2048;wood.height=1024;
-  const ctx=wood.getContext('2d')!;ctx.fillStyle='#382217';ctx.fillRect(0,0,2048,1024);
-  for(let y=0;y<1024;y++){
-   const tone=30+Math.sin(y*.71)*5+Math.sin(y*.033)*7;ctx.strokeStyle=`rgb(${tone+28},${tone+5},${tone*.65})`;
-   ctx.beginPath();for(let x=0;x<=2048;x+=8){const knot=Math.exp(-(((x-1270)/330)**2)-((y-610)/220)**2)*Math.sin((x-1270)*.005)*48;const yy=y+Math.sin(x*.003+y*.008)*5+knot;x?ctx.lineTo(x,yy):ctx.moveTo(x,yy);}ctx.stroke();
-   // Yield while preparing the first texture so map input remains responsive.
-   if(y%64===63)await new Promise<void>(resolve=>setTimeout(resolve,0));
-  }
-  for(let y=0;y<1024;y+=256){ctx.fillStyle='#080402';ctx.fillRect(0,y,2048,2);}
-  tableGrain=new THREE.CanvasTexture(wood);tableGrain.colorSpace=THREE.SRGBColorSpace;
-  tableBackground=wood.toDataURL('image/jpeg',.9);
-  performance.measure('dice-table-texture-preparation',{start:started,end:performance.now()});
+ return tableWarmup??=(async()=>{
+  const wood=await prepareDiceWoodSurface();
+  if(!tableGrain){tableGrain=new THREE.CanvasTexture(wood);tableGrain.colorSpace=THREE.SRGBColorSpace;}
  })();
 }
 

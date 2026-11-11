@@ -260,7 +260,7 @@ export function SpellRayTargetShapes({
   const legacyMode = useLegacyMode();
   const { enabled: mapAnimation } = useMapAnimation();
   const hasDragPreview = useStore((s) => s.tokenDragPreview !== null);
-  const staticTether = legacyMode || !mapAnimation;
+  const reducedMotion = !mapAnimation;
 
   const latestRef = useRef({
     caster,
@@ -275,7 +275,8 @@ export function SpellRayTargetShapes({
     outOfRange,
     mapScale,
     formatMidLabel,
-    staticTether,
+    legacyMode,
+    reducedMotion,
     hasDragPreview,
   });
   latestRef.current = {
@@ -291,13 +292,14 @@ export function SpellRayTargetShapes({
     outOfRange,
     mapScale,
     formatMidLabel,
-    staticTether,
+    legacyMode,
+    reducedMotion,
     hasDragPreview,
   };
 
   const defaultPalette = affinityPalette(affinity ?? targets[0]?.affinity ?? 'enemy');
   const hasPill = Boolean(formatMidLabel && mapScale) || midLabel !== undefined;
-  const structureKey = `${targets.map((t) => `${t.token.id}:${t.count}:${t.affinity ?? ''}`).join('|')}|${hasPill}|${showCount}|${Boolean(rangeFt)}|${affinity ?? ''}`;
+  const structureKey = `${targets.map((t) => `${t.token.id}:${t.count}:${t.affinity ?? ''}`).join('|')}|${hasPill}|${showCount}|${Boolean(rangeFt)}|${affinity ?? ''}|${legacyMode}`;
   const syncControllerRef = useRef<{ syncOnce: () => void; ensureActiveLoop: () => void } | null>(null);
 
   useEffect(() => {
@@ -414,7 +416,8 @@ export function SpellRayTargetShapes({
         outOfRange: curOutOfRange,
         mapScale: curMapScale,
         formatMidLabel: curFormatMidLabel,
-        staticTether: curStatic,
+        legacyMode: curLegacy,
+        reducedMotion: curReduced,
       } = latestRef.current;
       const sec = now / 1000;
       const cPos = (curCaster.id ? curGetPos?.(curCaster.id) : undefined) ?? curCaster;
@@ -513,7 +516,7 @@ export function SpellRayTargetShapes({
           }
         }
 
-        if (!curStatic && entry.targetRing && !hideRing) {
+        if (!curReduced && !curLegacy && entry.targetRing && !hideRing) {
           entry.targetRing.dashOffset(-((sec * 18) / curScale));
         }
 
@@ -578,13 +581,14 @@ export function SpellRayTargetShapes({
             beam.lastPillScale = curScale;
           }
 
-          if (curStatic) {
+          if (curReduced) {
             beam.traveler?.visible(false);
           } else {
-            beam.sparkLine?.dashOffset(-((sec * 96 + phase * 32) / curScale));
+            const dashSpeed = curLegacy ? 56 : 96;
+            beam.sparkLine?.dashOffset(-((sec * dashSpeed + phase * 32) / curScale));
             if (beam.traveler) {
               beam.traveler.visible(true);
-              const cycle = (sec * 0.95 + phase) % 1;
+              const cycle = (sec * (curLegacy ? 0.72 : 0.95) + phase) % 1;
               const t = 0.08 + cycle * 0.84;
               const pos = evalQuadraticBezier(beam.sx, beam.sy, beam.cx, beam.cy, beam.ex, beam.ey, t);
               const fade = cycle < 0.15 ? cycle / 0.15 : cycle > 0.82 ? (1 - cycle) / 0.18 : 1;
@@ -600,35 +604,61 @@ export function SpellRayTargetShapes({
     };
 
     let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const clearScheduled = () => {
+      if (raf !== 0) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
     const shouldKeepTicking = () => {
       if (document.hidden) return false;
-      return !latestRef.current.staticTether || hasLiveOverride();
+      return !latestRef.current.reducedMotion || hasLiveOverride();
+    };
+    // Legacy Mode throttles stationary directional motion to ~20 FPS (50ms) on
+    // the isolated spell-area-overlay canvas (skipping 2/3 of VSync callbacks
+    // and never touching map/fog/token layers), while waking to 60 FPS during drag.
+    const scheduleNext = () => {
+      if (!shouldKeepTicking()) return;
+      if (latestRef.current.legacyMode && !hasLiveOverride()) {
+        if (timer === null && raf === 0) {
+          timer = setTimeout(() => {
+            timer = null;
+            if (shouldKeepTicking()) {
+              raf = requestAnimationFrame(tick);
+            }
+          }, 50);
+        }
+      } else if (raf === 0) {
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        raf = requestAnimationFrame(tick);
+      }
     };
     const tick = (now: number) => {
       raf = 0;
       if (!groupRef.current) return;
       applyFrame(now);
-      if (shouldKeepTicking()) {
-        raf = requestAnimationFrame(tick);
-      }
-    };
-    const startLoop = () => {
-      if (raf === 0 && shouldKeepTicking()) {
-        raf = requestAnimationFrame(tick);
-      }
+      scheduleNext();
     };
     const syncOnce = () => {
       if (!groupRef.current) return;
+      clearScheduled();
       applyFrame(performance.now());
-      startLoop();
+      scheduleNext();
     };
-    syncControllerRef.current = { syncOnce, ensureActiveLoop: startLoop };
+    syncControllerRef.current = { syncOnce, ensureActiveLoop: scheduleNext };
 
     const onVisibility = () => {
-      if (document.hidden && raf !== 0) {
-        cancelAnimationFrame(raf);
-        raf = 0;
-      } else if (!document.hidden) {
+      if (document.hidden) {
+        clearScheduled();
+      } else {
         syncOnce();
       }
     };
@@ -638,17 +668,17 @@ export function SpellRayTargetShapes({
     const layer = root.getLayer();
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
-      if (raf !== 0) cancelAnimationFrame(raf);
+      clearScheduled();
       syncControllerRef.current = null;
       layer?.batchDraw();
     };
-  }, [structureKey, staticTether, hasDragPreview]);
+  }, [structureKey, legacyMode, reducedMotion, hasDragPreview]);
 
   useEffect(() => {
-    if (staticTether) {
+    if (reducedMotion || legacyMode) {
       syncControllerRef.current?.syncOnce();
     }
-  }, [staticTether, caster.x, caster.y, targets, scale, pxPerFoot, midLabel, outOfRange]);
+  }, [reducedMotion, legacyMode, caster.x, caster.y, targets, scale, pxPerFoot, midLabel, outOfRange]);
 
   const cPos = (caster.id ? getPosition?.(caster.id) : undefined) ?? caster;
   const cBaseWidthFt = caster.id ? (getBaseWidthFt?.({ ...caster, id: caster.id }) ?? caster.widthFt) : caster.widthFt;
@@ -745,16 +775,18 @@ export function SpellRayTargetShapes({
 
               return (
                 <Group key={k} name="ray-beam-group" beamIdx={k} beamCount={count}>
-                  {/* Sorcerous-Burst style 3-layer beam: outer aura, inner core, and flowing spark */}
-                  <Line
-                    name="ray-glow"
-                    points={pts}
-                    stroke={tPalette.glow}
-                    strokeWidth={11 / scale}
-                    opacity={effOutOfRange ? 0.14 : 0.22}
-                    lineCap="round"
-                    lineJoin="round"
-                  />
+                  {/* Sorcerous-Burst style beam: skip wide outer aura in Legacy Mode for minimal fill-rate */}
+                  {!legacyMode && (
+                    <Line
+                      name="ray-glow"
+                      points={pts}
+                      stroke={tPalette.glow}
+                      strokeWidth={11 / scale}
+                      opacity={effOutOfRange ? 0.14 : 0.22}
+                      lineCap="round"
+                      lineJoin="round"
+                    />
+                  )}
                   <Line
                     name="ray-core"
                     points={pts}
@@ -769,8 +801,8 @@ export function SpellRayTargetShapes({
                     name="ray-spark"
                     points={pts}
                     stroke={tPalette.spark}
-                    strokeWidth={4.6 / scale}
-                    dash={[5 / scale, 52 / scale]}
+                    strokeWidth={(legacyMode ? 3.4 : 4.6) / scale}
+                    dash={legacyMode ? [9 / scale, 26 / scale] : [5 / scale, 52 / scale]}
                     lineCap="round"
                     lineJoin="round"
                     rayPhase={phase}
@@ -778,20 +810,22 @@ export function SpellRayTargetShapes({
                   {/* Traveling directional arrow chevron gliding along the beam */}
                   <Group
                     name="ray-travel-arrow"
-                    visible={!staticTether}
+                    visible={!reducedMotion}
                     x={mid.x}
                     y={mid.y}
                     rotation={mid.angleDeg}
                     rayCurve={{ sx, sy, cx, cy, ex, ey, phase }}
                   >
-                    <Line
-                      points={[-travelLen, -travelWing, 0, 0, -travelLen, travelWing]}
-                      stroke={tPalette.glow}
-                      strokeWidth={4.2 / scale}
-                      opacity={0.55}
-                      lineCap="round"
-                      lineJoin="round"
-                    />
+                    {!legacyMode && (
+                      <Line
+                        points={[-travelLen, -travelWing, 0, 0, -travelLen, travelWing]}
+                        stroke={tPalette.glow}
+                        strokeWidth={4.2 / scale}
+                        opacity={0.55}
+                        lineCap="round"
+                        lineJoin="round"
+                      />
+                    )}
                     <Line
                       points={[-travelLen, -travelWing, 0, 0, -travelLen, travelWing]}
                       stroke={tPalette.spark}

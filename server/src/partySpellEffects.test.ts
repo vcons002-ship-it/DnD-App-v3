@@ -9,7 +9,7 @@ import {getSpell} from './spells/srd.js';
 import {resolveAttack,resolveAttackDamage,resolveAbilityRoll,resolveForcedSave,resolveTargetedSpellAttack} from './combat.js';
 import {resolveShield,shieldGate,mistyStepError,teleportMistyStep,syncPassWithoutTrace,shakeAwake} from './partySpellEffects.js';
 import {expireTimedSpellEffects} from './hitEffectTurns.js';
-import {createSession,createMap,setActiveMap,createCharacter,createToken,createMonsterTemplate,instantiateMonster,getCharacter,getMonster,getToken,listRollLog,setSheetAbility,setManualDamage,setCombatRound,setActiveTurn,setTempHp,setCondition,applyDamage,endConcentration,moveToken,claimCharacter,updateCharacter,drainHpFx} from './sessions.js';
+import {createSession,createMap,setActiveMap,createCharacter,createToken,createMonsterTemplate,instantiateMonster,getCharacter,getMonster,getToken,listRollLog,setSheetAbility,setManualDamage,setCombatRound,setActiveTurn,setTempHp,setCondition,clearCondition,applyDamage,endConcentration,moveToken,claimCharacter,updateCharacter,drainHpFx} from './sessions.js';
 import {registerSocketHandlers} from './socketHandlers.js';
 import {setConn,dropConn,type IOServer} from './connections.js';
 import {buildSnapshot} from './visibility.js';
@@ -89,6 +89,19 @@ describe('Shield reaction',()=>{
   const f=fixture();f.dice(3,()=>resolveAbilityRoll(f.session.id,'Vanec',f.now(),spell('Magic Missile'),1));const source=listRollLog(f.session.id).find(e=>e.apply?.darts)!;
   f.dice(3,()=>resolveForcedSave(f.session.id,source.id,f.actor.id));const hit=listRollLog(f.session.id).find(e=>e.pending?.shield)!;expect(hit).toBeDefined();expect(f.now().curHp).toBe(100);
   resolveShield(f.session.id,'Vanec',hit.id);resolveForcedSave(f.session.id,source.id,f.actor.id);expect(f.now().curHp).toBe(100);
+ });
+ it('supports manually adding and removing a Shield buff (+5 AC, non-stacking, turn-bound when flagged)',()=>{
+  const f=fixture();
+  setCondition('pc',f.caster.id,{id:'manual-shield',label:'Shield',aura:'green',isConcentration:false});
+  expect(effectiveAc(f.now())).toBe(21);
+  setCondition('pc',f.caster.id,{id:'toggle-shield',label:'Shield',aura:'blue',isConcentration:false,combatEffect:{casterKind:'pc',casterId:f.caster.id,spell:'Shield',castLevel:1,untilCasterTurn:true}});
+  expect(effectiveAc(f.now())).toBe(21);
+  clearCondition('pc',f.caster.id,'manual-shield');
+  expect(effectiveAc(f.now())).toBe(21);
+  setCombatRound(f.session.id,1);setActiveTurn(f.session.id,f.enemy.id);
+  expect(effectiveAc(f.now())).toBe(21);
+  setActiveTurn(f.session.id,f.actor.id);
+  expect(effectiveAc(f.now())).toBe(16);
  });
 });
 describe('Hypnotic Pattern linked conditions',()=>{

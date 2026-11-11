@@ -62,8 +62,10 @@ it('caches appearance across movement and keeps private HP out of player sprites
  const base={map,characters:[],tokens:[{id:'t',kind:'monster',refId:'m',widthFt:5,x:20,y:20}],monsters:[{id:'m',name:'Enemy',conditions:[],disposition:'enemy',icon:'G',dead:false}]} as unknown as StateSnapshot;
  const a=await tokenSprites('viewer',base),b=await tokenSprites('other',{...base,tokens:[{...base.tokens[0],x:100,y:50}]});
  expect(a.t).toEqual(b.t);expect(renderAssetFor('other',a.t.body.key)).toBeDefined();
- const dm=await tokenSprites('viewer',{...base,monsters:[{...base.monsters[0],curHp:7,maxHp:20} as any]});
+ const dm=await tokenSprites('viewer',{...base,role:'dm',monsters:[{...base.monsters[0],curHp:7,maxHp:20} as any]});
+ const allyForPlayer=await tokenSprites('viewer',{...base,role:'player',monsters:[{...base.monsters[0],curHp:7,maxHp:20} as any]});
  expect(dm.t.body.key).toBe(a.t.body.key);expect(dm.t.hud.key).not.toBe(a.t.hud.key);
+ expect(dm.t.hud.key).not.toBe(allyForPlayer.t.hud.key);
  const dead=await tokenSprites('viewer',{...base,monsters:[{...base.monsters[0],dead:true} as any]});expect(dead.t.hud.key).not.toBe(a.t.hud.key);
 });
 it('prepares reusable shared-sight grayscale body pixels while retaining the ordinary HUD and alpha',async()=>{

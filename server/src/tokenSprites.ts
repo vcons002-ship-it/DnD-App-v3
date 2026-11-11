@@ -29,7 +29,7 @@ const hasEmoji=(s:string)=>/[^\x00-\x7F]/.test(s);
  * Body and upright HUD remain separate so local pan/rotation/selection require no round trip. */
 export async function tokenSprites(id:string,snapshot:StateSnapshot,preShade=false):Promise<NonNullable<StateSnapshot['tokenSprites']>>{
  if(!snapshot.map||!snapshot.tokens.length)return {};
- const map=snapshot.map,result:NonNullable<StateSnapshot['tokenSprites']>={},px=map.gridSizePx/map.feetPerSquare;
+ const map=snapshot.map,result:NonNullable<StateSnapshot['tokenSprites']>={},px=map.gridSizePx/map.feetPerSquare,showHpNumbers=snapshot.role==='dm';
  const entityIndex={characters:new Map(snapshot.characters.map(c=>[c.id,c])),monsters:new Map(snapshot.monsters.map(m=>[m.id,m]))};
  const affinitySet=snapshot.legacyGeometry?new Set(snapshot.legacyGeometry.affinity):undefined;
  // Bounded concurrency (4 tokens at a time) parallelizes cold rooms across the
@@ -44,7 +44,7 @@ export async function tokenSprites(id:string,snapshot:StateSnapshot,preShade=fal
    const affinityVisible=!!(d.disposition&&!t.sharedSightOnly&&!t.partiallyRevealed&&(affinitySet?affinitySet.has(t.id):true));
    const grayscale=preShade&&!!t.sharedSightOnly&&!!snapshot.playerVision?.heavy&&(!d.icon||!!d.dead||!hasEmoji(d.icon));
    const hasHunterMark=!!(t.markLabels?.some(label=>/hunter.s mark/i.test(label))&&!t.sharedSightOnly&&!t.partiallyRevealed);
-   const cacheKey=`${px}:${map.gridSizePx}:${t.kind}:${t.widthFt}:${t.shape??'circle'}:${t.invisible?1:0}:${t.partiallyRevealed?1:0}:${t.sharedSightOnly?1:0}:${d.icon}:${d.name}:${d.curHp??''}:${d.maxHp??''}:${d.tempHp??''}:${d.dead?1:0}:${t.revealTag??''}:${affinityVisible?d.disposition:''}:${t.combatRole??''}:${hasHunterMark?1:0}:${grayscale?1:0}`;
+   const cacheKey=`${px}:${map.gridSizePx}:${t.kind}:${t.widthFt}:${t.shape??'circle'}:${t.invisible?1:0}:${t.partiallyRevealed?1:0}:${t.sharedSightOnly?1:0}:${d.icon}:${d.name}:${d.curHp??''}:${d.maxHp??''}:${d.tempHp??''}:${showHpNumbers?1:0}:${d.dead?1:0}:${t.revealTag??''}:${affinityVisible?d.disposition:''}:${t.combatRole??''}:${hasHunterMark?1:0}:${grayscale?1:0}`;
    const cachedPair=spritePairCache.get(cacheKey);
    if(cachedPair&&grantCachedAsset(id,cachedPair.body)&&grantCachedAsset(id,cachedPair.hud)){
     spritePairCache.delete(cacheKey);spritePairCache.set(cacheKey,cachedPair);
@@ -60,8 +60,9 @@ export async function tokenSprites(id:string,snapshot:StateSnapshot,preShade=fal
    const clip=shape==='square'?`<rect x="${-r}" y="${-r}" width="${2*r}" height="${2*r}"/>`:shape==='diamond'?`<path d="M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z"/>`:silhouette('');
    const body=image?`<defs><clipPath id="p">${clip}</clipPath></defs><image xlink:href="${image}" x="${-r}" y="${-r}" width="${r*2}" height="${r*2}" opacity="${opacity}" ${shape==='image'?'':'clip-path="url(#p)"'}/>${shape==='image'?'':silhouette('fill="none" stroke="#111111" stroke-opacity=".53" stroke-width="2"')}`:`${silhouette(`fill="${fill}" opacity="${opacity}" stroke="#111111" stroke-opacity=".53" stroke-width="2"`)}${d.icon&&!d.dead&&!hasEmoji(d.icon)?text(d.icon,0,r*.36,r*1.1):''}`;
    const font=t.kind==='pc'?Math.max(11,Math.min(18,r*.4)):Math.max(10,Math.min(14,map.gridSizePx*.14));
-   const roleR=Math.max(11,r*.36),hasHp=d.maxHp&&d.maxHp>0&&d.curHp!==undefined;
-   const labelY=t.kind==='pc'?r+4:r+Math.max(hasHp?14:4,t.combatRole?roleR-r*.28+4:4);
+   const roleR=Math.max(11,r*.36),hasHp=!!(d.maxHp&&d.maxHp>0&&d.curHp!==undefined),hpFont=Math.max(9,Math.min(12,Math.round(map.gridSizePx*.13)));
+   const hpOffset=showHpNumbers&&hasHp?hpFont+2:0;
+   const labelY=t.kind==='pc'?r+4:r+Math.max(hasHp?14+hpOffset:4,t.combatRole?roleR-r*.28+4:4);
    const labelWidth=t.kind==='pc'?r*4:Math.max(64,Math.min(130,r*2.6));
    const chars=Math.max(3,Math.floor(labelWidth/(font*.55)));
    const words=d.name.split(/\s+/);const lines:string[]=[];
@@ -70,13 +71,13 @@ export async function tokenSprites(id:string,snapshot:StateSnapshot,preShade=fal
    const tag=t.revealTag??'',tagW=tag?(tag.length+2)*font*.65:0,nameW=Math.min(labelWidth,d.name.length*font*.55+2);
    const labelFill=t.sharedSightOnly?'#8a919e':'white',labelFade=t.sharedSightOnly?' opacity=".75"':'';
    let hud=(d.dead||t.partiallyRevealed)?'':lines.map((line,i)=>text(line,t.kind==='pc'?0:-tagW/2,labelY+font*(.85+i*1.1),font,`fill="${labelFill}"${labelFade} stroke="black" stroke-width="3" paint-order="stroke" stroke-linejoin="round"`)).join('');
-   if(!d.dead&&!t.partiallyRevealed&&hasHp){const frac=Math.max(0,Math.min(1,d.curHp!/d.maxHp!)),y=r+(t.kind==='pc'?font+8:4);hud+=`<rect x="${-r}" y="${y}" width="${2*r}" height="6" rx="3" fill="black" fill-opacity=".53"/><rect x="${-r}" y="${y}" width="${2*r*frac}" height="6" rx="3" fill="${frac>.5?'#39c46b':frac>.25?'#f5c518':'#e23b3b'}"/>`;if(d.tempHp)hud+=text(`+${d.tempHp}`,r+3+String(d.tempHp).length*3,y+9,Math.max(10,r*.4),'fill="#5ce1ff" font-weight="bold"');}
+   if(!d.dead&&!t.partiallyRevealed&&hasHp){const frac=Math.max(0,Math.min(1,d.curHp!/d.maxHp!)),y=r+(t.kind==='pc'?font+8:4);hud+=`<rect x="${-r}" y="${y}" width="${2*r}" height="6" rx="3" fill="black" fill-opacity=".53"/><rect x="${-r}" y="${y}" width="${2*r*frac}" height="6" rx="3" fill="${frac>.5?'#39c46b':frac>.25?'#f5c518':'#e23b3b'}"/>`;if(d.tempHp)hud+=text(`+${d.tempHp}`,r+3+String(d.tempHp).length*3,y+9,Math.max(10,r*.4),'fill="#5ce1ff" font-weight="bold"');if(showHpNumbers)hud+=text(`${d.curHp}/${d.maxHp}`,0,y+(t.kind==='pc'&&d.curHp!<=0?24:8)+hpFont*.85,hpFont,'fill="#f8f1e1" stroke="black" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round" font-weight="bold"');}
    if(!d.dead&&!t.partiallyRevealed&&tag)hud+=text(tag,(nameW+tagW)/2,labelY+font*.85,font,`fill="${labelFill}"${labelFade} stroke="black" stroke-width="3" paint-order="stroke" font-weight="bold"`);
    if(affinityVisible)hud+=`<circle cx="${-r*.8}" cy="${-r*.8}" r="${Math.max(5,r*.16)}" fill="${{friendly:'#39c46b',neutral:'#f5c518',enemy:'#e23b3b'}[d.disposition!]}" stroke="black"/>`;
    if(!d.dead&&!t.partiallyRevealed&&t.kind!=='pc'&&t.combatRole)hud+=`<g transform="translate(${-r*.72} ${r*.72})"><circle r="${roleR}" fill="#0b0d12" stroke="white" stroke-width="1.5"/></g>`;
 
    if(hasHunterMark)hud+=`<g transform="translate(0 ${-r-22})"><path d="M0 -14L14 0L0 14L-14 0Z" fill="#352106" stroke="#ffe7a1" stroke-width="2"/><circle r="4" fill="#fff5d2"/></g>`;
-   const edge=Math.ceil(r*1.3+4),hudEdge=Math.ceil(Math.max(r*2+20,nameW/2+tagW+16)),top=Math.ceil(r+52),bottom=Math.ceil(labelY+font*(lines.length+1)+24);
+   const edge=Math.ceil(r*1.3+4),hudEdge=Math.ceil(Math.max(r*2+20,nameW/2+tagW+16,showHpNumbers&&hasHp?42:0)),top=Math.ceil(r+52),bottom=Math.ceil(labelY+font*(lines.length+1)+24+(t.kind==='pc'&&showHpNumbers&&hasHp?hpFont+18:0));
    const bodyBox={x:-edge,y:-edge,width:edge*2,height:edge*2,scale:1};
    const hudBox={x:-hudEdge,y:-top,width:hudEdge*2,height:top+bottom,scale:1};
    // Match the client's shared-sight grayscale transform once per reusable sprite,
