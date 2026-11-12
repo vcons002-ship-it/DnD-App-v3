@@ -59,25 +59,27 @@ export async function tokenSprites(id:string,snapshot:StateSnapshot,preShade=fal
    const opacity=t.invisible?.28:d.dead?.5:1;
    const clip=shape==='square'?`<rect x="${-r}" y="${-r}" width="${2*r}" height="${2*r}"/>`:shape==='diamond'?`<path d="M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z"/>`:silhouette('');
    const body=image?`<defs><clipPath id="p">${clip}</clipPath></defs><image xlink:href="${image}" x="${-r}" y="${-r}" width="${r*2}" height="${r*2}" opacity="${opacity}" ${shape==='image'?'':'clip-path="url(#p)"'}/>${shape==='image'?'':silhouette('fill="none" stroke="#111111" stroke-opacity=".53" stroke-width="2"')}`:`${silhouette(`fill="${fill}" opacity="${opacity}" stroke="#111111" stroke-opacity=".53" stroke-width="2"`)}${d.icon&&!d.dead&&!hasEmoji(d.icon)?text(d.icon,0,r*.36,r*1.1):''}`;
-   const font=t.kind==='pc'?Math.max(11,Math.min(18,r*.4)):Math.max(10,Math.min(14,map.gridSizePx*.14));
-   const roleR=Math.max(11,r*.36),hasHp=!!(d.maxHp&&d.maxHp>0&&d.curHp!==undefined),hpFont=Math.max(9,Math.min(12,Math.round(map.gridSizePx*.13)));
-   const hpOffset=showHpNumbers&&hasHp?hpFont+2:0;
-   const labelY=t.kind==='pc'?r+4:r+Math.max(hasHp?14+hpOffset:4,t.combatRole?roleR-r*.28+4:4);
-   const labelWidth=t.kind==='pc'?r*4:Math.max(64,Math.min(130,r*2.6));
-   const chars=Math.max(3,Math.floor(labelWidth/(font*.55)));
-   const words=d.name.split(/\s+/);const lines:string[]=[];
-   if(t.kind==='pc'){let line='';for(const word of words){if(line&&(line+' '+word).length>chars){lines.push(line);line=word;}else line+=(line?' ':'')+word;}if(line)lines.push(line);}
-   else lines.push(d.name.length>chars?d.name.slice(0,chars-1)+'…':d.name);
-   const tag=t.revealTag??'',tagW=tag?(tag.length+2)*font*.65:0,nameW=Math.min(labelWidth,d.name.length*font*.55+2);
+   const preferredFont=Math.max(9.5,Math.min(11.5,Math.round(map.gridSizePx*.165))),maxLabelW=Math.max(42,Math.min(74,Math.round(r*1.44)));
+   const tag=t.revealTag??'',cleanName=d.name.replace(/\s+/g,' ').trim(),fullLabel=tag?`${cleanName} ${tag}`:cleanName;
+   const estFullW=fullLabel.length*preferredFont*.56,availW=Math.max(maxLabelW*.55,maxLabelW-2);
+   const font=estFullW>availW?Math.max(8.5,preferredFont*(availW/estFullW)):preferredFont;
+   const roleR=Math.max(8.5,Math.min(11.5,r*.3)),hasHp=!!(d.maxHp&&d.maxHp>0&&d.curHp!==undefined),hpFont=Math.max(9,Math.min(10.5,Math.round(map.gridSizePx*.155)));
+   const showExactHp=!d.dead&&!t.partiallyRevealed&&hasHp&&showHpNumbers;
+   const barW=Math.max(30,Math.round(r*1.44)),barH=showExactHp?hpFont+2:5,barR=barH/2,barY=r+2;
+   const labelY=hasHp?barY+barH+2:r+4;
+   const tagW=tag?tag.length*font*.64+3:0,nameBudget=Math.max(22,maxLabelW-tagW);
+   const chars=Math.max(4,Math.floor(nameBudget/(font*.58)));
+   const line=cleanName.length>chars?cleanName.slice(0,chars-1)+'…':cleanName;
+   const nameW=Math.min(maxLabelW,(line.length+(tag?tag.length+1:0))*font*.58+4);
    const labelFill=t.sharedSightOnly?'#8a919e':'white',labelFade=t.sharedSightOnly?' opacity=".75"':'';
-   let hud=(d.dead||t.partiallyRevealed)?'':lines.map((line,i)=>text(line,t.kind==='pc'?0:-tagW/2,labelY+font*(.85+i*1.1),font,`fill="${labelFill}"${labelFade} stroke="black" stroke-width="3" paint-order="stroke" stroke-linejoin="round"`)).join('');
-   if(!d.dead&&!t.partiallyRevealed&&hasHp){const frac=Math.max(0,Math.min(1,d.curHp!/d.maxHp!)),y=r+(t.kind==='pc'?font+8:4);hud+=`<rect x="${-r}" y="${y}" width="${2*r}" height="6" rx="3" fill="black" fill-opacity=".53"/><rect x="${-r}" y="${y}" width="${2*r*frac}" height="6" rx="3" fill="${frac>.5?'#39c46b':frac>.25?'#f5c518':'#e23b3b'}"/>`;if(d.tempHp)hud+=text(`+${d.tempHp}`,r+3+String(d.tempHp).length*3,y+9,Math.max(10,r*.4),'fill="#5ce1ff" font-weight="bold"');if(showHpNumbers)hud+=text(`${d.curHp}/${d.maxHp}`,0,y+(t.kind==='pc'&&d.curHp!<=0?24:8)+hpFont*.85,hpFont,'fill="#f8f1e1" stroke="black" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round" font-weight="bold"');}
-   if(!d.dead&&!t.partiallyRevealed&&tag)hud+=text(tag,(nameW+tagW)/2,labelY+font*.85,font,`fill="${labelFill}"${labelFade} stroke="black" stroke-width="3" paint-order="stroke" font-weight="bold"`);
+   let hud='';
+   if(!d.dead&&!t.partiallyRevealed&&hasHp){const frac=Math.max(0,Math.min(1,d.curHp!/d.maxHp!));hud+=`<rect x="${-barW/2}" y="${barY}" width="${barW}" height="${barH}" rx="${barR}" fill="${showExactHp?'#0b0d12':'black'}" fill-opacity="${showExactHp?'.85':'.56'}"${showExactHp?' stroke="black" stroke-opacity=".7" stroke-width=".75"':''}/><rect x="${-barW/2}" y="${barY}" width="${barW*frac}" height="${barH}" rx="${barR}" fill="${frac>.5?'#39c46b':frac>.25?'#f5c518':'#e23b3b'}"/>`;if(showExactHp)hud+=text(`${d.curHp}/${d.maxHp}`,0,barY+barH/2+hpFont*.34,hpFont,'fill="white" stroke="black" stroke-width="2.2" paint-order="stroke" stroke-linejoin="round" font-weight="bold"');if(d.tempHp){const tf=Math.max(9,Math.min(11,hpFont));hud+=text(`+${d.tempHp}`,barW/2+4+String(d.tempHp).length*tf*.32,barY+barH/2+tf*.34,tf,'fill="#5ce1ff" stroke="black" stroke-width="2" paint-order="stroke" font-weight="bold"');}}
+   if(!d.dead&&!t.partiallyRevealed)hud+=`<text x="0" y="${labelY+font*.88}" font-size="${font}" text-anchor="middle" fill="${labelFill}"${labelFade} stroke="black" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round">${escape(line)}${tag?` <tspan font-weight="bold">${escape(tag)}</tspan>`:''}</text>`;
    if(affinityVisible)hud+=`<circle cx="${-r*.8}" cy="${-r*.8}" r="${Math.max(5,r*.16)}" fill="${{friendly:'#39c46b',neutral:'#f5c518',enemy:'#e23b3b'}[d.disposition!]}" stroke="black"/>`;
-   if(!d.dead&&!t.partiallyRevealed&&t.kind!=='pc'&&t.combatRole)hud+=`<g transform="translate(${-r*.72} ${r*.72})"><circle r="${roleR}" fill="#0b0d12" stroke="white" stroke-width="1.5"/></g>`;
+   if(!d.dead&&!t.partiallyRevealed&&t.kind!=='pc'&&t.combatRole)hud+=`<g transform="translate(${-r*.82} ${r*.46})"><circle r="${roleR}" fill="#0b0d12" stroke="white" stroke-width="1.5"/></g>`;
 
    if(hasHunterMark)hud+=`<g transform="translate(0 ${-r-22})"><path d="M0 -14L14 0L0 14L-14 0Z" fill="#352106" stroke="#ffe7a1" stroke-width="2"/><circle r="4" fill="#fff5d2"/></g>`;
-   const edge=Math.ceil(r*1.3+4),hudEdge=Math.ceil(Math.max(r*2+20,nameW/2+tagW+16,showHpNumbers&&hasHp?42:0)),top=Math.ceil(r+52),bottom=Math.ceil(labelY+font*(lines.length+1)+24+(t.kind==='pc'&&showHpNumbers&&hasHp?hpFont+18:0));
+   const edge=Math.ceil(r*1.3+4),hudEdge=Math.ceil(Math.max(barW/2+24,nameW/2+18,showExactHp?40:0)),top=Math.ceil(r+52),bottom=Math.ceil(labelY+font*1.5+16);
    const bodyBox={x:-edge,y:-edge,width:edge*2,height:edge*2,scale:1};
    const hudBox={x:-hudEdge,y:-top,width:hudEdge*2,height:top+bottom,scale:1};
    // Match the client's shared-sight grayscale transform once per reusable sprite,

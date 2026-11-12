@@ -454,39 +454,42 @@ function TokenShapeInner({
     };
   }, [activeTurn, turnRingR, miniatureReady,reducedEffects]);
 
-  const preferredPlayerNameSize = Math.max(11, Math.min(18, radius * .4));
-  const monsterNameSize = Math.max(10, Math.min(14, gridSizePx * .14));
-  const monsterLabelWidth = Math.max(64, Math.min(130, radius * 2.6));
-  const tagWidth = token.revealTag ? (token.revealTag.length + 2) * monsterNameSize * 0.65 : 0;
-  const {nameWidth,playerNameSize,labelText} = useMemo(() => {
-    const player=token.kind==='pc';
-    const text=player?display.name.replace(/\s+/g,' ').trim():display.name;
-    const preferredSize=player?preferredPlayerNameSize:monsterNameSize;
-    const maxWidth=player?Math.max(.001,radius*4):monsterLabelWidth;
-    const width = measureTokenTextWidth(text, preferredSize);
-
-
-    // Fit the complete name using actual glyph width. The old minimum font
-    // could force even "Vanec" onto two lines on a small token. Leave room
-    // for the outline and rounding, without measuring on movement frames.
-    const available=Math.max(maxWidth*.5,maxWidth-4);
-    const fittedSize=player&&width>available?preferredSize*available/width:preferredSize;
-    return {nameWidth:Math.min(maxWidth,width*fittedSize/preferredSize+2),
-      playerNameSize:player?fittedSize:preferredPlayerNameSize,labelText:text};
-  }, [display.name, preferredPlayerNameSize, monsterNameSize, token.kind, radius, monsterLabelWidth]);
-  const labelFontSize = token.kind === 'pc' ? playerNameSize : monsterNameSize;
-  const roleBadgeR = Math.max(11, radius * 0.36);
-  const hpFontSize = Math.max(9, Math.min(12, Math.round(gridSizePx * 0.13)));
+  const preferredNameSize = Math.max(9.5, Math.min(11.5, Math.round(gridSizePx * 0.165)));
+  const maxLabelWidth = Math.max(42, Math.min(74, Math.round(radius * 1.44)));
+  const tagText = token.revealTag ?? '';
+  const {nameWidth, tagWidth, labelFontSize, labelText} = useMemo(() => {
+    const text = display.name.replace(/\s+/g, ' ').trim();
+    const full = tagText ? `${text} ${tagText}` : text;
+    const fullWidth = measureTokenTextWidth(full, preferredNameSize);
+    const available = Math.max(maxLabelWidth * 0.55, maxLabelWidth - 2);
+    const fittedSize = fullWidth > available
+      ? Math.max(8.5, preferredNameSize * (available / fullWidth))
+      : preferredNameSize;
+    const measuredTag = tagText ? Math.ceil(measureTokenTextWidth(tagText, fittedSize) + 3) : 0;
+    const nameBudget = Math.max(22, maxLabelWidth - measuredTag);
+    const measuredName = measureTokenTextWidth(text, fittedSize);
+    return {
+      nameWidth: Math.min(nameBudget, Math.ceil(measuredName + 2)),
+      tagWidth: measuredTag,
+      labelFontSize: fittedSize,
+      labelText: text,
+    };
+  }, [display.name, tagText, preferredNameSize, maxLabelWidth]);
+  const roleBadgeR = Math.max(8.5, Math.min(11.5, radius * 0.3));
   const showExactHp = !isDead && hpFrac !== null && showHpNumbers && display.curHp !== undefined && display.maxHp !== undefined;
+  const hpFontSize = Math.max(9, Math.min(10.5, Math.round(gridSizePx * 0.155)));
+  const hpBarWidth = Math.max(30, Math.round(radius * 1.44));
+  const hpBarHeight = showExactHp ? hpFontSize + 2 : 5;
+  const hpBarRadius = hpBarHeight / 2;
+  const hpBarY = radius + 2;
   const hpText = showExactHp ? `${display.curHp}/${display.maxHp}` : null;
-  const hpNumbersOffset = showExactHp ? hpFontSize + 2 : 0;
-  const labelY = radius + Math.max(hpFrac !== null ? 14 + hpNumbersOffset : 4,
-    token.combatRole ? roleBadgeR - radius * .28 + 4 : 4);
-  const nameY = token.kind === 'pc' ? radius + 4 : labelY;
-  const initiativeFontSize = Math.max(8, Math.min(11, labelFontSize * .8));
-  const initiativeHeight = initiativeFontSize + 4;
-  const initiativeWidth = String(initiativeRank ?? '').length * initiativeFontSize * .65 + 6;
-  const initiativeX = -(nameWidth + (token.kind === 'pc' ? 0 : tagWidth)) / 2 - initiativeWidth - 4;
+  const labelY = hpFrac !== null ? hpBarY + hpBarHeight + 2 : radius + 4;
+  const nameY = labelY;
+  const deathSavesY = Math.ceil(labelY + labelFontSize * 1.15 + 2);
+  const initiativeFontSize = Math.max(7.5, Math.min(9, labelFontSize * .78));
+  const initiativeHeight = initiativeFontSize + 3;
+  const initiativeWidth = String(initiativeRank ?? '').length * initiativeFontSize * .6 + 4;
+  const initiativeX = -(nameWidth + tagWidth) / 2 - initiativeWidth - 2;
 
 
   // Silhouette by token shape. `image` draws the icon unclipped (pasted art);
@@ -586,7 +589,7 @@ function TokenShapeInner({
       retainedRadius={radius*1.4+4}
       miniatureReady={miniatureReady}
       miniaturePending={miniaturePending}
-      tokenLabelVersion={`${display.name}|${token.kind}|${isDead ? 1 : 0}|${radius}|${nameY}|${nameWidth}|${tagWidth}|${labelY}|${labelFontSize}|${playerNameSize}|${monsterNameSize}|${token.revealTag ?? ''}|${hpFrac ?? ''}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${showHpNumbers ? 1 : 0}|${display.tempHp ?? ''}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`}
+      tokenLabelVersion={`${display.name}|${token.kind}|${isDead ? 1 : 0}|${radius}|${nameY}|${nameWidth}|${tagWidth}|${labelY}|${labelFontSize}|${hpBarWidth}|${hpBarHeight}|${token.revealTag ?? ''}|${hpFrac ?? ''}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${showHpNumbers ? 1 : 0}|${display.tempHp ?? ''}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`}
       x={presentation?.position(token.id)?.x??token.x}
       y={presentation?.position(token.id)?.y??token.y}
       listening={listening}
@@ -713,7 +716,7 @@ function TokenShapeInner({
       </>}
       </Group>
       <Group name="token-upright-hud" rotation={-viewRotation} visible={!token.partiallyRevealed}>
-      {serverHud&&serverSprite?<><KonvaImage name="server-token-hud" image={serverHud} x={serverSprite.hud.x} y={serverSprite.hud.y} width={serverSprite.hud.width/serverSprite.hud.scale} height={serverSprite.hud.height/serverSprite.hud.scale}/>{!isDead&&token.kind==='pc'&&(display.curHp??1)<=0&&display.deathSaves&&<Group name="token-death-saves" x={0} y={radius+playerNameSize+17}><Rect x={-31} y={0} width={62} height={13} cornerRadius={6.5} fill="#0b0d12eb" stroke={display.deathSaves.successes>=3?'#39c46b':'#b89650'} strokeWidth={1}/>{[0,1,2].map((i)=>(<Circle key={`s${i}`} x={-22+i*8} y={6.5} radius={3} fill={i<display.deathSaves!.successes?'#39c46b':'#1b2420'} stroke={i<display.deathSaves!.successes?'#b7f7cc':'#39c46b88'} strokeWidth={1}/>))}<Rect x={-0.5} y={2.5} width={1} height={8} fill="#ffffff44"/>{[0,1,2].map((i)=>(<Circle key={`f${i}`} x={6+i*8} y={6.5} radius={3} fill={i<display.deathSaves!.failures?'#e23b3b':'#291a1c'} stroke={i<display.deathSaves!.failures?'#ffb3b3':'#e23b3b88'} strokeWidth={1}/>))}</Group>}{isDead&&!miniatureReady&&!miniaturePending&&<Text text="💀" fontSize={radius*1.4} width={radius*2} height={radius*2} offsetX={radius} offsetY={radius} align="center" verticalAlign="middle"/>}{!isDead&&token.kind!=='pc'&&token.combatRole&&!miniatureReady&&!miniaturePending&&<Group name="token-combat-role" x={-radius*0.72} y={radius*0.72}><Text text={COMBAT_ROLE_ICON[token.combatRole]} fontSize={roleBadgeR*1.3} width={roleBadgeR*2} height={roleBadgeR*2} offsetX={roleBadgeR} offsetY={roleBadgeR} align="center" verticalAlign="middle"/></Group>}</>:<>
+      {serverHud&&serverSprite?<><KonvaImage name="server-token-hud" image={serverHud} x={serverSprite.hud.x} y={serverSprite.hud.y} width={serverSprite.hud.width/serverSprite.hud.scale} height={serverSprite.hud.height/serverSprite.hud.scale}/>{!isDead&&token.kind==='pc'&&(display.curHp??1)<=0&&display.deathSaves&&<Group name="token-death-saves" x={0} y={deathSavesY}><Rect x={-28} y={0} width={56} height={11} cornerRadius={5.5} fill="#0b0d12eb" stroke={display.deathSaves.successes>=3?'#39c46b':'#b89650'} strokeWidth={1}/>{[0,1,2].map((i)=>(<Circle key={`s${i}`} x={-19+i*7} y={5.5} radius={2.6} fill={i<display.deathSaves!.successes?'#39c46b':'#1b2420'} stroke={i<display.deathSaves!.successes?'#b7f7cc':'#39c46b88'} strokeWidth={1}/>))}<Rect x={-0.5} y={2} width={1} height={7} fill="#ffffff44"/>{[0,1,2].map((i)=>(<Circle key={`f${i}`} x={5+i*7} y={5.5} radius={2.6} fill={i<display.deathSaves!.failures?'#e23b3b':'#291a1c'} stroke={i<display.deathSaves!.failures?'#ffb3b3':'#e23b3b88'} strokeWidth={1}/>))}</Group>}{isDead&&!miniatureReady&&!miniaturePending&&<Text text="💀" fontSize={radius*1.4} width={radius*2} height={radius*2} offsetX={radius} offsetY={radius} align="center" verticalAlign="middle"/>}{!isDead&&token.kind!=='pc'&&token.combatRole&&!miniatureReady&&!miniaturePending&&<Group name="token-combat-role" x={-radius*0.82} y={radius*0.46}><Text text={COMBAT_ROLE_ICON[token.combatRole]} fontSize={roleBadgeR*1.3} width={roleBadgeR*2} height={roleBadgeR*2} offsetX={roleBadgeR} offsetY={roleBadgeR} align="center" verticalAlign="middle"/></Group>}</>:<>
           {!miniatureReady && !token.sharedSightOnly && token.markLabels?.some(label=>/hunter.s mark/i.test(label)) && <Group y={-radius-22} listening={false} name="hunters-mark-sigil">
         <RegularPolygon sides={4} radius={14} stroke="#ffe7a1" strokeWidth={2} fill="#352106" rotation={0} shadowColor="#ffa62b" shadowBlur={8}/>
         <Circle radius={4} fill="#fff5d2"/>
@@ -732,9 +735,81 @@ function TokenShapeInner({
           verticalAlign="middle"
         />
       )}
+      {/* Unified HP bar right under the base for both PC and monster tokens. */}
+      {!isDead && hpFrac !== null && (
+        <Group name="token-health" y={hpBarY} offsetX={hpBarWidth / 2}>
+          <Rect
+            width={hpBarWidth}
+            height={hpBarHeight}
+            fill={showExactHp ? '#0b0d12d9' : '#0009'}
+            stroke={showExactHp ? '#000b' : undefined}
+            strokeWidth={showExactHp ? 0.75 : 0}
+            cornerRadius={hpBarRadius}
+          />
+          <Rect
+            width={hpBarWidth * hpFrac}
+            height={hpBarHeight}
+            fill={hpFrac > 0.5 ? '#39c46b' : hpFrac > 0.25 ? '#f5c518' : '#e23b3b'}
+            cornerRadius={hpBarRadius}
+          />
+          {hpText !== null && (() => {
+            const hpBoxW = Math.max(hpBarWidth + 24, 68);
+            return (
+              <Text
+                name="token-hp-value"
+                text={hpText}
+                fontSize={hpFontSize}
+                fontStyle="bold"
+                fill="#ffffff"
+                stroke="#000"
+                strokeWidth={2.2}
+                fillAfterStrokeEnabled
+                lineJoin="round"
+                align="center"
+                verticalAlign="middle"
+                wrap="none"
+                width={hpBoxW}
+                height={hpBarHeight}
+                x={hpBarWidth / 2 - hpBoxW / 2}
+                y={0}
+              />
+            );
+          })()}
+          {/* Temporary HP — a single flat buffer pool (no max), so it shows as a
+              "+N" to the right of the bar rather than a second bar. */}
+          {!!display.tempHp && display.tempHp > 0 && (() => {
+            const tempFont = Math.max(9, Math.min(11, hpFontSize));
+            return (
+              <Text
+                text={`+${display.tempHp}`}
+                fontSize={tempFont}
+                fontStyle="bold"
+                fill="#5ce1ff"
+                stroke="#000"
+                strokeWidth={2}
+                fillAfterStrokeEnabled
+                x={hpBarWidth + 3}
+                y={(hpBarHeight - tempFont) / 2}
+              />
+            );
+          })()}
+          {token.kind === 'pc' && (display.curHp ?? 1) <= 0 && display.deathSaves && (
+            <Group name="token-death-saves" x={hpBarWidth / 2} y={deathSavesY - hpBarY}>
+              <Rect x={-28} y={0} width={56} height={11} cornerRadius={5.5} fill="#0b0d12eb" stroke={display.deathSaves.successes >= 3 ? '#39c46b' : '#b89650'} strokeWidth={1} />
+              {[0, 1, 2].map((i) => (
+                <Circle key={`s${i}`} x={-19 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.successes ? '#39c46b' : '#1b2420'} stroke={i < display.deathSaves!.successes ? '#b7f7cc' : '#39c46b88'} strokeWidth={1} />
+              ))}
+              <Rect x={-0.5} y={2} width={1} height={7} fill="#ffffff44" />
+              {[0, 1, 2].map((i) => (
+                <Circle key={`f${i}`} x={5 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.failures ? '#e23b3b' : '#291a1c'} stroke={i < display.deathSaves!.failures ? '#ffb3b3' : '#e23b3b88'} strokeWidth={1} />
+              ))}
+            </Group>
+          )}
+        </Group>
+      )}
       {!isDead && <Text
         stroke="#000"
-        strokeWidth={3}
+        strokeWidth={2.5}
         fillAfterStrokeEnabled
         lineJoin="round"
         name="token-label"
@@ -743,75 +818,17 @@ function TokenShapeInner({
         fill={token.sharedSightOnly ? '#8a919e' : '#fff'}
         opacity={token.sharedSightOnly ? 0.75 : 1}
         align="center"
-        width={token.kind === 'pc' ? radius * 4 : nameWidth}
-        offsetX={token.kind === 'pc' ? radius * 2 : (nameWidth + tagWidth) / 2}
+        width={nameWidth}
+        offsetX={(nameWidth + tagWidth) / 2}
         wrap="none"
-        ellipsis={token.kind !== 'pc'}
-        height={labelFontSize * 1.25}
-        // Monster names clear the base, health bar and combat badge; PC layout stays compact.
+        ellipsis
+        height={labelFontSize * 1.18}
         y={nameY}
       />}
-      {/* HP bar (only when HP is visible to this viewer). */}
-      {!isDead && hpFrac !== null && (
-        <Group name="token-health" y={radius + (token.kind === 'pc' ? playerNameSize + 8 : 4)} offsetX={radius}>
-          {token.kind === 'pc' && (display.curHp ?? 1) <= 0 && display.deathSaves && (
-            <Group name="token-death-saves" x={radius} y={9}>
-              <Rect x={-31} y={0} width={62} height={13} cornerRadius={6.5} fill="#0b0d12eb" stroke={display.deathSaves.successes >= 3 ? '#39c46b' : '#b89650'} strokeWidth={1} />
-              {[0, 1, 2].map((i) => (
-                <Circle key={`s${i}`} x={-22 + i * 8} y={6.5} radius={3} fill={i < display.deathSaves!.successes ? '#39c46b' : '#1b2420'} stroke={i < display.deathSaves!.successes ? '#b7f7cc' : '#39c46b88'} strokeWidth={1} />
-              ))}
-              <Rect x={-0.5} y={2.5} width={1} height={8} fill="#ffffff44" />
-              {[0, 1, 2].map((i) => (
-                <Circle key={`f${i}`} x={6 + i * 8} y={6.5} radius={3} fill={i < display.deathSaves!.failures ? '#e23b3b' : '#291a1c'} stroke={i < display.deathSaves!.failures ? '#ffb3b3' : '#e23b3b88'} strokeWidth={1} />
-              ))}
-            </Group>
-          )}
-          <Rect width={radius * 2} height={6} fill="#0008" cornerRadius={3} />
-          <Rect
-            width={radius * 2 * hpFrac}
-            height={6}
-            fill={hpFrac > 0.5 ? '#39c46b' : hpFrac > 0.25 ? '#f5c518' : '#e23b3b'}
-            cornerRadius={3}
-          />
-          {/* Temporary HP — a single flat buffer pool (no max), so it shows as a
-              "+N" to the right of the bar rather than a second bar. */}
-          {!!display.tempHp && display.tempHp > 0 && (
-            <Text
-              text={`+${display.tempHp}`}
-              fontSize={Math.max(10, radius * 0.4)}
-              fontStyle="bold"
-              fill="#5ce1ff"
-              x={radius * 2 + 3} y={-1}
-
-            />
-          )}
-          {hpText !== null && (() => {
-            const hpBoxW = Math.max(radius * 2 + 28, 72);
-            return (
-              <Text
-                name="token-hp-value"
-                text={hpText}
-                fontSize={hpFontSize}
-                fontStyle="bold"
-                fill="#f8f1e1"
-                stroke="#000"
-                strokeWidth={2.5}
-                fillAfterStrokeEnabled
-                lineJoin="round"
-                align="center"
-                wrap="none"
-                width={hpBoxW}
-                x={radius - hpBoxW / 2}
-                y={token.kind === 'pc' && (display.curHp ?? 1) <= 0 && display.deathSaves ? 24 : 8}
-              />
-            );
-          })()}
-        </Group>
-      )}
       {!isDead && token.revealTag && (
         <Group name="token-tracking-tag" x={(nameWidth - tagWidth) / 2} y={labelY}>
-          <Text text={token.revealTag} x={4} width={tagWidth - 4} align="left" fontSize={monsterNameSize}
-            fontStyle="bold" fill={token.sharedSightOnly ? '#8a919e' : '#fff'} opacity={token.sharedSightOnly ? 0.75 : 1} stroke="#000" strokeWidth={3} fillAfterStrokeEnabled />
+          <Text text={token.revealTag} x={2} width={tagWidth - 2} align="left" fontSize={labelFontSize}
+            fontStyle="bold" fill={token.sharedSightOnly ? '#8a919e' : '#fff'} opacity={token.sharedSightOnly ? 0.75 : 1} stroke="#000" strokeWidth={2.5} fillAfterStrokeEnabled />
         </Group>
       )}
       {/* Disposition dot (top-left): green friendly · amber neutral · red enemy. */}
@@ -828,7 +845,7 @@ function TokenShapeInner({
       {/* Combat-role badge (bottom-left corner): ⚔️ melee · 🏹 ranged · ✨ caster.
           A solid dark disc behind the emoji keeps it legible over any token art. */}
       {!isDead && token.kind !== 'pc' && token.combatRole && !miniatureReady && !miniaturePending && (
-        <Group name="token-combat-role" x={-radius * 0.72} y={radius * 0.72}>
+        <Group name="token-combat-role" x={-radius * 0.82} y={radius * 0.46}>
           <Circle
             radius={roleBadgeR}
             fill="#0b0d12"
