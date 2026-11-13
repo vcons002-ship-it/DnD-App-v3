@@ -9,6 +9,11 @@ on:
     types: [closed]
     branches: [claude/Main]
 
+# Serialize launcher/cleanup commits on claude/Main so concurrent PR events never race.
+concurrency:
+  group: pr-test-launcher-main
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -35,4 +40,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm -- "${files[@]}"
           git commit -m "chore: remove PR #${PR_NUMBER} test launcher (PR closed)"
-          git push origin claude/Main
+          for attempt in 1 2 3; do
+            git push origin claude/Main && break
+            git pull --rebase origin claude/Main
+          done

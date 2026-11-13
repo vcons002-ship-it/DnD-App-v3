@@ -12,18 +12,23 @@
       "error": 0.002,
       "permissive": false
     },
-    "preserveHead": true
+    "preserveFace": true,
+    "untexturedHair": {
+      "ratio": 0.25,
+      "error": 0.002,
+      "permissive": true
+    }
   },
   "sourceUrl": "/miniatures/vanec-tail-root-low-9c1f11d325a1.glb",
   "sourceSha256": "9c1f11d325a1fe505f6282646b77ad034253a0d0fac425882c6efdc18acc11fe",
   "sourceBytes": 19901780,
   "sourceTriangles": 207975,
   "sourceGeometryBytes": 12282568,
-  "geometryBytes": 11338148,
-  "filename": "vanec-tail-root-battlefield-8218f6d9480e.glb",
-  "sha256": "8218f6d9480e51c9a4397b8f900452fa7df5e7bba67869460ccb3806a39bf662",
-  "bytes": 19307648,
-  "triangles": 179963,
+  "geometryBytes": 5909894,
+  "filename": "vanec-tail-root-battlefield-973ad2c8aaf4.glb",
+  "sha256": "973ad2c8aaf4fdd9679d88697e16b2a5906e7c5cb60693b1888e2e39efab67ee",
+  "bytes": 16250236,
+  "triangles": 124155,
   "baseCenter": [
     -0.00920414924621582,
     -0.9993069767951965,
@@ -99,6 +104,8 @@
       "detail": false,
       "preserved": false,
       "seamSafeBody": true,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -116,6 +123,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -133,6 +142,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -150,6 +161,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -167,6 +180,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -180,16 +195,18 @@
       ],
       "material": "Vanec_Charcoal_Hair_And_Plum_Horns",
       "before": 85565,
-      "after": 85565,
+      "after": 29757,
       "detail": true,
-      "preserved": true,
+      "preserved": false,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": true,
       "reduction": {
-        "ratio": 0.45,
+        "ratio": 0.25,
         "error": 0.002,
-        "permissive": false
+        "permissive": true
       },
-      "actualError": 0
+      "actualError": 0.0019530935678631067
     },
     {
       "nodes": [
@@ -201,6 +218,8 @@
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -218,6 +237,8 @@
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -235,6 +256,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -252,6 +275,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -269,6 +294,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -286,6 +313,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -303,6 +332,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -320,6 +351,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -337,6 +370,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -354,6 +389,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -371,6 +408,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -388,6 +427,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -405,6 +446,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -422,6 +465,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -439,6 +484,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -456,6 +503,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -473,6 +522,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -490,6 +541,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -507,6 +560,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -524,6 +579,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -541,6 +598,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -558,6 +617,8 @@
       "detail": false,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.2,
         "error": 0.002,
@@ -575,6 +636,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -592,6 +655,8 @@
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -609,6 +674,8 @@
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -626,6 +693,8 @@
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -643,6 +712,8 @@
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -660,6 +731,8 @@
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -677,6 +750,8 @@
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
       "reduction": {
         "ratio": 0.45,
         "error": 0.002,
@@ -685,7 +760,7 @@
       "actualError": 0.0019527284894138575
     }
   ],
-  "elapsedMs": 319.07770000000005,
+  "elapsedMs": 608.1582,
   "verified": {
     "texturesByteExact": true,
     "materialsPreserved": true,
@@ -694,13 +769,5 @@
     "validIndicesAndFinitePositions": true,
     "sourceUnchanged": true
   },
-  "geometryLossless": false,
-  "tailRecolor": {
-    "paintReceipt": "assets/miniatures/runtime-provenance/vanec-tail-skin-20261022/root-coverage-02/paint-receipt.json",
-    "originalReceipt": "assets/miniatures/battlefield-lod/vanec-tail-20261022.json",
-    "originalReceiptSha256": "69ef3f6739f6d61ca494c166788249b3dc857e0a3e15c8996b90a55c53f49fe8",
-    "originalRuntimeSha256": "de2e340c454c827e347d9d80d28b475848ed9f41c1b53caac2e1f6be9fd3a9b9",
-    "geometryAndAnimationBytesRetained": true,
-    "onlyTextureIndex": 0
-  }
+  "geometryLossless": false
 }

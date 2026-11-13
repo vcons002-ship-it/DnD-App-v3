@@ -51,7 +51,11 @@ for(const model of manifest.models){
  }
  if(model.id==='vanec'){
   const head=receipt.primitives.filter(p=>p.nodes.some(n=>/head|face/i.test(n)));
-  assert(head.length>0);assert(head.every(p=>p.preserved&&p.before===p.after),'Vanec head remains intact');
+  const face=head.filter(p=>!/hair/i.test(p.material??''));
+  const hair=head.filter(p=>/hair/i.test(p.material??''));
+  assert(face.length>0&&face.every(p=>p.preserved&&p.before===p.after),'Vanec face remains intact');
+  assert(hair.length>0&&hair.every(p=>p.untexturedHair&&p.reduction.ratio===.25&&p.reduction.error===.002&&p.reduction.permissive===true&&p.actualError<=.002),
+   'Vanec untextured hair and horns stay within their declared error bound');
  }
  // Druk's approved layered repairs and Vanec's robe/head require higher floors.
  // Retain the previous budget for characters without a reviewed exception.

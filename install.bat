@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 title DnD-App-v3 Installer
 
 REM ============================================================
-REM   DnD-App-v2  -  one-click Windows installer
+REM   DnD-App-v3  -  one-click Windows installer
 REM   Checks for + installs Git, Node.js (LTS) and cloudflared,
 REM   clones/updates the repo, installs dependencies, and can
 REM   launch the app. Safe to re-run any time to update.
@@ -13,6 +13,7 @@ REM ----- Settings you can edit -----
 set "REPO_URL=https://github.com/vcons002-ship-it/DnD-App-v3.git"
 set "BRANCH=claude/Main"
 set "INSTALL_DIR=%USERPROFILE%\DnD-App-v3"
+set "GIT_LFS_SKIP_SMUDGE=1"
 REM ---------------------------------
 
 echo ============================================
@@ -147,8 +148,8 @@ exit /b 1
 REM ----- Clean up throwaway PR test folders whose launcher is gone -----
 REM Once a PR merges/closes, the cleanup Action removes its "PR #N - *.bat"
 REM launcher from claude/Main (pulled above), so any matching local test folder
-REM at %USERPROFILE%\DnD-App-v2-pr-N is now stale and safe to delete.
-for /d %%D in ("%USERPROFILE%\DnD-App-v2-pr-*") do call :clean_stale_pr "%%~fD"
+REM at %USERPROFILE%\DnD-App-v3-pr-N is now stale and safe to delete.
+for /d %%D in ("%USERPROFILE%\DnD-App-v3-pr-*") do call :clean_stale_pr "%%~fD"
 
 REM ----- Install dependencies -----
 pushd "%INSTALL_DIR%"
@@ -252,7 +253,7 @@ REM ===== helper: delete a PR test folder if its launcher is gone =====
 :clean_stale_pr
 set "PRDIR=%~1"
 set "LEAF=%~nx1"
-set "NUM=!LEAF:DnD-App-v2-pr-=!"
+set "NUM=!LEAF:DnD-App-v3-pr-=!"
 if not exist "%INSTALL_DIR%\PR #!NUM! - *.bat" (
   echo Removing test folder for merged/closed PR #!NUM! ...
   rmdir /s /q "%PRDIR%"
