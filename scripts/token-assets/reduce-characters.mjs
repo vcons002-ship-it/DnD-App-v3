@@ -49,8 +49,9 @@ for(const entry of manifest.models.filter(m=>!selected||selected.includes(m.id))
  const model=verifySharedDelivery(entry,root);
  const sourceBytes=entry.sharedTextureReceipt?restoreSharedGlb(deliveredBytes,JSON.parse(await fs.readFile(path.join(root,entry.sharedTextureReceipt),'utf8')),uri=>readFileSync(path.join(root,'client/public/miniatures',uri))):deliveredBytes;
  for(const basePolicy of profiles){
-  // Vanec's thin robe silhouette and ornate crown need a less aggressive floor.
-  const policy=battlefield&&model.id==='vanec'?{...basePolicy,bodyRatio:.2,detailRatio:.45,error:.002,permissive:false,preserveHead:true}
+  // Vanec's thin robe silhouette, face and ornate crown need a less aggressive floor,
+  // while untextured vertex-colored hair/horns (85k tris) can safely simplify within 0.002 error.
+  const policy=battlefield&&model.id==='vanec'?{...basePolicy,bodyRatio:.2,detailRatio:.45,error:.002,permissive:false,preserveFace:true,untexturedHair:{ratio:.25,error:.002,permissive:true}}
    :battlefield&&model.id==='druk'?{...basePolicy,seamSafeHead:{ratio:.5,error:.0015,permissive:false}}:basePolicy;
   const start=performance.now(),doc=await io.readBinary(sourceBytes);
   assert.equal(doc.getRoot().listSkins().length,0);
@@ -65,11 +66,13 @@ for(const entry of manifest.models.filter(m=>!selected||selected.includes(m.id))
    const seamSafeBody=battlefield&&nodes.some(n=>/body/i.test(n));
    // A head atlas can contain both skin and hair. Preserve those UV boundaries
    // instead of allowing coarse scalp triangles to sample neighboring colors.
-   const seamSafeHead=!!policy.seamSafeHead&&nodes.some(n=>/head|face/i.test(n));
-   const reduction=seamSafeBody?policy.seamSafeBody:seamSafeHead?policy.seamSafeHead:{ratio:detail?policy.detailRatio:policy.bodyRatio,error:policy.error,permissive:policy.permissive};
+   const isHeadNode=nodes.some(n=>/head|face/i.test(n));
+   const seamSafeHead=!!policy.seamSafeHead&&isHeadNode;
+   const untexturedHair=!!policy.untexturedHair&&isHeadNode&&/hair/i.test(p.getMaterial()?.getName()??'')&&!p.getMaterial()?.getBaseColorTexture();
+   const reduction=seamSafeBody?policy.seamSafeBody:seamSafeHead?policy.seamSafeHead:untexturedHair?policy.untexturedHair:{ratio:detail?policy.detailRatio:policy.bodyRatio,error:policy.error,permissive:policy.permissive};
    // The approved edge cleanup is a narrow layered metal sheet. Reducing its
    // custom-normal boundaries again makes the polished surface look crumpled.
-   const preserve=before<(battlefield?500:2000)||/lightning|glow|repair|closure|transition|eye|pauldrons_size_preserved/i.test(label)||(policy.preserveHead&&/head|face/i.test(label));
+   const preserve=before<(battlefield?500:2000)||/lightning|glow|repair|closure|transition|eye|pauldrons_size_preserved/i.test(label)||(policy.preserveHead&&/head|face/i.test(label))||(policy.preserveFace&&isHeadNode&&!untexturedHair);
    let actualError=0;
    if(!preserve){
     // Retain existing vertex attributes. Weight normals, UVs and vertex color in
@@ -90,7 +93,7 @@ for(const entry of manifest.models.filter(m=>!selected||selected.includes(m.id))
     }};
     simplifyPrimitive(p,{simplifier,ratio:reduction.ratio,error:reduction.error,lockBorder:true});
    }
-   primitives.push({nodes,material:p.getMaterial()?.getName(),before,after:p.getIndices().getCount()/3,detail,preserved:preserve,seamSafeBody,seamSafeHead,reduction,actualError});
+   primitives.push({nodes,material:p.getMaterial()?.getName(),before,after:p.getIndices().getCount()/3,detail,preserved:preserve,seamSafeBody,seamSafeHead,untexturedHair,reduction,actualError});
   }
   doc.createExtension(EXTMeshoptCompression).setRequired(true).setEncoderOptions({method:EXTMeshoptCompression.EncoderMethod.QUANTIZE});
   await doc.transform(reorder({encoder:MeshoptEncoder,target:'size'}),prune({propertyTypes:[PropertyType.ACCESSOR],keepAttributes:true,keepIndices:true}));

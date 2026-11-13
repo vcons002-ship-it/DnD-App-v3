@@ -2,14 +2,14 @@
 setlocal EnableDelayedExpansion
 
 REM ============================================================
-REM   DnD-App-v2  -  PR test runner (shared engine)
+REM   DnD-App-v3  -  PR test runner (shared engine)
 REM
 REM   Do NOT run this directly. It is called by a test-pr-<N>.bat
 REM   launcher (which sets PR_NUMBER / PR_BRANCH / PR_TITLE).
 REM
 REM   It checks out a PR branch into its OWN folder, on its OWN port,
 REM   with its OWN game data, and runs it. Your main install
-REM   (%USERPROFILE%\DnD-App-v2) and its save data are never touched,
+REM   (%USERPROFILE%\DnD-App-v3) and its save data are never touched,
 REM   so start.bat always keeps running the approved claude/Main code.
 REM   Close the "PR# TEST" window to stop the test.
 REM ============================================================
@@ -17,13 +17,14 @@ REM ============================================================
 if not defined PR_NUMBER goto helper_misuse
 if not defined PR_BRANCH goto helper_misuse
 
-set "REPO_URL=https://github.com/vcons002-ship-it/DnD-App-v2.git"
-set "TEST_DIR=%USERPROFILE%\DnD-App-v2-pr-%PR_NUMBER%"
+set "REPO_URL=https://github.com/vcons002-ship-it/DnD-App-v3.git"
+set "TEST_DIR=%USERPROFILE%\DnD-App-v3-pr-%PR_NUMBER%"
+set "GIT_LFS_SKIP_SMUDGE=1"
 REM Each PR gets a distinct port (4100 + PR number) so several can run at once
 REM and none collide with the main install's default port (4000).
 set /a TEST_PORT=4100+%PR_NUMBER%
 
-title DnD-App-v2 PR#%PR_NUMBER% test setup
+title DnD-App-v3 PR#%PR_NUMBER% test setup
 
 REM Make node/npm/git visible even right after a fresh install.
 for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"

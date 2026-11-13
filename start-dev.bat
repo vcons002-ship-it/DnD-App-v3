@@ -1,5 +1,5 @@
 @echo off
-title DnD-App-v2 (local dev)
+title DnD-App-v3 (local dev)
 cd /d "%~dp0"
 
 for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"

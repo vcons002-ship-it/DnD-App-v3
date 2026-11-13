@@ -1,5 +1,5 @@
 @echo off
-title DnD-App-v2
+title DnD-App-v3
 cd /d "%~dp0"
 
 REM Make sure node/npm/cloudflared are visible even right after install.
@@ -27,7 +27,7 @@ if %errorlevel%==0 (
   exit /b 0
 )
 
-echo Starting DnD-App-v2 ... share the links printed below with your table.
+echo Starting DnD-App-v3 ... share the links printed below with your table.
 echo (Press Ctrl+C in this window to stop the server.)
 echo.
 call npm start
