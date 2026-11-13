@@ -3,7 +3,14 @@ import { config } from '../config.js';
 import { ollamaChat, ollamaReachable, ollamaConfigured, refreshOllama } from './ollama.js';
 import { callGemini, callGeminiText, geminiEnabled } from '../creatures/gemini.js';
 
-export { refreshOllama, ollamaReachable, ollamaConfigured, listOllamaModels } from './ollama.js';
+export {
+  refreshOllama,
+  ollamaReachable,
+  ollamaConfigured,
+  listOllamaModels,
+  listOllamaModelDetails,
+  detectGpuVramBytes,
+} from './ollama.js';
 
 /** Local mode prefers Ollama, with Gemini as the configured API backup. */
 function effectivePrefer(prefer?: 'gemini' | 'local'): 'gemini' | 'local' {

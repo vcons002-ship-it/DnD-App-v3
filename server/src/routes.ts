@@ -46,7 +46,11 @@ import {
   generateShopItemsAI,
   geminiEnabled,
 } from './creatures/gemini.js';
-import { aiAvailable, listOllamaModels } from './ai/gateway.js';
+import {
+  aiAvailable,
+  detectGpuVramBytes,
+  listOllamaModelDetails,
+} from './ai/gateway.js';
 import {
   refreshComfy,
   listComfyModels,
@@ -563,8 +567,14 @@ export function createApiRouter(io: IOServer): Router {
   // Available AI backends for the chat's quick model dropdown: locally-pulled
   // Ollama models + whether Gemini is usable, plus the configured defaults.
   router.get('/ai/models', async (_req, res) => {
+    const [ollamaModelDetails, gpuVramBytes] = await Promise.all([
+      listOllamaModelDetails(),
+      detectGpuVramBytes(),
+    ]);
     res.json({
-      ollamaModels: await listOllamaModels(),
+      ollamaModels: ollamaModelDetails.map((m) => m.name),
+      ollamaModelDetails,
+      ...(gpuVramBytes ? { gpuVramBytes } : {}),
       defaultOllamaModel: config.ollamaModel,
       geminiAvailable: geminiEnabled(),
       aiMode: config.aiMode,

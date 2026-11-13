@@ -5,6 +5,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {config} from './config.js';
 import {listOllamaModels,ollamaChat} from './ai/ollama.js';
 import {reportAi} from './ai/status.js';
+import {assessOllamaModel} from '../../shared/ollamaModels.js';
 import type {MapAnalysisRegion} from '../../shared/mapAnalysisRegions.js';
 
 export type MapFeature='walls'|'caves'|'doors'|'arches'|'windows'|'lights';
@@ -15,7 +16,7 @@ let modelCache:{until:number;model?:string}|undefined;
 async function qwenModel(){
  if(modelCache&&modelCache.until>Date.now())return modelCache.model;
  const names=(await listOllamaModels()).filter(n=>/^qwen/i.test(n)).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}));
- const model=names.includes(config.ollamaModel)&&/^qwen/i.test(config.ollamaModel)?config.ollamaModel:names[0];
+ const model=names.includes(config.ollamaModel)&&/^qwen/i.test(config.ollamaModel)?config.ollamaModel:(names.find(n=>assessOllamaModel(n).tier==='ok')??names[0]);
  modelCache={until:Date.now()+30_000,model};return model;
 }
 export function resetMapGateModelCache(){modelCache=undefined;}
