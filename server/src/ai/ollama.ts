@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process';
 import { config } from '../config.js';
+import type { OllamaModelDetail } from '../../../shared/ollamaModels.js';
 
 /**
  * Low-level client for a local Ollama HTTP server — the local-LLM backend shared
@@ -37,8 +39,17 @@ export async function refreshOllama(): Promise<boolean> {
   return reachable;
 }
 
-/** The locally-pulled model names (for the chat's backend dropdown). [] if down. */
-export async function listOllamaModels(): Promise<string[]> {
+type OllamaTagEntry = {
+  name?: string;
+  size?: number;
+  details?: {
+    parameter_size?: string;
+    quantization_level?: string;
+  };
+};
+
+/** Locally-pulled models with disk/parameter metadata from Ollama's `/api/tags`. */
+export async function listOllamaModelDetails(): Promise<OllamaModelDetail[]> {
   if (!config.ollamaUrl) return [];
   try {
     const res = await fetch(`${config.ollamaUrl}/api/tags`, {
@@ -49,14 +60,52 @@ export async function listOllamaModels(): Promise<string[]> {
       return [];
     }
     reachable = true;
-    const data = (await res.json()) as { models?: { name?: string }[] };
+    const data = (await res.json()) as { models?: OllamaTagEntry[] };
     return (data.models ?? [])
-      .map((m) => m.name)
-      .filter((n): n is string => !!n);
+      .filter((m): m is OllamaTagEntry & { name: string } => typeof m.name === 'string' && !!m.name)
+      .map((m) => ({
+        name: m.name,
+        ...(typeof m.size === 'number' && Number.isFinite(m.size) ? { sizeBytes: m.size } : {}),
+        ...(m.details?.parameter_size ? { parameterSize: m.details.parameter_size } : {}),
+        ...(m.details?.quantization_level ? { quantizationLevel: m.details.quantization_level } : {}),
+      }));
   } catch {
     reachable = false;
     return [];
   }
+}
+
+/** The locally-pulled model names (for the chat's backend dropdown). [] if down. */
+export async function listOllamaModels(): Promise<string[]> {
+  return (await listOllamaModelDetails()).map((m) => m.name);
+}
+
+let gpuVramPromise: Promise<number | undefined> | null = null;
+
+/** Cached total GPU VRAM in bytes from `nvidia-smi`, or undefined when unavailable. */
+export function detectGpuVramBytes(): Promise<number | undefined> {
+  if (!gpuVramPromise) {
+    gpuVramPromise = new Promise((resolve) => {
+      execFile(
+        'nvidia-smi',
+        ['--query-gpu=memory.total', '--format=csv,noheader,nounits'],
+        { timeout: 2500, windowsHide: true },
+        (err, stdout) => {
+          if (err || !stdout) {
+            resolve(undefined);
+            return;
+          }
+          const mibList = stdout
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => Number(line.trim()))
+            .filter((n) => Number.isFinite(n) && n > 0);
+          resolve(mibList.length ? Math.max(...mibList) * 1024 * 1024 : undefined);
+        },
+      );
+    });
+  }
+  return gpuVramPromise;
 }
 
 /**

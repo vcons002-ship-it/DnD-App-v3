@@ -1,4 +1,5 @@
 import {upgradeLegacyGeminiModel} from '../../shared/geminiModels.js';
+import {DEFAULT_OLLAMA_MODEL} from '../../shared/ollamaModels.js';
 import dotenv from 'dotenv';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -109,7 +110,7 @@ export const config = {
   /** Local Ollama HTTP server base URL (the rules assistant tries this first). */
   ollamaUrl: (process.env.OLLAMA_URL || 'http://localhost:11434').replace(/\/$/, ''),
   /** Default Ollama model (must be pulled locally; the chat can pick another). */
-  ollamaModel: process.env.OLLAMA_MODEL || 'llama3.1',
+  ollamaModel: process.env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL,
   /** Ollama context window (tokens). The default is small and would truncate the
    *  grounding context (→ hallucination); 8k comfortably fits the rules excerpts. */
   ollamaNumCtx: Number(process.env.OLLAMA_NUM_CTX) || 8192,

@@ -14,6 +14,11 @@ import { mergeFeed } from '../lib/feed';
 import { resolveToken } from '../lib/entities';
 import { AdvantageToggle } from './AdvantageToggle';
 import { ChatImageAttachment } from './ChatImageAttachment';
+import {
+  assessOllamaModel,
+  pickRecommendedSafeModel,
+  type OllamaModelDetail,
+} from '../lib/ollamaModels';
 
 const QUICK = ['d20', 'd12', 'd10', 'd8', 'd6', 'd4', 'd100'];
 
@@ -99,6 +104,8 @@ export function DicePanel({
   // Defaults to local; persisted per browser. Options come from /api/ai/models.
   const [aiBackends, setAiBackends] = useState<{
     ollamaModels: string[];
+    ollamaModelDetails?: OllamaModelDetail[];
+    gpuVramBytes?: number;
     defaultOllamaModel: string;
     geminiAvailable: boolean;
     aiMode: 'gemini' | 'local';
@@ -113,7 +120,7 @@ export function DicePanel({
       .then((d) => {
         setAiBackends(d);
         setAiChoice((prev) => {
-          // Keep a still-valid saved choice; else default to LOCAL.
+          // Keep a still-valid saved choice; else default to LOCAL (preferring a safe VRAM tier).
           const valid =
             prev === 'gemini'
               ? d.geminiAvailable && d.aiMode !== 'local'
@@ -121,7 +128,8 @@ export function DicePanel({
           if (valid) return prev;
           const localPick = d.ollamaModels.includes(d.defaultOllamaModel)
             ? d.defaultOllamaModel
-            : d.ollamaModels[0];
+            : (pickRecommendedSafeModel(d.ollamaModels, d.ollamaModelDetails, d.gpuVramBytes) ??
+              d.ollamaModels[0]);
           if (localPick) return `local:${localPick}`;
           return d.geminiAvailable && d.aiMode !== 'local'
             ? 'gemini'
@@ -130,9 +138,47 @@ export function DicePanel({
       })
       .catch(() => setAiBackends(null));
   }, [isDm]);
-  const pickBackend = (choice: string) => {
+  const ollamaDetailMap = new Map(
+    (aiBackends?.ollamaModelDetails ?? []).map((detail) => [detail.name, detail]),
+  );
+  const assessChoiceModel = (modelName: string) =>
+    assessOllamaModel(modelName, {
+      detail: ollamaDetailMap.get(modelName),
+      gpuVramBytes: aiBackends?.gpuVramBytes,
+    });
+  const safeRecommendedModel = aiBackends
+    ? pickRecommendedSafeModel(
+        aiBackends.ollamaModels,
+        aiBackends.ollamaModelDetails,
+        aiBackends.gpuVramBytes,
+      )
+    : null;
+  const activeLocalModel = aiChoice.startsWith('local:') ? aiChoice.slice(6) : '';
+  const activeOllamaAssessment = activeLocalModel ? assessChoiceModel(activeLocalModel) : null;
+  const applyBackendChoice = (choice: string) => {
     setAiChoice(choice);
     safeSetItem('dnd.aiBackend', choice);
+  };
+  const pickBackend = async (choice: string) => {
+    if (choice === aiChoice) return;
+    if (choice.startsWith('local:')) {
+      const modelName = choice.slice(6);
+      const info = assessChoiceModel(modelName);
+      if (info.tier !== 'ok') {
+        const ok = await confirmAction({
+          title: `${info.tier === 'critical' ? '⛔' : '⚠'} ${info.headline}`,
+          acceptLabel: info.tier === 'critical' ? 'Use heavy model anyway' : 'Switch anyway',
+          danger: true,
+          message: `${info.detail}${
+            safeRecommendedModel && safeRecommendedModel !== modelName
+              ? `\n\nRecommended while running games or the VTT: ${safeRecommendedModel}.`
+              : ''
+          }`,
+        });
+        if (!ok) return;
+      }
+    }
+    applyBackendChoice(choice);
   };
   const choiceToBackend = (
     choice: string,
@@ -541,25 +587,53 @@ export function DicePanel({
         </div>
       )}
       {isDm && !isPrivate && aiBackends && (aiBackends.ollamaModels.length > 0 || aiBackends.geminiAvailable) && (
-        <div className="ai-backend-row" title="Which AI answers /ask rules questions">
-          <span className="muted">/ask uses:</span>
-          <select value={aiChoice} onChange={(e) => pickBackend(e.target.value)}>
-            {aiBackends.ollamaModels.map((m) => (
-              <option key={m} value={`local:${m}`}>
-                {m} (local)
-              </option>
-            ))}
-            {aiBackends.aiMode !== 'local' && aiBackends.geminiAvailable && (
-              <option value="gemini">Gemini (cloud)</option>
-            )}
-            {/* If the configured default model isn't pulled yet, still offer it. */}
-            {!aiBackends.ollamaModels.includes(aiBackends.defaultOllamaModel) && (
-              <option value={`local:${aiBackends.defaultOllamaModel}`}>
-                {aiBackends.defaultOllamaModel} (local)
-              </option>
-            )}
-          </select>
-        </div>
+        <>
+          <div className="ai-backend-row" title="Which AI answers /ask rules questions">
+            <span className="muted">/ask uses:</span>
+            <select value={aiChoice} onChange={(e) => void pickBackend(e.target.value)}>
+              {aiBackends.ollamaModels.map((m) => {
+                const info = assessChoiceModel(m);
+                const badge = info.tier === 'critical' ? '⛔ ' : info.tier === 'heavy' ? '⚠ ' : '';
+                return (
+                  <option key={m} value={`local:${m}`}>
+                    {badge}{m} (local · {info.optionTag})
+                  </option>
+                );
+              })}
+              {aiBackends.aiMode !== 'local' && aiBackends.geminiAvailable && (
+                <option value="gemini">Gemini (cloud)</option>
+              )}
+              {/* If the configured default model isn't pulled yet, still offer it. */}
+              {!aiBackends.ollamaModels.includes(aiBackends.defaultOllamaModel) && (
+                <option value={`local:${aiBackends.defaultOllamaModel}`}>
+                  {aiBackends.defaultOllamaModel} (local)
+                </option>
+              )}
+            </select>
+          </div>
+          {activeOllamaAssessment && activeOllamaAssessment.tier !== 'ok' && (
+            <div className={`ai-model-warning ${activeOllamaAssessment.tier}`} role="alert">
+              <div>
+                <strong>
+                  {activeOllamaAssessment.tier === 'critical' ? '⛔' : '⚠'}{' '}
+                  {activeOllamaAssessment.headline}:
+                </strong>{' '}
+                {activeOllamaAssessment.shortReason}
+              </div>
+              {safeRecommendedModel && safeRecommendedModel !== activeLocalModel && (
+                <div className="ai-model-warning-actions">
+                  <button
+                    type="button"
+                    className="btn tiny"
+                    onClick={() => applyBackendChoice(`local:${safeRecommendedModel}`)}
+                  >
+                    Use {safeRecommendedModel}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
       {speakName && !isPrivate && (
         <button

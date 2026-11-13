@@ -10,6 +10,13 @@ import {
   type ComfyPresetId,
 } from '../lib/comfyPresets';
 import { useStore } from '../state/socket';
+import { confirmAction } from '../lib/dialogs';
+import {
+  assessOllamaModel,
+  DEFAULT_OLLAMA_MODEL,
+  pickRecommendedSafeModel,
+  type OllamaModelDetail,
+} from '../lib/ollamaModels';
 
 type PublicSettings = {
   hasKey: boolean;
@@ -59,6 +66,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   // → Ollama's /api/tags), so the dropdown lists what's really available, not a
   // hardcoded guess. `null` = not loaded yet.
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
+  const [ollamaModelDetails, setOllamaModelDetails] = useState<OllamaModelDetail[]>([]);
+  const [gpuVramBytes, setGpuVramBytes] = useState<number | undefined>(undefined);
   // Local ComfyUI: configured URL/checkpoint + the live connection's checkpoints.
   const [comfyUrl, setComfyUrl] = useState('');
   const [comfyModel, setComfyModel] = useState('');
@@ -80,8 +89,35 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const loadOllamaModels = () =>
     fetch('/api/ai/models')
       .then((r) => r.json())
-      .then((d: { ollamaModels?: string[] }) => setOllamaModels(d.ollamaModels ?? []))
-      .catch(() => setOllamaModels([]));
+      .then(
+        (d: {
+          ollamaModels?: string[];
+          ollamaModelDetails?: OllamaModelDetail[];
+          gpuVramBytes?: number;
+        }) => {
+          setOllamaModels(d.ollamaModels ?? []);
+          setOllamaModelDetails(d.ollamaModelDetails ?? []);
+          setGpuVramBytes(d.gpuVramBytes);
+        },
+      )
+      .catch(() => {
+        setOllamaModels([]);
+        setOllamaModelDetails([]);
+      });
+
+  const detailByName = new Map(ollamaModelDetails.map((d) => [d.name, d]));
+  const recommendedSafeModel = pickRecommendedSafeModel(
+    ollamaModels ?? [],
+    ollamaModelDetails,
+    gpuVramBytes,
+  );
+  const trimmedOllamaModel = ollamaModel.trim();
+  const selectedModelInfo = trimmedOllamaModel
+    ? assessOllamaModel(trimmedOllamaModel, {
+        detail: detailByName.get(trimmedOllamaModel),
+        gpuVramBytes,
+      })
+    : null;
 
   const loadComfy = () => {
     setComfy(null);
@@ -162,6 +198,25 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   };
 
   const save = async () => {
+    if (
+      selectedModelInfo &&
+      selectedModelInfo.tier !== 'ok' &&
+      (trimmedOllamaModel !== (current?.ollamaModel ?? '') ||
+        (aiMode === 'local' && current?.aiMode !== 'local'))
+    ) {
+      const ok = await confirmAction({
+        title: `${selectedModelInfo.tier === 'critical' ? '⛔' : '⚠'} ${selectedModelInfo.headline}`,
+        acceptLabel:
+          selectedModelInfo.tier === 'critical' ? 'Save heavy model anyway' : 'Save anyway',
+        danger: true,
+        message: `${selectedModelInfo.detail}\n\nSaving this as the default model affects /ask, local AI fallback, and battle-map vision checks.${
+          recommendedSafeModel && recommendedSafeModel !== trimmedOllamaModel
+            ? ` Recommended default: ${recommendedSafeModel}.`
+            : ''
+        }`,
+      });
+      if (!ok) return;
+    }
     setStatus('saving');
     setErrorMsg('');
     try {
@@ -326,15 +381,40 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           </span>
           <input
             list="ollama-models"
-            placeholder={ollamaModels?.[0] ?? 'llama3.1'}
+            placeholder={recommendedSafeModel ?? ollamaModels?.[0] ?? DEFAULT_OLLAMA_MODEL}
             value={ollamaModel}
             onChange={(e) => setOllamaModel(e.target.value)}
           />
           <datalist id="ollama-models">
-            {(ollamaModels ?? []).map((m) => (
-              <option key={m} value={m} />
-            ))}
+            {(ollamaModels ?? []).map((m) => {
+              const info = assessOllamaModel(m, {
+                detail: detailByName.get(m),
+                gpuVramBytes,
+              });
+              return <option key={m} value={m} label={info.optionTag} />;
+            })}
           </datalist>
+          {selectedModelInfo && selectedModelInfo.tier !== 'ok' && (
+            <div className={`ai-model-warning ${selectedModelInfo.tier}`} role="alert">
+              <div>
+                <strong>
+                  {selectedModelInfo.tier === 'critical' ? '⛔' : '⚠'} {selectedModelInfo.headline}:
+                </strong>{' '}
+                {selectedModelInfo.detail}
+              </div>
+              {recommendedSafeModel && recommendedSafeModel !== trimmedOllamaModel && (
+                <div className="ai-model-warning-actions">
+                  <button
+                    type="button"
+                    className="btn tiny"
+                    onClick={() => setOllamaModel(recommendedSafeModel)}
+                  >
+                    Switch to {recommendedSafeModel} (recommended)
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </label>
 
         <h4>Image generation (local — ComfyUI)</h4>

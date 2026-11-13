@@ -1,5 +1,6 @@
 import {it,expect,vi,beforeEach} from 'vitest';
 import sharp from 'sharp';
+import {config} from './config.js';
 import {listOllamaModels,ollamaChat} from './ai/ollama.js';
 import {gateMapFeature,gateWindowRegions,resetMapGateModelCache} from './mapFeatureGate.js';
 vi.mock('./ai/ollama.js',()=>({listOllamaModels:vi.fn(),ollamaChat:vi.fn()}));
@@ -31,4 +32,23 @@ it('individual window runs keep quadrant crops without asking Qwen',async()=>{
  const result=await gateWindowRegions(await image(),400,300,undefined,false);
  expect(result.regions).toHaveLength(4);expect(result.checks).toEqual([]);
  expect(listOllamaModels).not.toHaveBeenCalled();expect(ollamaChat).not.toHaveBeenCalled();
+});
+it('prefers a safe-VRAM qwen model for map gating unless a heavier qwen model is explicitly configured',async()=>{
+ const prev=config.ollamaModel;
+ try{
+  vi.mocked(listOllamaModels).mockResolvedValue(['qwen3.8:27b-q8_0','qwen3.8:latest','qwen3.5:9b']);
+  vi.mocked(ollamaChat).mockResolvedValue('yes');
+  config.ollamaModel='gemma4:12b';
+  resetMapGateModelCache();
+  expect((await gateMapFeature(await image(),'walls')).model).toBe('qwen3.5:9b');
+  config.ollamaModel='qwen3.5:9b';
+  resetMapGateModelCache();
+  expect((await gateMapFeature(await image(),'walls')).model).toBe('qwen3.5:9b');
+  config.ollamaModel='qwen3.8:latest';
+  resetMapGateModelCache();
+  expect((await gateMapFeature(await image(),'walls')).model).toBe('qwen3.8:latest');
+ }finally{
+  config.ollamaModel=prev;
+  resetMapGateModelCache();
+ }
 });

@@ -1478,6 +1478,15 @@ dialog.level-up-roll-layer::backdrop { background: transparent; pointer-events: 
 .chat-image-viewer-body.full-size img { max-width: none; max-height: none; }
 .ai-backend-row { display: flex; align-items: center; gap: 6px; padding: 4px 0 0; font-size: 0.82em; }
 .ai-backend-row select { flex: 1; min-width: 0; }
+.ai-model-warning {
+  display: flex; flex-direction: column; gap: 6px; margin: 6px 0 2px; padding: 8px 10px;
+  border-radius: 6px; font-size: 12px; line-height: 1.45;
+  border: 1px solid #d49b35; background: #33260f; color: #ffe7b8;
+}
+.ai-model-warning.critical {
+  border-color: #d9655d; background: #3d1d20; color: #ffd7d2;
+}
+.ai-model-warning-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .assistant-thinking {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 6px 8px; margin: 4px 0; border-radius: 6px;
