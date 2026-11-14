@@ -5,6 +5,14 @@ import {COMMAND_WORDS,commandWord,commandInstruction,isCommandSpell} from '../..
 import {linkedSpellProfile,spellKey} from '../../../shared/linkedSpells';
 import {spellAreaFor} from '../../../shared/spellAreas';
 import { hitFeature, markSpell, abilityKey } from '../../../shared/hitFeatures';
+import {
+  combatSpell,
+  isSelfCombatSpell,
+  isAllyTouchOrBuffSpell,
+  LESSER_RESTORATION_CONDITIONS,
+  GREATER_RESTORATION_CONDITIONS,
+  BLINDNESS_DEAFNESS_CHOICES,
+} from '../../../shared/combatSpells';
 import { Fragment, useState } from 'react';
 import type {
   Character,
@@ -23,10 +31,10 @@ import {
 import { useStore } from '../state/socket';
 import { effectiveRecharge } from '../../../shared/monsterAttacks';
 import { RechargeChip } from './RechargeChip';
-import { isCanonicalAidProfile, isCanonicalBlessOrBaneProfile, isCanonicalHasteProfile, effectiveSheetAbility, isMultiTargetSpell, spellDamageTypeChoices } from '../../../shared/spellExecution';
+import { isCanonicalAidProfile, isCanonicalBlessOrBaneProfile, isCanonicalHasteProfile, effectiveSheetAbility, hasActiveCustomEffect, isMultiTargetSpell, spellDamageTypeChoices } from '../../../shared/spellExecution';
 import { ACTION_SHORT_BADGE, inferAbilityActionCost } from '../../../shared/spellPrep';
 import { spellSlotOptions, selectSpellSlot, type SpellSlotPool } from '../../../shared/spellSlotPools';
-import { spellCombatSupport } from '../../../shared/spellSupport';
+import { spellCombatSupport, formatCustomEffectSummary } from '../../../shared/spellSupport';
 
 import { spellActionBlock } from '../../../shared/spellBuffs';
 
@@ -79,9 +87,23 @@ export function AbilityButtons({
   const [slotPools,setSlotPools]=useState<Record<string,SpellSlotPool>>({});
   // Per-cast choice only: never persists a change to the authored spell.
   const [castDamageTypes, setCastDamageTypes] = useState<Record<string, string>>({});
+  const [spellChoices, setSpellChoices] = useState<Record<string, string>>({});
   const damageChoice = (abilityId: string, choices: string[]) => {
     const chosen = castDamageTypes[`${caster.id}:${abilityId}`];
     return choices.includes(chosen) ? chosen : choices[0];
+  };
+  const choiceValue = (abilityId: string, choices: readonly string[]) => {
+    const chosen = spellChoices[`${caster.id}:${abilityId}`];
+    return chosen && choices.includes(chosen) ? chosen : choices[0];
+  };
+  const spellChoiceOptions = (a: SheetAbility, manualCast: boolean): readonly string[] => {
+    const cSpell = combatSpell(a);
+    if (cSpell === 'lesser restoration') return LESSER_RESTORATION_CONDITIONS;
+    if (cSpell === 'greater restoration') return GREATER_RESTORATION_CONDITIONS;
+    if (!manualCast && a.type === 'spell' && a.source !== 'custom' && a.executionProfile !== 'manual' && abilityKey(a) === 'blindness/deafness' && !a.roll) {
+      return BLINDNESS_DEAFNESS_CHOICES;
+    }
+    return [];
   };
   const menu = variant === 'menu';
   const customWords=useStore(s=>s.snapshot?.commandCustomWords??true);
@@ -102,7 +124,13 @@ export function AbilityButtons({
     if (!await confirmConcentration(caster, a)) return;
     const level = upcastable(a) ? cost.level : undefined;
     const execution = effectiveSheetAbility(a, level);
-    const manualCast = spellCombatSupport(a)?.manualCastOnly;
+    const manualCast = !!spellCombatSupport(a)?.manualCastOnly;
+    const choiceOpts = spellChoiceOptions(a, manualCast);
+    const cSpell = combatSpell(a);
+    const nonTargetedRoll = execution.roll?.kind !== 'attack' && execution.roll?.kind !== 'save';
+    const selfCustom = nonTargetedRoll && isSelfCombatSpell(a);
+    const allyBuff = isCanonicalHasteProfile(a) || (nonTargetedRoll && isAllyTouchOrBuffSpell(a));
+    const isUpcastHeroism = cSpell === 'heroism' && (level ?? 1) > 1;
     if(execution.summon&&!manualCast){
       const map=snapshot?.map;if(!map){notify('Choose an active map before summoning.');return;}
       const g=map.gridSizePx||50,me=snapshot.tokens.find(t=>t.kind===kind&&t.refId===caster.id);
@@ -115,7 +143,7 @@ export function AbilityButtons({
       kind,
       refId: caster.id,
       abilityId: a.id,
-      commandWord:word,
+      commandWord: word ?? (choiceOpts.length ? choiceValue(a.id, choiceOpts) : undefined),
       dispelTarget,
       targetTokenIds:ids,
       castLevel: level,
@@ -128,7 +156,7 @@ export function AbilityButtons({
       // Advantage only affects the d20 of an attack roll; it comes from the
       // caster's shared toggle and is consumed when the attack fires.
       advantage: !manualCast && (execution.roll?.kind === 'attack'||advancedSpell(a)==='dispel magic') && !(linkedSpellProfile(a)&&spellKey(a.name)==='flame blade') ? consumeAdvantage(caster.id) : undefined,
-      targetTokenId: dispelTarget ? undefined : ids ? ids[0] : linkedSpellProfile(a)&&['mirror image','flame blade'].includes(spellKey(a.name)) ? undefined : isCanonicalHasteProfile(a) ? buffTargetId ?? targetTokenId : manualCast ? targetTokenId : execution.roll?.kind === 'heal' ? healTargetId
+      targetTokenId: dispelTarget ? undefined : ids ? ids[0] : (linkedSpellProfile(a)&&['mirror image','flame blade'].includes(spellKey(a.name))) || selfCustom || (isUpcastHeroism && !menu) ? undefined : allyBuff ? (buffTargetId ?? healTargetId ?? targetTokenId) : manualCast ? targetTokenId : execution.roll?.kind === 'heal' ? healTargetId
         : isMultiTargetSpell(a, level) ? undefined : targetTokenId,
     });
     if(isCastSpell(a)&&!useStore.getState().areaCast&&!useStore.getState().teleportCast&&!useStore.getState().rayCast)notify(`Cast requested: ${a.name} · ${cost.label}. Check the cast record and slot counter for confirmation.`);
@@ -188,14 +216,36 @@ export function AbilityButtons({
         const manualCast = !!support?.manualCastOnly;
         const damageTypes = manualCast ? [] : spellDamageTypeChoices(a, level);
         const multiple = isMultiTargetSpell(a, level);
-        const saveOnly = execution.roll?.kind === 'save' && !execution.roll.dice?.trim();
-        const selfSpell=linkedSpellProfile(a)&&['mirror image','flame blade'].includes(spellKey(a.name));
+        const hasRollDice = !!execution.roll?.dice?.trim() && execution.roll.dice.trim() !== '0';
+        const saveOnly = execution.roll?.kind === 'save' && !hasRollDice;
+        const nonTargetedRoll = execution.roll?.kind !== 'attack' && execution.roll?.kind !== 'save';
+        const selfSpell=(linkedSpellProfile(a)&&['mirror image','flame blade'].includes(spellKey(a.name))) || (nonTargetedRoll && isSelfCombatSpell(a));
         const area=spellAreaFor(a,level);
         const summon=!!execution.summon&&!manualCast;
+        const cSpell = combatSpell(a);
+        const allyBuff = isCanonicalHasteProfile(a) || (nonTargetedRoll && isAllyTouchOrBuffSpell(a));
+        const needsRequiredTarget = isCanonicalHasteProfile(a) || cSpell === 'spare the dying' || cSpell === 'revivify';
+        const choiceOpts = spellChoiceOptions(a, manualCast);
 
         const choosing=dispelAbility?.id===a.id||invisAbility?.id===a.id||commandAbility?.id===a.id;
 
-        const workflow = area ? 'Place the measured spell area, review affected bases, then confirm. Saves roll together; damage applies automatically. Ongoing or manual effects stay with the DM.' : isCanonicalAidProfile(a) ? 'Choose up to three creatures within 30 ft to gain +5 maximum and current HP (+5/lvl).' : isCanonicalBlessOrBaneProfile(a) ? 'Choose up to three creatures within 30 ft (+1/lvl) on the map.' : selfSpell ? spellKey(a.name)==='mirror image' ? 'Create three duplicates of yourself.' : 'Create the blade, then attack using its Active spell actions button.' : manualCast ? 'Record this casting and spend its spell slot; resolve its effects manually.' : multiple
+        const customFxNote = hasActiveCustomEffect(execution.roll?.customEffect)
+          ? formatCustomEffectSummary(execution.roll?.customEffect)
+          : undefined;
+        const combatWorkflow = cSpell === 'shield of faith' ? 'Apply +2 AC while concentrating (defaults to self if no ally is selected).'
+          : cSpell === 'mage armor' ? 'Set base AC to 13 + DEX for an unarmored creature for 8 hours (defaults to self).'
+          : cSpell === 'blur' ? 'Impose disadvantage on attackers without Blindsight or Truesight while concentrating.'
+          : cSpell === 'see invisibility' ? 'See invisible creatures and objects within 120 ft for 1 hour.'
+          : cSpell === 'greater invisibility' ? 'Turn a touched creature invisible without breaking on attacks or spell casts while concentrating.'
+          : cSpell === 'heroism' ? ((level ?? 1) > 1 ? 'Choose up to cast-level allies within 5 ft for Frightened immunity and temporary HP each turn.' : 'Grant Frightened immunity and casting-mod temporary HP each turn while concentrating (defaults to self).')
+          : cSpell === 'protection from poison' ? 'Neutralize Poisoned and grant Poison resistance (plus poison-save advantage) for 1 hour.'
+          : cSpell === 'lesser restoration' ? 'Cure the chosen condition (Blinded, Deafened, Paralyzed, or Poisoned).'
+          : cSpell === 'greater restoration' ? 'Cure Charm, Petrified, 1 Exhaustion level, Harm max-HP loss, or other debilitating effects.'
+          : cSpell === 'spare the dying' ? 'Stabilize a living creature at 0 HP within range.'
+          : cSpell === 'revivify' ? 'Revive a dead creature with 1 hit point.'
+          : cSpell === 'death ward' ? 'Prevent lethal damage once by dropping to 1 HP instead.'
+          : customFxNote;
+        const workflow = area ? 'Place the measured spell area, review affected bases, then confirm. Saves roll together; damage applies automatically. Ongoing or manual effects stay with the DM.' : combatWorkflow ? combatWorkflow : isCanonicalAidProfile(a) ? 'Choose up to three creatures within 30 ft to gain +5 maximum and current HP (+5/lvl).' : isCanonicalBlessOrBaneProfile(a) ? 'Choose up to three creatures within 30 ft (+1/lvl) on the map.' : selfSpell ? spellKey(a.name)==='mirror image' ? 'Create three duplicates of yourself.' : 'Create the blade, then attack using its Active spell actions button.' : manualCast ? 'Record this casting and spend its spell slot; resolve its effects manually.' : multiple
           ? execution.roll?.kind === 'attack' ? 'Cast once, then choose a target for each separate spell attack.' : saveOnly ? 'Cast, then choose targets to roll saving throws.' : 'Roll once, then apply to targets on the map.'
           : execution.roll?.healTarget === 'self' ? 'Restore your own health.'
             : saveOnly ? 'Cast and force the selected target to roll its saving throw.' : 'Cast at the selected target.';
@@ -206,7 +256,7 @@ export function AbilityButtons({
             key={menu ? a.id : 'btn'}
             className={`${menu ? 'btn tiny fm-spell-attack' : 'btn tiny attack-row'}${spell || a.type === 'spell' ? ' spell-attack-btn' : ' ability-attack-btn'}${spent ? ' recharge-spent' : ''}`}
             title={[restriction, a.description || 'Ability', workflow, support?.manual.length ? `You handle: ${support.manual.join('; ')}` : '', manualRiderNote(a), spent ? 'Spent — ready it from its ⟳ chip after a successful recharge roll.' : ''].filter(Boolean).join('\n')}
-            disabled={!!spellActionBlock(caster) || !!restriction || spell&&cost.unavailable || (!summon&&!isCommandSpell(a)&&!area && !manualCast && !menu && !selfSpell && !['invisibility','dispel magic'].includes(advancedSpell(a)??'') && !['misty step','pass without trace'].includes(partySpell(a)??'') && !multiple && (execution.roll?.kind === 'heal' ? execution.roll.healTarget !== 'self' && !healTargetId : !(isCanonicalHasteProfile(a) ? buffTargetId ?? targetTokenId : targetTokenId)))}
+            disabled={!!spellActionBlock(caster) || !!restriction || spell&&cost.unavailable || (!summon&&!isCommandSpell(a)&&!area && !manualCast && !menu && !selfSpell && !['invisibility','dispel magic'].includes(advancedSpell(a)??'') && !['misty step','pass without trace'].includes(partySpell(a)??'') && !multiple && !(cSpell === 'heroism' && (level ?? 1) > 1) && (allyBuff ? (needsRequiredTarget && !(buffTargetId ?? healTargetId ?? targetTokenId)) : execution.roll?.kind === 'heal' ? execution.roll.healTarget !== 'self' && !healTargetId : !targetTokenId))}
             onClick={() => cast(a)}
           >
             <span>
@@ -236,6 +286,21 @@ export function AbilityButtons({
             ))}
           </select>
         );
+        const choiceSelect = choiceOpts.length > 0 && (
+          <select
+            className="spell-level spell-choice"
+            aria-label={`${a.name} effect`}
+            title={`Choose effect for ${a.name} — this cast only`}
+            value={choiceValue(a.id, choiceOpts)}
+            onChange={(e) => setSpellChoices((current) => ({
+              ...current, [`${caster.id}:${a.id}`]: e.target.value,
+            }))}
+          >
+            {choiceOpts.map((choice) => (
+              <option key={choice} value={choice}>{choice}</option>
+            ))}
+          </select>
+        );
         return (
           <Fragment key={a.id}>
             {showHeader && (
@@ -243,10 +308,10 @@ export function AbilityButtons({
                 {groupBucket === 'bonus' ? '⚡ Bonus Actions' : groupBucket === 'reaction' ? '↩ Reactions' : '● Actions'}
               </div>
             )}
-            <div className={`combat-ability-row${spell || a.type === 'spell' ? ' is-spell' : ' is-ability'}${damageTypeSelect || abilityKey(a) === 'hex' || upcastable(a) ? ' has-options' : ''}`}>
+            <div className={`combat-ability-row${spell || a.type === 'spell' ? ' is-spell' : ' is-ability'}${damageTypeSelect || choiceSelect || abilityKey(a) === 'hex' || upcastable(a) ? ' has-options' : ''}`}>
               {choosing?null:btn}
               <RechargeChip ability={a} kind={kind} refId={caster.id} />
-              {(damageTypeSelect || abilityKey(a) === 'hex' || upcastable(a)) && <span className="combat-ability-options-tag" aria-hidden="true">{upcastable(a) && !damageTypeSelect && abilityKey(a) !== 'hex' ? '↳ Slot' : '↳'}</span>}{damageTypeSelect}
+              {(damageTypeSelect || choiceSelect || abilityKey(a) === 'hex' || upcastable(a)) && <span className="combat-ability-options-tag" aria-hidden="true">{upcastable(a) && !damageTypeSelect && !choiceSelect && abilityKey(a) !== 'hex' ? '↳ Slot' : '↳'}</span>}{damageTypeSelect}{choiceSelect}
               {abilityKey(a)==='hex'&&<select aria-label="Hex ability checks" value={hexAbility} onChange={e=>setHexAbility(e.target.value)}>{['STR','DEX','CON','INT','WIS','CHA'].map(k=><option key={k}>{k}</option>)}</select>}
               {upcastable(a) && (
                 <select

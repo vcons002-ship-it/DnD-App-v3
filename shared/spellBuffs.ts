@@ -2,6 +2,7 @@
 // creature's base statistics. Ending a spell therefore removes its benefits
 // without undoing equipment bonuses or a DM's subsequent sheet edits.
 import type { Condition } from './types.js';
+import { rollDice } from './dice.js';
 import {activeCommand,commandInstruction} from './commandSpell.js';
 
 export type SpellBuffSource = { conditions?: readonly Condition[]; speed?: string };
@@ -27,6 +28,84 @@ export function activeShieldCondition(source: SpellBuffSource): Condition | unde
 }
 
 export const shieldAcBonus = (source: SpellBuffSource): number => activeShieldCondition(source) ? 5 : 0;
+
+function activeCombatCondition(source: SpellBuffSource, spellName: string): Condition | undefined {
+  const key = label(spellName);
+  return (source.conditions ?? []).find(c => !c.isConcentration &&
+    (c.combatEffect
+      ? label(c.combatEffect.spell) === key
+      : (label(c.label) === key || label(c.label).startsWith(`${key} (`))));
+}
+
+export const activeShieldOfFaithCondition = (source: SpellBuffSource): Condition | undefined =>
+  activeCombatCondition(source, 'shield of faith');
+
+export const shieldOfFaithAcBonus = (source: SpellBuffSource): number =>
+  activeShieldOfFaithCondition(source) ? 2 : 0;
+
+export const slowSpellCondition = (source: SpellBuffSource): Condition | undefined =>
+  activeCombatCondition(source, 'slow');
+
+export const slowSpellPenalty = (source: SpellBuffSource): number =>
+  slowSpellCondition(source) ? -2 : 0;
+
+export const hasMageArmor = (source: SpellBuffSource): boolean =>
+  !!activeCombatCondition(source, 'mage armor');
+
+export const hasBlur = (source: SpellBuffSource): boolean =>
+  !!activeCombatCondition(source, 'blur');
+
+export const hasBless = (source: SpellBuffSource): boolean =>
+  !!activeCombatCondition(source, 'bless');
+
+export const hasBane = (source: SpellBuffSource): boolean =>
+  !!activeCombatCondition(source, 'bane');
+
+/** Roll +1d4 for Bless, -1d4 for Bane, and any custom attack/save bonus dice on active conditions. */
+export function rollBlessBaneBonus(
+  source: SpellBuffSource,
+  kind: 'attack' | 'save' | 'both' = 'both',
+): { bonus: number; notes: string[]; bless?: number; bane?: number } {
+  const bless = hasBless(source);
+  const bane = hasBane(source);
+  const notes: string[] = [];
+  let bonus = 0;
+  let blessVal: number | undefined;
+  let baneVal: number | undefined;
+  if (bless) {
+    blessVal = rollDice('1d4')?.total ?? 0;
+    bonus += blessVal;
+    notes.push(`Bless +1d4[${blessVal}]`);
+  }
+  if (bane) {
+    baneVal = rollDice('1d4')?.total ?? 0;
+    bonus -= baneVal;
+    notes.push(`Bane -1d4[${baneVal}]`);
+  }
+  for (const cond of source.conditions ?? []) {
+    if (cond.isConcentration || !cond.combatEffect) continue;
+    const rawExpr =
+      kind === 'attack'
+        ? cond.combatEffect.attackBonusDice
+        : kind === 'save'
+          ? cond.combatEffect.saveBonusDice
+          : (cond.combatEffect.attackBonusDice ?? cond.combatEffect.saveBonusDice);
+    const expr = rawExpr?.trim();
+    if (!expr) continue;
+    const rolled = rollDice(expr);
+    if (!rolled) continue;
+    bonus += rolled.total;
+    const signedExpr = /^[+-]/.test(expr) ? expr : `+${expr}`;
+    notes.push(`${cond.combatEffect.spell || cond.label} ${signedExpr}[${rolled.total}]`);
+  }
+  return {
+    bonus,
+    notes,
+    ...(blessVal !== undefined ? { bless: blessVal } : {}),
+    ...(baneVal !== undefined ? { bane: baneVal } : {}),
+  };
+}
+
 export const isHypnotized = (source:SpellBuffSource):boolean => (source.conditions??[]).some(c=>c.label==='Hypnotic Pattern'&&c.combatEffect?.spell==='Hypnotic Pattern');
 
 function holdPersonCondition(source: SpellBuffSource): Condition | undefined {
@@ -74,17 +153,22 @@ const ZERO_SPEED = new Set(['grappled', 'restrained', 'paralyzed', 'petrified', 
 export function speedIsZero(source: SpellBuffSource): boolean {
   const command=activeCommand(source);if(command&&(command.combatEffect!.commandResolved||['Halt','Grovel','Drop'].includes(command.combatEffect!.commandWord!)))return true;
   if(isHypnotized(source))return true;
-  return (source.conditions ?? []).some(c => ZERO_SPEED.has(label(c.label)));
+  return (source.conditions ?? []).some(c => ZERO_SPEED.has(label(c.label)) || (!c.isConcentration && !!c.combatEffect?.zeroSpeed));
 }
 
-/** Preserve movement modes/notes while doubling each stated speed for Haste. */
+/** Preserve movement modes/notes while doubling each stated speed for Haste, adding bonuses/reductions, and halving for Slow. */
 export function effectiveSpeed(source: SpellBuffSource): string {
   if (speedIsZero(source)) return '0 ft.';
   const speed = source.speed ?? '';
   const reduction=Math.max(0,...(source.conditions??[]).map(c=>c.combatEffect?.speedReduction??0));
-  if (!activeHasteCondition(source) && !reduction) return speed;
+  const bonus = (source.conditions ?? []).filter(c => !c.isConcentration).reduce((s, c) => s + (c.combatEffect?.speedBonus ?? 0), 0);
+  const slowed = !!slowSpellCondition(source) || (source.conditions ?? []).some(c => !c.isConcentration && c.combatEffect?.slow);
+  if (!activeHasteCondition(source) && !reduction && !bonus && !slowed) return speed;
   return speed.replace(/(\d+(?:\.\d+)?)\s*(ft\.?|feet)\b/gi,
-    (_match, feet: string, unit: string) => `${Math.max(0,Number(feet) * (activeHasteCondition(source)?2:1)-reduction)} ${unit}`);
+    (_match, feet: string, unit: string) => {
+      const scaled = Math.max(0, Number(feet) * (activeHasteCondition(source) ? 2 : 1) + bonus - reduction);
+      return `${slowed ? Math.floor(scaled / 2) : scaled} ${unit}`;
+    });
 }
 
 /** The walking allowance used by movement hints; unknown speeds stay unknown. */

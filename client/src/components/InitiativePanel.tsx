@@ -2,6 +2,7 @@ import type { StateSnapshot, Token } from '../../../shared/types';
 import { useStore } from '../state/socket';
 import { resolveToken } from '../lib/entities';
 import { KillScoreboard } from './KillScoreboard';
+import { NumberInput } from './NumberInput';
 
 type Props = {
   snapshot: StateSnapshot;
@@ -101,19 +102,14 @@ export function InitiativePanel({ snapshot, selectedTokenId, onSelectToken }: Pr
             <span className="init-order" title="Turn order">
               {rankOf.get(t.id) ?? '–'}
             </span>
-            <input
+            <NumberInput
               className="init-input"
-              type="number"
               value={t.initiative ?? ''}
+              allowEmpty
               placeholder="roll"
               title="Initiative roll"
               onClick={(e) => e.stopPropagation()}
-              onChange={(e) =>
-                setInitiative(
-                  t.id,
-                  e.target.value === '' ? null : Number(e.target.value),
-                )
-              }
+              onValueChange={(n) => setInitiative(t.id, n ?? null)}
             />
           </>
         ) : (
@@ -146,15 +142,14 @@ export function InitiativePanel({ snapshot, selectedTokenId, onSelectToken }: Pr
               title="Combat round — advances when the turn order wraps; edit to re-count"
             >
               Round
-              <input
+              <NumberInput
                 className="round-input"
-                type="number"
                 min={0}
                 max={999}
+                commitOnBlur
                 value={snapshot.round}
-                onChange={(e) =>
-                  e.target.value !== '' && setRound(Number(e.target.value))
-                }
+                emptyFallback={snapshot.round}
+                onValueChange={(n) => { if (n !== undefined) setRound(n); }}
               />
             </span>
           )}

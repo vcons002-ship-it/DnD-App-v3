@@ -4,9 +4,11 @@ import {partySpell} from '../../../shared/partySpells';
 import type {LiveDiceFrame} from '../../../shared/liveDiceTypes';
 import {resultTrayFor} from '../lib/rollTrayPresentation';
 import {spellAreaFor,type SpellArea} from '../../../shared/spellAreas';
-import {effectiveSheetAbility,isCanonicalAidProfile,isCanonicalBlessOrBaneProfile,spellInstanceCount} from '../../../shared/spellExecution';
+import {effectiveSheetAbility,isCanonicalAidProfile,isCanonicalBlessOrBaneProfile,spellInstanceCount,spellMaxTargets} from '../../../shared/spellExecution';
 import {inferAbilityActionCost,type ActionType} from '../../../shared/spellPrep';
 import {isCommandSpell} from '../../../shared/commandSpell';
+import { abilityKey } from '../../../shared/hitFeatures';
+import { combatSpell } from '../../../shared/combatSpells';
 import type {MapEnvironment} from '../../../shared/mapEnvironment';
 import {readGraphicsQuality} from '../lib/useEnvironmentQuality';
 import {readDiceRenderingMode} from '../lib/useDiceRendering';
@@ -1500,24 +1502,42 @@ export const useStore = create<Store>((set, get) => ({
           return;
         }
         if (exec.roll?.kind === 'heal' && exec.roll.targetMode === 'multiple' && !spec) {
+          const healMaxT = spellMaxTargets(exec.roll, payload.castLevel, exec.level) ?? 6;
+          if (healMaxT > 1) {
+            openMultiPicker({
+              instances: healMaxT,
+              minTargets: 1,
+              distinct: true,
+              allowSelf: true,
+              rangeFt: parseRange(60),
+              kind: 'allies',
+            });
+            return;
+          }
+        }
+        if (combatSpell(a) === 'heroism' && (payload.castLevel ?? 1) > 1) {
           openMultiPicker({
-            instances: exec.roll.maxTargets ?? 6,
+            instances: payload.castLevel ?? 1,
             minTargets: 1,
             distinct: true,
             allowSelf: true,
-            rangeFt: parseRange(60),
+            rangeFt: 5,
             kind: 'allies',
           });
           return;
         }
-        const spellNameKey = a.name.trim().toLowerCase();
+        const spellNameKey = abilityKey(a);
         if (
           a.type === 'spell' &&
           a.source !== 'custom' &&
           a.executionProfile !== 'manual' &&
-          (spellNameKey === 'hold person' || spellNameKey === 'hold monster')
+          (spellNameKey === 'hold person' ||
+            spellNameKey === 'hold monster' ||
+            spellNameKey === "tasha's hideous laughter" ||
+            spellNameKey === 'blindness/deafness')
         ) {
-          const baseLvl = spellNameKey === 'hold monster' ? 5 : 2;
+          const baseLvl =
+            spellNameKey === 'hold monster' ? 5 : spellNameKey === "tasha's hideous laughter" ? 1 : 2;
           const slotLvl = payload.castLevel ?? baseLvl;
           if (slotLvl > baseLvl) {
             openMultiPicker({
@@ -1526,11 +1546,32 @@ export const useStore = create<Store>((set, get) => ({
               distinct: true,
               allowSelf: false,
               humanoidOnly: spellNameKey === 'hold person',
-              rangeFt: spellNameKey === 'hold monster' ? 90 : 60,
+              rangeFt:
+                spellNameKey === 'hold monster' ? 90 : spellNameKey === 'hold person' ? 60 : 30,
               kind: 'targets',
             });
             return;
           }
+        }
+        const customMaxT = exec.roll ? spellMaxTargets(exec.roll, payload.castLevel, exec.level) : undefined;
+        const multiCount = customMaxT ?? (exec.roll?.targetMode === 'multiple' ? 6 : 1);
+        if (
+          !spec &&
+          exec.roll &&
+          spellInstanceCount(exec.roll, payload.castLevel, casterLevel) === 0 &&
+          (exec.roll.kind === 'save' || exec.roll.kind === 'damage') &&
+          multiCount > 1
+        ) {
+          const isAllyTarget = exec.roll.customEffect?.target === 'ally';
+          openMultiPicker({
+            instances: multiCount,
+            minTargets: 1,
+            distinct: true,
+            allowSelf: isAllyTarget,
+            rangeFt: parseRange(isAllyTarget ? 30 : 60),
+            kind: isAllyTarget ? 'allies' : 'targets',
+          });
+          return;
         }
       }
       const instances=exec.roll?spellInstanceCount(exec.roll,payload.castLevel,casterLevel):0;

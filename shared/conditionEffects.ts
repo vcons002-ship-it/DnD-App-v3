@@ -6,7 +6,8 @@
 // use the simple reading. Matched against a condition's `label`, case-insensitive.
 import type { Advantage } from './combatMath.js';
 import { hitFeature, markSpell } from './hitFeatures.js';
-import { seesInvisible } from './invisibleSight.js';
+import { ignoresBlur, seesInvisible } from './invisibleSight.js';
+import { hasBlur } from './spellBuffs.js';
 import {
   evaluateDeclarativeRuleModifiers,
   type CoverGrade,
@@ -149,14 +150,17 @@ export function evaluateAttackContext(opts: {
     },
     opts.customModifiers,
   );
+  const attackerSuppressedInvis = opts.attackerConditions.some((c) => !c.isConcentration && c.combatEffect?.suppressesInvisibility);
+  const targetSuppressedInvis = opts.targetConditions.some((c) => !c.isConcentration && c.combatEffect?.suppressesInvisibility);
   const attackerLabels = opts.attackerConditions
     .filter((c) => !c.isConcentration)
     .map((c) => c.label)
     .filter(
       (v) =>
         v.trim().toLowerCase() !== 'invisible' ||
-        !opts.targetEntity ||
-        !seesInvisible({ conditions: opts.targetConditions, abilities: opts.targetEntity.abilities }, dist),
+        (!attackerSuppressedInvis &&
+          (!opts.targetEntity ||
+            !seesInvisible({ conditions: opts.targetConditions, abilities: opts.targetEntity.abilities }, dist))),
     );
   const targetLabels = opts.targetConditions
     .filter((c) => !c.isConcentration)
@@ -164,8 +168,9 @@ export function evaluateAttackContext(opts: {
     .filter(
       (v) =>
         v.trim().toLowerCase() !== 'invisible' ||
-        !opts.attackerEntity ||
-        !seesInvisible({ conditions: opts.attackerConditions, abilities: opts.attackerEntity.abilities }, dist),
+        (!targetSuppressedInvis &&
+          (!opts.attackerEntity ||
+            !seesInvisible({ conditions: opts.attackerConditions, abilities: opts.attackerEntity.abilities }, dist))),
     );
   const featureAdv: string[] = [...(opts.extraFeatureAdv ?? []), ...declarative.featureAdv];
   const featureDis: string[] = [...(opts.extraFeatureDis ?? []), ...declarative.featureDis];
@@ -186,10 +191,20 @@ export function evaluateAttackContext(opts: {
     }
   }
   for (const c of opts.targetConditions) {
-    if (c.combatEffect?.nextAttackAdvantage) featureAdv.push(c.combatEffect.spell || c.label);
+    if (!c.isConcentration && (c.combatEffect?.nextAttackAdvantage || c.combatEffect?.grantsAdvantageToAttackers)) {
+      featureAdv.push(c.combatEffect.spell || c.label);
+    }
   }
   for (const c of opts.attackerConditions) {
-    if (c.combatEffect?.attackDisadvantage) featureDis.push(c.combatEffect.spell || c.label);
+    if (!c.isConcentration && (c.combatEffect?.attackDisadvantage || c.combatEffect?.nextAttackDisadvantage)) {
+      featureDis.push(c.combatEffect.spell || c.label);
+    }
+  }
+  if (
+    hasBlur({ conditions: opts.targetConditions }) &&
+    !ignoresBlur({ conditions: opts.attackerConditions, abilities: opts.attackerEntity?.abilities }, dist)
+  ) {
+    featureDis.push('Blur');
   }
   return {
     adv: attackAdvantage(attackerLabels, targetLabels, opts.within5ft, opts.manual, featureAdv, featureDis),
@@ -213,6 +228,9 @@ const IMPLIED: Record<string, string[]> = {
   stunned: ['Incapacitated'],
   petrified: ['Incapacitated'],
   'haste lethargy': ['Incapacitated'],
+  'hideous laughter': ['Incapacitated', 'Prone'],
+  "tasha's hideous laughter": ['Incapacitated', 'Prone'],
+  'tasha’s hideous laughter': ['Incapacitated', 'Prone'],
 };
 export function impliedConditions(label: string): string[] {
   return IMPLIED[label.trim().toLowerCase()] ?? [];

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { normalizeNumericDraft } from '../lib/numberInput';
 
 /**
  * The map toolbar's "Scale" dropdown (DM only): the grid square size in **feet**
@@ -108,7 +109,7 @@ export function ScaleMenu({
                 type="number"
                 value={ftStr}
                 disabled={gridLocked}
-                onChange={(e) => setFtStr(e.target.value)}
+                onChange={(e) => setFtStr(normalizeNumericDraft(e.target.value, { allowNegative: false, allowDecimal: true }))}
                 onBlur={commit}
                 onKeyDown={(e) => e.key === 'Enter' && commit()}
                 title={
@@ -125,7 +126,7 @@ export function ScaleMenu({
                 className="grid-input"
                 type="number"
                 value={widthStr}
-                onChange={(e) => setWidthStr(e.target.value)}
+                onChange={(e) => setWidthStr(normalizeNumericDraft(e.target.value, { allowNegative: false, allowDecimal: true }))}
                 onBlur={commit}
                 onKeyDown={(e) => e.key === 'Enter' && commit()}
                 title="Real-world map width in feet — drives the scale. Bigger = the same tokens look smaller (more 'space')."

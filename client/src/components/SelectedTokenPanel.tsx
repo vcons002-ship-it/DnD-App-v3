@@ -18,6 +18,7 @@ import { StatBlock, ActionsTraitsView } from './StatBlock';
 import { CharacterSheet } from './CharacterSheet';
 import { CharacterSpells } from './CharacterSpells';
 import { LibrarySaveDialog } from './LibrarySaveDialog';
+import { NumberInput } from './NumberInput';
 import { CombatSection } from './CombatSection';
 import { DamageHealControls } from './DamageHealControls';
 import { ObjectControls } from './ObjectControls';
@@ -529,17 +530,16 @@ function SelectedTokenPanelInner({
           −
         </button>
         {/* Manual entry in half-foot steps (server snaps + clamps 0.5–120). */}
-        <input
+        <NumberInput
           className="size-input"
-          type="number"
           step={0.5}
           min={0.5}
           max={120}
+          allowDecimal
           disabled={!isDm}
           value={token.widthFt}
-          onChange={(e) =>
-            e.target.value !== '' && resizeToken(token.id, Number(e.target.value))
-          }
+          emptyFallback={token.widthFt}
+          onValueChange={(n) => { if (n !== undefined) resizeToken(token.id, n); }}
         />
         <span className="muted">ft</span>
         <button

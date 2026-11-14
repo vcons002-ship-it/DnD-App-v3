@@ -54,6 +54,8 @@ import { castMark } from './marks.js';
 import {abilityKey} from '../../shared/hitFeatures.js';
 import { markSpell } from '../../shared/hitFeatures.js';
 import {partySpell} from '../../shared/partySpells.js';
+import {combatSpell} from '../../shared/combatSpells.js';
+import {combatSpellTargetError} from './combatSpellEffects.js';
 import {resolveShield,mistyStepError,teleportMistyStep,shakeAwake} from './partySpellEffects.js';
 import { selectSpellSlot } from '../../shared/spellSlotPools.js';
 import { listRipostes } from './reactions.js';
@@ -1878,8 +1880,17 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       // Validate any dice expressions BEFORE persisting: an unrollable string
       // (e.g. "lol") stored here would make every later ability:roll throw. The
       // roll is resolved server-side, so a bad expression is a client bug/abuse.
-      for (const expr of [ability.roll?.dice, ability.roll?.scaleDice]) {
-        if (expr && !isValidDiceExpression(expr)) {
+      for (const expr of [
+        ability.roll?.dice,
+        ability.roll?.scaleDice,
+        ability.roll?.customEffect?.repeatDamage,
+        ability.roll?.customEffect?.attackBonusDice,
+        ability.roll?.customEffect?.saveBonusDice,
+        ability.smite?.dice,
+        ability.smite?.scaleDice,
+        ability.smite?.bonusVs?.dice,
+      ]) {
+        if (expr?.trim() && !isValidDiceExpression(expr)) {
           socket.emit('notice', { message: `Invalid dice: "${expr}"` });
           return;
         }
@@ -2045,11 +2056,13 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         const m = getMonster(refId);
         const ability = m?.sheetAbilities.find((a) => a.id === abilityId);
         if (!m || !ability || !validDamageChoice(ability)) return;
-        const targetError = (targetTokenIds?.length ? targetTokenIds : tgt ? [tgt] : []).map(tid => spellControlTargetError(sid, ability, tid)).find(Boolean);
+        const targetError =
+          (targetTokenIds?.length ? targetTokenIds : tgt ? [tgt] : []).map(tid => spellControlTargetError(sid, ability, tid)).find(Boolean) ??
+          combatSpellTargetError(sid, 'monster', m.id, ability, cast, area?undefined:tgt, targetTokenIds, word);
         if(targetError){socket.emit('notice',{message:targetError});return;}
         // CR-based DC/to-hit; no spell slots for creatures. A limited-use action
         // (breath weapon) is spent by using it; the DM re-readies it manually.
-        if (resolveMonsterSheetAbility(sid, roller, m, ability, cast, adv, area?undefined:tgt, selectedDamageType,area,targetTokenIds)) {
+        if (resolveMonsterSheetAbility(sid, roller, m, ability, cast, adv, area?undefined:tgt, selectedDamageType,area,targetTokenIds,word)) {
           setAbilityRechargeSpent('monster', m.id, ability.id, true);
           afterChange();
           if (ability.type === 'spell') broadcastSpellCast(io, sid, kind, refId);
@@ -2072,7 +2085,9 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       const requested = castSlotLevel(ability, cast);
       const slot = requested === null ? undefined : selectSpellSlot(c,requested,preferredPool);
       const castAt = slot?.level ?? cast;
-      if(partySpell(ability)&&requested!==null&&!slot?.remaining){socket.emit('notice',{message:`No spell slot available for ${ability.name}.`});return;}
+      if((partySpell(ability)||combatSpell(ability))&&requested!==null&&!slot?.remaining){socket.emit('notice',{message:`No spell slot available for ${ability.name}.`});return;}
+      const combatErr = combatSpellTargetError(sid, 'pc', c.id, ability, castAt, area?undefined:tgt, targetTokenIds, word);
+      if(combatErr){socket.emit('notice',{message:combatErr});return;}
       if (markSpell(ability)) {
         const needed=castAt??1;
         if (!slot || slot.remaining<=0) {
@@ -2082,7 +2097,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
           socket.emit('notice',{message:'Choose a visible creature for the mark.'}); return;
         }
       }
-      const ok = resolveAbilityRoll(sid, roller, c, ability, castAt, adv, area?undefined:tgt, selectedDamageType,area,targetTokenIds);
+      const ok = resolveAbilityRoll(sid, roller, c, ability, castAt, adv, area?undefined:tgt, selectedDamageType,area,targetTokenIds,word);
       if(!ok&&area)socket.emit('notice',{message:'Could not place the area. Check its range, connected pieces, and chosen target limit.'});
       if(!ok && JSON.stringify(c.conditions)!==JSON.stringify(getCharacter(c.id)?.conditions)) {
         afterChange();socket.emit('notice',{message:spellActionBlockMessage(getCharacter(c.id)!,{inCombat:!!getSessionById(sid)?.combatRound})??'Previous concentration ended. Recover from Haste lethargy before casting a new concentration spell.',durationMs:8000});

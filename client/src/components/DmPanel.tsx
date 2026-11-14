@@ -18,6 +18,7 @@ import { AssetProductionStatus } from './AssetProductionStatus';
 import { TemplateEditor } from './TemplateEditor';
 import { EditableName } from './EditableName';
 import {MapEnvironmentControls} from './MapEnvironmentControls';
+import { NumberInput } from './NumberInput';
 
 /** Show emoji icons inline; image-path icons get a placeholder glyph. */
 const iconText = (icon: string): string =>
@@ -522,10 +523,11 @@ export function DmPanel({ snapshot, pending, onPickSpawn, section }: Props) {
           <div className="add-monster-row">
             <label className="mini">
               HP
-              <input
-                type="number"
+              <NumberInput
                 value={monHp}
-                onChange={(e) => setMonHp(Number(e.target.value))}
+                min={1}
+                emptyFallback={1}
+                onValueChange={(n) => { if (n !== undefined) setMonHp(n); }}
               />
             </label>
             <label className="mini" title="Make this a non-combat object instead of a creature">

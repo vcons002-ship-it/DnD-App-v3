@@ -6,6 +6,7 @@ import { type ModSource, effectiveAc, effectiveStats } from '../../../shared/mod
 import { damageParts, weaponAttackBonusDetail } from '../../../shared/combatMath';
 import { DAMAGE_TYPES } from '../../../shared/damage';
 import { activeHasteCondition, effectiveSpeed, hasteAcBonus, speedIsZero } from '../../../shared/spellBuffs';
+import { NumberInput } from './NumberInput';
 
 /** Common 5e weapon tags, offered as add-suggestions in the tag editor. */
 const TAG_SUGGESTIONS = [
@@ -213,7 +214,6 @@ export function StatBlock({
   }
 
   const set = (patch: Partial<Draft>) => setD((cur) => ({ ...cur, ...patch }));
-  const num = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
   return (
     <div className="statblock editing">
@@ -253,37 +253,41 @@ export function StatBlock({
       })}
       {monster && <p className="muted" role="status">CR changes scale HP, AC, damage, attack bonuses and save DCs from the original CR {crLabel(creature.crBaseline?.level ?? creature.level)}. Save the CR change before further manual tuning. Special traits may need review.</p>}
       <div className="sb-meta-edit">
-        {!monster && <label className="mini">{levelLabel}<input type="number" value={d.level} disabled={!levelEditable} title={levelEditable ? undefined : 'Ask the DM to grant a level-up, then use the level-up guide.'} onChange={(e) => set({level:num(e.target.value)})} /></label>}
+        {!monster && <label className="mini">{levelLabel}<NumberInput min={1} max={20} value={d.level} emptyFallback={1} disabled={!levelEditable} title={levelEditable ? undefined : 'Ask the DM to grant a level-up, then use the level-up guide.'} onValueChange={(n) => { if (n !== undefined) set({ level: n }); }} /></label>}
         <label className="mini">
           HP
-          <input
-            type="number"
+          <NumberInput
+            min={0}
             value={d.curHp}
-            onChange={(e) => set({ curHp: num(e.target.value) })}
+            emptyFallback={0}
+            onValueChange={(n) => { if (n !== undefined) set({ curHp: n }); }}
           />
         </label>
         <label className="mini">
           Max
-          <input
-            type="number"
+          <NumberInput
+            min={1}
             value={d.maxHp}
-            onChange={(e) => set({ maxHp: num(e.target.value) })}
+            emptyFallback={1}
+            onValueChange={(n) => { if (n !== undefined) set({ maxHp: n }); }}
           />
         </label>
         <label className="mini">
           Temp
-          <input
-            type="number"
+          <NumberInput
+            min={0}
             value={d.tempHp}
-            onChange={(e) => set({ tempHp: Math.max(0, num(e.target.value)) })}
+            emptyFallback={0}
+            onValueChange={(n) => { if (n !== undefined) set({ tempHp: Math.max(0, n) }); }}
           />
         </label>
         <label className="mini">
           AC
-          <input
-            type="number"
+          <NumberInput
+            min={0}
             value={d.armorClass}
-            onChange={(e) => set({ armorClass: num(e.target.value) })}
+            emptyFallback={10}
+            onValueChange={(n) => { if (n !== undefined) set({ armorClass: n }); }}
           />
         </label>
         <label className="mini">
@@ -296,12 +300,14 @@ export function StatBlock({
         {ABILITIES.map((a) => (
           <label key={a} className="sb-ability sb-ability-edit">
             <div className="sb-ab-name">{a}</div>
-            <input
-              type="number"
+            <NumberInput
+              min={1}
+              max={30}
               value={d.stats[a] ?? ''}
-              onChange={(e) =>
-                set({ stats: { ...d.stats, [a]: num(e.target.value) } })
-              }
+              emptyFallback={10}
+              onValueChange={(n) => {
+                if (n !== undefined) set({ stats: { ...d.stats, [a]: n } });
+              }}
             />
           </label>
         ))}
@@ -1021,18 +1027,13 @@ function WeaponEditor({
               onChange={(e) => setAt(i, { versatileDamage: e.target.value })}
             />
           )}
-          <input
+          <NumberInput
             className="sb-tohit"
-            type="number"
+            allowEmpty
             placeholder="hit"
             title="To-hit bonus. Leave blank to auto-compute (ability modifier + proficiency by level/CR); enter a number to override."
             value={w.attackBonus ?? ''}
-            onChange={(e) =>
-              setAt(i, {
-                attackBonus:
-                  e.target.value === '' ? undefined : Number(e.target.value),
-              })
-            }
+            onValueChange={(attackBonus) => setAt(i, { attackBonus })}
           />
           <DamageTypeSelect
             value={w.damageType}
@@ -1040,18 +1041,13 @@ function WeaponEditor({
             title="Damage type — drives resistance/vulnerability"
             placeholder="type"
           />
-          <input
+          <NumberInput
             className="sb-tohit"
-            type="number"
+            allowEmpty
             placeholder="magic"
             title="Magic damage bonus (e.g. 1 for a +1 weapon), added to every hit"
             value={w.magicBonus ?? ''}
-            onChange={(e) =>
-              setAt(i, {
-                magicBonus:
-                  e.target.value === '' ? undefined : Number(e.target.value),
-              })
-            }
+            onValueChange={(magicBonus) => setAt(i, { magicBonus })}
           />
           <input
             className="sb-dmg"

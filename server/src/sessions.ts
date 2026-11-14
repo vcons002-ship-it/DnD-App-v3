@@ -2751,11 +2751,22 @@ export function setSheetAbility(
   refId: string,
   ability: Character['sheetAbilities'][number],
 ): Character | Monster | null {
+  const upsertInPlace = (
+    items: Character['sheetAbilities'],
+    next: Character['sheetAbilities'][number],
+  ) => {
+    const id = next.id || newId();
+    const item = { ...next, id };
+    const idx = items.findIndex((a) => a.id === id);
+    if (idx >= 0) {
+      return items.map((a, i) => (i === idx ? item : a));
+    }
+    return [...items, item];
+  };
   if (kind === 'monster') {
     const m = getMonster(refId);
     if (!m) return null;
-    const list = m.sheetAbilities.filter((a) => a.id !== ability.id);
-    list.push({ ...ability, id: ability.id || newId() });
+    const list = upsertInPlace(m.sheetAbilities, ability);
     db.prepare('UPDATE monsters SET sheet_abilities = ? WHERE id = ?').run(
       JSON.stringify(list),
       refId,
@@ -2764,8 +2775,7 @@ export function setSheetAbility(
   }
   const c = getCharacter(refId);
   if (!c) return null;
-  const list = c.sheetAbilities.filter((a) => a.id !== ability.id);
-  list.push({ ...ability, id: ability.id || newId() });
+  const list = upsertInPlace(c.sheetAbilities, ability);
   db.prepare('UPDATE characters SET sheet_abilities = ? WHERE id = ?').run(
     JSON.stringify(list),
     refId,
@@ -3574,7 +3584,7 @@ export function applyDamage(
    *  a dead creature — and it reconciles the whole death state (saves, Dead
    *  mark, downed conditions), not just the HP number. Callers must gate it on
    *  the DM role; spells, abilities and potions never pass it. */
-  opts?: { correction?: boolean; spell?: string; damageParts?: HpFxEvent['damageParts'];impact?:HpFxEvent['impact'];weaponAttack?:HpFxEvent['weaponAttack'];sourcePosition?:HpFxEvent['sourcePosition'] },
+  opts?: { correction?: boolean; revive?: boolean; spell?: string; damageParts?: HpFxEvent['damageParts'];impact?:HpFxEvent['impact'];weaponAttack?:HpFxEvent['weaponAttack'];sourcePosition?:HpFxEvent['sourcePosition'] },
 ): Character | Monster | null {
   const table = kind === 'pc' ? 'characters' : 'monsters';
   let entity = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
@@ -3583,9 +3593,9 @@ export function applyDamage(
   // Clamp to a sane magnitude so a buggy/forged event can't apply absurd values.
   amount = Math.trunc(Math.max(-10000, Math.min(10000, amount)));
   // Dead creatures can't regain hit points. Ordinary healing is refused outright
-  // (callers explain why); the DM's correction revives cleanly instead.
+  // (callers explain why); the DM's correction or Revivify revives cleanly instead.
   if (amount < 0 && isDeadEntity(kind, entity)) {
-    if (!opts?.correction) return entity;
+    if (!opts?.correction && !opts?.revive) return entity;
     const revived = entity.conditions.filter((c) => c.label.trim().toLowerCase() !== 'dead');
     if (kind === 'pc') {
       db.prepare(
@@ -3607,10 +3617,20 @@ export function applyDamage(
   // healing (amount < 0) only restores real HP and never refills temp HP.
   let nextTemp = entity.tempHp;
   let nextCur: number;
+  let triggeredDeathWard: Condition | undefined;
   if (amount > 0) {
     const absorbed = Math.min(nextTemp, amount);
     nextTemp -= absorbed;
     nextCur = Math.min(entity.maxHp, Math.max(0, entity.curHp - (amount - absorbed)));
+    if (entity.curHp > 0 && nextCur === 0) {
+      const ward = entity.conditions.find(
+        (c) => !c.isConcentration && (c.combatEffect?.spell === 'Death Ward' || c.label.trim().toLowerCase() === 'death ward'),
+      );
+      if (ward) {
+        nextCur = 1;
+        triggeredDeathWard = ward;
+      }
+    }
   } else {
     nextCur = Math.min(entity.maxHp, Math.max(0, entity.curHp - amount));
   }
@@ -3693,6 +3713,16 @@ export function applyDamage(
       'UPDATE characters SET cur_hp = ?, temp_hp = ?, death_successes = ?, death_failures = ?, conditions = ? WHERE id = ?',
     ).run(nextCur, nextTemp, ds.successes, ds.failures, JSON.stringify(conds), refId);
     if (droppedToZero) endConcentration('pc', refId, massive ? 'killed outright' : 'dropped to 0 HP');
+    if (triggeredDeathWard) {
+      clearCondition('pc', refId, triggeredDeathWard.id);
+      addRollLog(entity.sessionId, {
+        roller: 'Death Ward',
+        label: 'Death Ward',
+        expr: '1 HP',
+        total: 1,
+        detail: `${entity.name} would drop to 0 HP — Death Ward triggers, leaving ${entity.name} at 1 HP and ending the ward.`,
+      });
+    }
     if (entity.tempHp > 0 && nextTemp === 0) {
       for (const c of getCharacter(refId)?.conditions ?? []) {
         if (c.combatEffect?.spell === 'Armor of Agathys') clearCondition('pc', refId, c.id);
@@ -3707,6 +3737,16 @@ export function applyDamage(
     refId,
   );
   if (droppedToZero) endConcentration('monster', refId, 'dropped to 0 HP');
+  if (triggeredDeathWard) {
+    clearCondition('monster', refId, triggeredDeathWard.id);
+    addRollLog(entity.sessionId, {
+      roller: 'Death Ward',
+      label: 'Death Ward',
+      expr: '1 HP',
+      total: 1,
+      detail: `${entity.name} would drop to 0 HP — Death Ward triggers, leaving ${entity.name} at 1 HP and ending the ward.`,
+    });
+  }
   if (entity.tempHp > 0 && nextTemp === 0) {
     for (const c of getMonster(refId)?.conditions ?? []) {
       if (c.combatEffect?.spell === 'Armor of Agathys') clearCondition('monster', refId, c.id);
@@ -3720,7 +3760,7 @@ function clearDeadControlEffects(kind:TokenKind,refId:string):void {
   const entity=kind==='pc'?getCharacter(refId):getMonster(refId);
   if(!entity || !isDeadEntity(kind,entity)) return;
   for(const c of entity?.conditions??[]) if(!c.isConcentration && !c.combatEffect?.parentConditionId &&
-    ['hold person','hold monster'].includes(c.combatEffect?.spell.toLowerCase()??'') && c.combatEffect?.castId) clearCondition(kind,refId,c.id);
+    ['hold person','hold monster','slow','entangle','faerie fire',"tasha's hideous laughter",'tasha’s hideous laughter'].includes(c.combatEffect?.spell.toLowerCase()??'') && c.combatEffect?.castId) clearCondition(kind,refId,c.id);
 }
 
 /** Set a creature's temporary-HP buffer to an exact amount (mirrors the
@@ -3753,6 +3793,16 @@ export function setCondition(
   const table = kind === 'pc' ? 'characters' : 'monsters';
   const entity = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
   if (!entity) return null;
+  if (
+    !condition.isConcentration &&
+    entity.conditions.some(
+      (c) =>
+        !c.isConcentration &&
+        c.combatEffect?.immuneConditions?.some((ic) => ic.trim().toLowerCase() === condition.label.trim().toLowerCase()),
+    )
+  ) {
+    return entity;
+  }
   // Stamp the current combat round (when combat is running) for manual duration
   // tracking — applied to the new condition and any cascaded ones.
   const round = getSessionById(entity.sessionId)?.combatRound || 0;
@@ -3858,6 +3908,38 @@ export function applyAidBuff(
   return setCondition(kind, refId, condition);
 }
 
+/** Reduce maximum (and clamped current) HP from Harm, tracked cleanly for Greater Restoration / Long Rest recovery. */
+export function applyHarmDebuff(
+  kind: TokenKind,
+  refId: string,
+  damageTaken: number,
+  caster: { kind: TokenKind; refId: string },
+  castId = newId(),
+): Character | Monster | null {
+  const table = kind === 'pc' ? 'characters' : 'monsters';
+  const entity = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+  if (!entity || isDeadEntity(kind, entity) || !Number.isFinite(damageTaken) || damageTaken <= 0) return entity ?? null;
+  const reduction = Math.min(Math.trunc(damageTaken), Math.max(0, entity.maxHp - 1));
+  if (reduction <= 0) return entity;
+  const nextMax = Math.max(1, entity.maxHp - reduction);
+  const nextCur = Math.min(entity.curHp, nextMax);
+  db.prepare(`UPDATE ${table} SET max_hp = ?, cur_hp = ? WHERE id = ?`).run(nextMax, nextCur, refId);
+  return setCondition(kind, refId, {
+    id: newId(),
+    label: `Harm (-${reduction} max HP)`,
+    aura: 'red',
+    isConcentration: false,
+    customText: `Maximum HP reduced by ${reduction} until cured or Long Rest.`,
+    combatEffect: {
+      casterKind: caster.kind,
+      casterId: caster.refId,
+      spell: 'Harm',
+      castId,
+      harmMaxHpReduction: reduction,
+    },
+  });
+}
+
 export function clearCondition(
   kind: TokenKind,
   refId: string,
@@ -3893,6 +3975,13 @@ export function clearCondition(
       const nextMax = Math.max(1, current.maxHp - removed.combatEffect.aidMaxHpBonus);
       const nextCur = Math.min(current.curHp, nextMax);
       db.prepare(`UPDATE ${table} SET max_hp = ?, cur_hp = ? WHERE id = ?`).run(nextMax, nextCur, refId);
+    }
+  }
+  if (removed?.combatEffect?.harmMaxHpReduction && removed.combatEffect.harmMaxHpReduction > 0) {
+    const current = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+    if (current) {
+      const nextMax = Math.min(10000, current.maxHp + removed.combatEffect.harmMaxHpReduction);
+      db.prepare(`UPDATE ${table} SET max_hp = ? WHERE id = ?`).run(nextMax, refId);
     }
   }
   if (removed?.label.trim().toLowerCase() === 'haste' && removed.combatEffect?.spell.trim().toLowerCase() === 'haste') {

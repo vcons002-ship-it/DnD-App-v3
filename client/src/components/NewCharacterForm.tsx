@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CLASS_OPTIONS } from '../../../shared/multiclass';
 import { useStore } from '../state/socket';
+import { NumberInput } from './NumberInput';
 
 const ABILITIES = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
 
@@ -83,18 +84,21 @@ export function NewCharacterForm() {
         </select>
         <label className="mini">
           Lvl
-          <input
-            type="number"
+          <NumberInput
+            min={1}
+            max={20}
             value={level}
-            onChange={(e) => setLevel(Number(e.target.value))}
+            emptyFallback={1}
+            onValueChange={(n) => { if (n !== undefined) setLevel(n); }}
           />
         </label>
         <label className="mini">
           HP
-          <input
-            type="number"
+          <NumberInput
+            min={1}
             value={maxHp}
-            onChange={(e) => setMaxHp(Number(e.target.value))}
+            emptyFallback={10}
+            onValueChange={(n) => { if (n !== undefined) setMaxHp(n); }}
           />
         </label>
       </div>
@@ -102,12 +106,19 @@ export function NewCharacterForm() {
         {ABILITIES.map((a) => (
           <label key={a} className="sb-ability sb-ability-edit">
             <div className="sb-ab-name">{a}</div>
-            <input
-              type="number"
+            <NumberInput
+              min={1}
+              max={30}
+              allowEmpty
               value={stats[a] ?? ''}
-              onChange={(e) =>
-                setStats({ ...stats, [a]: Number(e.target.value) })
-              }
+              onValueChange={(n) => {
+                setStats((prev) => {
+                  const next = { ...prev };
+                  if (n === undefined) delete next[a];
+                  else next[a] = n;
+                  return next;
+                });
+              }}
             />
           </label>
         ))}

@@ -1,11 +1,12 @@
-import { markSpell, hitFeature } from './hitFeatures.js';
-import type { AbilityRoll, SheetAbility } from './types.js';
+import { abilityKey, markSpell, hitFeature } from './hitFeatures.js';
+import type { AbilityRoll, SheetAbility, SpellCustomEffect } from './types.js';
 import { cantripExtraSteps } from './spellMath.js';
 import { isDamageType } from './damage.js';
 import { revisedSpellAbility2024 } from './spellRevisions.js';
 import { linkedSpellProfile, linkedSpellRoll } from './linkedSpells.js';
 import {partySpell} from './partySpells.js';
 import {advancedSpell} from './advancedSpells.js';
+import {combatSpell} from './combatSpells.js';
 import {spellAreaFor} from './spellAreas.js';
 
 /** Small, reviewed execution profiles, not a replacement spell catalogue.
@@ -29,10 +30,17 @@ const PROFILES: Record<string, Profile> = {
   'hold person': { level: 2, save: 'WIS', saveDamage: 'none', targetMode: 'single', addSave: true, extraTargetsOnUpcast: true },
   'hypnotic pattern': { level: 3, save: 'WIS', saveDamage: 'none', targetMode: 'multiple', addSave: true },
   command: { level: 1, save: 'WIS', saveDamage: 'none', targetMode: 'single', addSave: true, extraTargetsOnUpcast: true },
+  bane: { level: 1, save: 'CHA', saveDamage: 'none', targetMode: 'multiple', addSave: true },
+  'faerie fire': { level: 1, save: 'DEX', saveDamage: 'none', targetMode: 'multiple', addSave: true },
+  entangle: { level: 1, save: 'STR', saveDamage: 'none', targetMode: 'multiple', addSave: true },
+  "tasha's hideous laughter": { level: 1, save: 'WIS', saveDamage: 'none', targetMode: 'single', addSave: true, extraTargetsOnUpcast: true },
+  'blindness/deafness': { level: 2, save: 'CON', saveDamage: 'none', targetMode: 'single', addSave: true, extraTargetsOnUpcast: true },
+  slow: { level: 3, save: 'WIS', saveDamage: 'none', targetMode: 'multiple', addSave: true },
   'acid splash': { level: 0, save: 'DEX', saveDamage: 'none', targetMode: 'multiple' },
   'sacred flame': { level: 0, save: 'DEX', saveDamage: 'none', targetMode: 'single' },
   'vicious mockery': { level: 0, save: 'WIS', saveDamage: 'none', targetMode: 'single' },
   disintegrate: { level: 6, save: 'DEX', saveDamage: 'none', targetMode: 'single' },
+  'arms of hadar': { level: 1, save: 'STR', saveDamage: 'half', targetMode: 'multiple' },
   'burning hands': { level: 1, save: 'DEX', saveDamage: 'half', targetMode: 'multiple' },
   'dissonant whispers': { level: 1, save: 'WIS', saveDamage: 'half', targetMode: 'single' },
   'hail of thorns': { level: 1, save: 'DEX', saveDamage: 'half', targetMode: 'multiple' },
@@ -41,6 +49,9 @@ const PROFILES: Record<string, Profile> = {
   shatter: { level: 2, save: 'CON', saveDamage: 'half', targetMode: 'multiple' },
   fireball: { level: 3, save: 'DEX', saveDamage: 'half', targetMode: 'multiple' },
   'lightning bolt': { level: 3, save: 'DEX', saveDamage: 'half', targetMode: 'multiple' },
+  'cone of cold': { level: 5, save: 'CON', saveDamage: 'half', targetMode: 'multiple' },
+  'circle of death': { level: 6, save: 'CON', saveDamage: 'half', targetMode: 'multiple' },
+  harm: { level: 6, save: 'CON', saveDamage: 'half', targetMode: 'single' },
 };
 
 export function effectiveSheetAbility(ability: SheetAbility, castLevel?: number): SheetAbility {
@@ -55,7 +66,34 @@ export function effectiveSheetAbility(ability: SheetAbility, castLevel?: number)
   }
   if (hitFeature(ability)) return {...ability,roll:undefined,stance:undefined};
   if (markSpell(ability)) return {...ability,type:'spell',level:1,roll:{kind:'damage',dice:'0',baseLevel:1,targetMode:'single'}};
-  const name = ability.name.trim().toLowerCase();
+  const name = abilityKey(ability);
+  const combat = combatSpell(ability);
+  if (combat) {
+    const conc = combat === 'shield of faith' || combat === 'blur' || combat === 'greater invisibility' || combat === 'heroism';
+    const tags = conc && !ability.tags?.includes('concentration') ? [...(ability.tags ?? []), 'concentration'] : ability.tags;
+    const multi = combat === 'heroism' && (castLevel ?? 1) > 1;
+    return {
+      ...ability,
+      tags,
+      roll: {
+        kind: 'damage',
+        dice: '0',
+        baseLevel: ability.level,
+        targetMode: multi ? 'multiple' : 'single',
+        ...(combat === 'heroism' ? { maxTargets: 1 + Math.max(0, (castLevel ?? 1) - 1) } : {}),
+        ...(ability.roll?.castingAbility ? { castingAbility: ability.roll.castingAbility } : {}),
+      },
+    };
+  }
+  if (isCanonicalBlessOrBaneProfile(ability) === 'bless') {
+    const tags = ability.tags?.includes('concentration') ? ability.tags : [...(ability.tags ?? []), 'concentration'];
+    return {
+      ...ability,
+      level: 1,
+      tags,
+      roll: { kind: 'damage', dice: '0', baseLevel: 1, targetMode: 'multiple', maxTargets: 3 + Math.max(0, (castLevel ?? 1) - 1) },
+    };
+  }
   const advanced=advancedSpell(ability);
   if(advanced==='counterspell')return ability;
   if(advanced)return {...ability,tags:[...(ability.tags??[]),'concentration'],roll:{kind:'damage',dice:'0',baseLevel:ability.level,targetMode:'single'}};
@@ -128,13 +166,31 @@ export function spellDamageTypeChoices(ability: SheetAbility, castLevel?: number
     .map((type) => type.trim().toLowerCase());
 }
 
+export function hasActiveCustomEffect(ce?: SpellCustomEffect): boolean {
+  if (!ce) return false;
+  return Boolean(ce.conditionLabel?.trim() || ce.cureConditions?.some((c) => c.trim()));
+}
+
+export function spellMaxTargets(
+  roll: Pick<AbilityRoll, 'maxTargets' | 'scaleTargets' | 'baseLevel'> | undefined,
+  castLevel?: number,
+  abilityLevel?: number,
+): number | undefined {
+  if (!roll || (roll.maxTargets === undefined && !roll.scaleTargets)) return undefined;
+  const baseLvl = roll.baseLevel ?? abilityLevel ?? 1;
+  const steps = baseLvl >= 1 ? Math.max(0, Math.floor((castLevel ?? baseLvl) - baseLvl)) : 0;
+  return Math.min(20, Math.max(1, Math.floor((roll.maxTargets ?? 1) + (roll.scaleTargets ?? 0) * steps)));
+}
+
 /** Explicit multi-target rolls and defined areas keep their targeting workflow.
  * Default targeting without an area honors the selected creature. */
 export function isMultiTargetSpell(ability: SheetAbility, castLevel?: number): boolean {
   const roll = effectiveSheetAbility(ability, castLevel).roll;
+  const maxT = spellMaxTargets(roll, castLevel, ability.level);
   if (roll?.kind === 'attack' && roll.instances) return true;
-  if (roll?.kind === 'heal') return roll.targetMode === 'multiple';
+  if (roll?.kind === 'heal') return roll.targetMode === 'multiple' || (maxT ?? 1) > 1;
   if (!roll || (roll.kind !== 'save' && roll.kind !== 'damage')) return false;
+  if ((maxT ?? 1) > 1) return true;
   if (ability.type !== 'spell') return !!roll.instances || roll.targetMode === 'multiple';
   return !!roll.instances || roll.targetMode === 'multiple' || roll.targetMode !== 'single' && !!spellAreaFor(ability, castLevel);
 }
@@ -217,7 +273,7 @@ export function isCanonicalArmorOfAgathysProfile(a: SheetAbility): boolean {
 
 export function isCanonicalBlessOrBaneProfile(a: SheetAbility): 'bless' | 'bane' | null {
   if (a.type !== 'spell' || a.source === 'custom' || a.executionProfile === 'manual' || a.level !== 1 || a.roll) return null;
-  const key = a.name.trim().toLowerCase();
+  const key = abilityKey(a);
   return key === 'bless' || key === 'bane' ? key : null;
 }
 

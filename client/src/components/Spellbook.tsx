@@ -30,6 +30,7 @@ export function Spellbook({
   learningClass,
   onLearningClassChange,
   renderCast,
+  onEditOwned,
 }: {
   onAdd: (s: SpellHit) => void;
   onClose: () => void;
@@ -38,6 +39,7 @@ export function Spellbook({
   learningClass?: string;
   onLearningClassChange?: (className: string) => void;
   renderCast?: (s: SpellHit) => ReactNode;
+  onEditOwned?: (name: string) => void;
 }) {
   const [all, setAll] = useState<SpellHit[]>([]);
   const [q, setQ] = useState('');
@@ -148,6 +150,16 @@ export function Spellbook({
                       >
                         {owned ? '✓ Added' : '+ Add'}
                       </button>
+                      {owned && onEditOwned && (
+                        <button
+                          className="btn tiny spell-edit-btn"
+                          title="Edit spell mechanics & effects"
+                          aria-label={`Edit ${s.name}`}
+                          onClick={() => onEditOwned(s.name)}
+                        >
+                          ✏️ Edit
+                        </button>
+                      )}
                     </div>
                     {isOpen && (
                       <div className="spellbook-body">

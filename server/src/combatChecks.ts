@@ -3,6 +3,7 @@ import { checkAdvantage, saveAdvantage, saveAutoFail } from '../../shared/condit
 import { parseConsumable } from '../../shared/consumables.js';
 import { rollDice, withDiceMetadata } from '../../shared/dice.js';
 import { effectiveStats, saveExtra, skillExtra } from '../../shared/modifiers.js';
+import { rollBlessBaneBonus } from '../../shared/spellBuffs.js';
 import { checkReveal, diceReveal } from '../../shared/rollReveal.js';
 import { abilityMod, proficiencyBonus, SKILLS, signed } from '../../shared/skills.js';
 import type { Character, Monster, RollEntry, SheetAbility, Token } from '../../shared/types.js';
@@ -61,9 +62,12 @@ export function resolveSaves(
       advantageByToken?.[id] ?? advantage,
       strFeatureAdv(r.kind, r.refId, ability),
     );
+    const condEnt = r.kind === 'pc' ? getCharacter(r.refId) : getMonster(r.refId);
+    const cond = condEnt ? rollBlessBaneBonus(condEnt, 'save') : { bonus: 0, notes: [] };
     const out = rollSavingThrow(r.c, ability, dc, adv.state, proficient);
     const sb = saveBonus(r, ability);
-    const total = out.total + sb.add;
+    const total = out.total + sb.add + cond.bonus;
+    const condNote = cond.notes.length ? ` · ${cond.notes.join(', ')}` : '';
     const pass = total >= dc;
     addRollLog(sessionId, {
       roller,
@@ -71,7 +75,7 @@ export function resolveSaves(
       expr: `DC ${dc}`,
       total,
       detail:
-        `${r.name}: ${out.d20Detail} (${out.mod >= 0 ? '+' : ''}${out.mod}${out.proficient ? ' prof' : ''})${sb.note} = ${total} vs DC ${dc} — ${pass ? 'PASS' : 'FAIL'}` +
+        `${r.name}: ${out.d20Detail} (${out.mod >= 0 ? '+' : ''}${out.mod}${out.proficient ? ' prof' : ''})${sb.note}${condNote} = ${total} vs DC ${dc} — ${pass ? 'PASS' : 'FAIL'}` +
         (adv.reasons.length ? ` · ${adv.state ?? 'straight'}: ${adv.reasons.join(', ')}` : ''),
       reveal: checkReveal({
         who: r.name,
@@ -81,6 +85,7 @@ export function resolveSaves(
         steps: [
           { label: ability.toUpperCase(), value: out.mod },
           ...(sb.add ? [{ label: 'bonus', value: sb.add }] : []),
+          ...(cond.bonus ? [{ label: cond.notes.join(', ') || 'Bless/Bane', value: cond.bonus }] : []),
         ],
         outcome: pass ? 'pass' : 'fail',
       }),
@@ -120,10 +125,11 @@ export function resolveSave(
     advantage,
     strFeatureAdv(kind, refId, ab),
   );
+  const cond = rollBlessBaneBonus(ent, 'save');
   const out = rollSavingThrow(c, ab, 0, adv.state, proficient); // dc 0 → pass unused
   const e = saveExtra(ent, ab);
-  const total = out.total + e.total;
-  const note = e.parts.map((p) => `${signed(p.value)} ${p.source}`).join(', ');
+  const total = out.total + e.total + cond.bonus;
+  const note = [...e.parts.map((p) => `${signed(p.value)} ${p.source}`), ...cond.notes].join(', ');
   addRollLog(sessionId, {
     roller,
     label: `${ab} save`,
@@ -140,6 +146,7 @@ export function resolveSave(
       steps: [
         { label: ab, value: out.mod },
         ...e.parts.map((p) => ({ label: p.source, value: p.value })),
+        ...(cond.bonus ? [{ label: cond.notes.join(', ') || 'Bless/Bane', value: cond.bonus }] : []),
       ],
     }),
     hideMods: hidesMods(kind, refId),
@@ -203,6 +210,8 @@ export function resolveCheck(
 export function areaSaveRequest(tok: Token, ability: string, dc: number) {
   const r = resolve(tok);
   if (!r) return;
+  const ent = tok.kind === 'pc' ? getCharacter(tok.refId) : getMonster(tok.refId);
+  const condRoll = ent ? rollBlessBaneBonus(ent, 'save') : { bonus: 0, notes: [] };
   return {
     target: tok,
     c: r.c,
@@ -210,8 +219,9 @@ export function areaSaveRequest(tok: Token, ability: string, dc: number) {
     dc,
     mode: saveAdvantage(r.conditionLabels, ability, undefined, strFeatureAdv(r.kind, r.refId, ability)).state,
     proficient: r.saveProficiencies.some((s) => s.trim().toUpperCase() === ability.toUpperCase()),
-    extra: saveBonus(r, ability).add,
+    extra: saveBonus(r, ability).add + condRoll.bonus,
     autoFail: !!saveAutoFail(r.conditionLabels, ability),
+    condRoll,
   };
 }
 
@@ -225,15 +235,17 @@ export function resolveDeathSave(sessionId: string, characterId: string): boolea
   // Only a downed PC that isn't already stable (3✓) or dead (3✗) keeps rolling.
   if (!ch || ch.curHp > 0 || ch.deathSaves.successes >= 3 || ch.deathSaves.failures >= 3)
     return false;
+  const cond = rollBlessBaneBonus(ch, 'save');
   const face = rollDice('1d20')!.total;
   // A death save IS a saving throw, so all-saves modifiers (Cloak of Protection
   // etc.) apply to the 10+ check; an ability-specific save bonus doesn't (a
   // death save has no ability), and nat 20 / nat 1 stay face-based per RAW.
   const extra = saveExtra(ch, '');
-  const total = face + extra.total;
-  const extraNote = extra.parts
-    .map((p) => ` ${signed(p.value)}[${p.source}]`)
-    .join('');
+  const total = face + extra.total + cond.bonus;
+  const extraNote = [
+    ...extra.parts.map((p) => ` ${signed(p.value)}[${p.source}]`),
+    ...cond.notes.map((n) => ` ${n}`),
+  ].join('');
   const log = (detail: string, outcome: 'pass' | 'fail') =>
     addRollLog(sessionId, {
       roller: ch.name,
@@ -246,7 +258,10 @@ export function resolveDeathSave(sessionId: string, characterId: string): boolea
         title: 'Death save',
         face,
         total,
-        steps: extra.parts.map((p) => ({ label: p.source, value: p.value })),
+        steps: [
+          ...extra.parts.map((p) => ({ label: p.source, value: p.value })),
+          ...(cond.bonus ? [{ label: cond.notes.join(', ') || 'Bless/Bane', value: cond.bonus }] : []),
+        ],
         outcome,
       }),
     });
@@ -272,7 +287,7 @@ export function resolveDeathSave(sessionId: string, characterId: string): boolea
 
   setDeathSaves(characterId, successes, failures);
   log(
-    `${ch.name}: d20[${face}]${extraNote}${extra.total ? ` = ${total}` : ''} ${kind} (${successes}✓/${failures}✗)${outcome}`,
+    `${ch.name}: d20[${face}]${extraNote}${extra.total || cond.bonus ? ` = ${total}` : ''} ${kind} (${successes}✓/${failures}✗)${outcome}`,
     kind === 'SUCCESS' ? 'pass' : 'fail',
   );
   return true;

@@ -7,7 +7,7 @@
 import type { Condition, InventoryItem, ModTarget, SheetModifier, Weapon } from './types.js';
 import type { AbilityKey } from './skills.js';
 import { rollDice } from './dice.js';
-import { hasteAcBonus,shieldAcBonus } from './spellBuffs.js';
+import { hasteAcBonus, hasMageArmor, shieldAcBonus, shieldOfFaithAcBonus, slowSpellPenalty } from './spellBuffs.js';
 
 const ABILITIES: AbilityKey[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
 
@@ -95,13 +95,48 @@ export function effectiveStats(c: ModSource): {
   return { scores, breakdown };
 }
 
-/** Effective AC = base armorClass + AC-target modifiers + live spell buffs. */
+const ARMOR_NAME_RE =
+  /\b(?:armor|leather|studded|hide|chain\s*(?:shirt|mail)|elven\s*chain|scale\s*mail|breastplate|half\s*plate|ring\s*mail|splint|plate|padded)\b/i;
+
+/** True if the creature has equipped body armor (shields alone do not count as wearing armor). */
+export function isWearingArmor(c: Pick<ModSource, 'items'>): boolean {
+  return (c.items ?? []).some(
+    (it) =>
+      !!it.equipped &&
+      !/\bshield\b/i.test(it.name) &&
+      (ARMOR_NAME_RE.test(it.name) || /\b(?:light|medium|heavy)\s+armor\b/i.test(it.note ?? '')),
+  );
+}
+
+/** Effective AC = base (or Mage Armor 13 + DEX) + AC modifiers + live spell buffs. */
 export function effectiveAc(c: ModSource): number {
+  const dexScore = effectiveStats(c).scores.DEX ?? c.stats?.DEX ?? 10;
+  const dexMod = Math.floor((dexScore - 10) / 2);
+  let baseAc =
+    hasMageArmor(c) && !isWearingArmor(c)
+      ? Math.max(c.armorClass ?? 0, 13 + dexMod)
+      : (c.armorClass ?? 0);
+  const activeConds = (c.conditions ?? []).filter((cond) => !cond.isConcentration);
+  for (const cond of activeConds) {
+    const fx = cond.combatEffect;
+    if (!fx || !Number.isFinite(fx.baseAc)) continue;
+    if (fx.baseAcAddsDex && isWearingArmor(c)) continue;
+    baseAc = Math.max(baseAc, fx.baseAc! + (fx.baseAcAddsDex ? dexMod : 0));
+  }
+  const condAcBonus = activeConds.reduce(
+    (s, cond) => s + (Number.isFinite(cond.combatEffect?.acBonus) ? cond.combatEffect!.acBonus! : 0),
+    0,
+  );
   return (
-    (c.armorClass ?? 0) +
+    baseAc +
     activeModifiers(c)
       .filter((m) => m.target.kind === 'ac')
-      .reduce((s, m) => s + m.value, 0) + hasteAcBonus(c) + shieldAcBonus(c)
+      .reduce((s, m) => s + m.value, 0) +
+    hasteAcBonus(c) +
+    shieldAcBonus(c) +
+    shieldOfFaithAcBonus(c) +
+    slowSpellPenalty(c) +
+    condAcBonus
   );
 }
 
@@ -119,7 +154,20 @@ function extras(
 /** Flat bonus to a saving throw for `ability` (matches that save or all-saves). */
 export function saveExtra(c: ModSource, ability: string) {
   const ab = ability.trim().toUpperCase();
-  return extras(c, (t) => t.kind === 'save' && (!t.ability || t.ability === ab));
+  const result = extras(c, (t) => t.kind === 'save' && (!t.ability || t.ability === ab));
+  if (ab === 'DEX' && slowSpellPenalty(c) !== 0) {
+    result.total -= 2;
+    result.parts.push({ source: 'Slow', value: -2 });
+  }
+  for (const cond of c.conditions ?? []) {
+    if (cond.isConcentration) continue;
+    const bonus = cond.combatEffect?.saveBonus;
+    if (Number.isFinite(bonus) && bonus !== 0) {
+      result.total += bonus!;
+      result.parts.push({ source: cond.combatEffect?.spell || cond.label, value: bonus! });
+    }
+  }
+  return result;
 }
 
 /** Flat bonus to a skill check (matches that skill or all-skills). */
@@ -137,7 +185,16 @@ export function skillExtra(c: ModSource, skillName: string) {
 
 /** Flat bonus to every attack roll. */
 export function attackExtra(c: ModSource) {
-  return extras(c, (t) => t.kind === 'attack');
+  const result = extras(c, (t) => t.kind === 'attack');
+  for (const cond of c.conditions ?? []) {
+    if (cond.isConcentration) continue;
+    const bonus = cond.combatEffect?.attackBonus;
+    if (Number.isFinite(bonus) && bonus !== 0) {
+      result.total += bonus!;
+      result.parts.push({ source: cond.combatEffect?.spell || cond.label, value: bonus! });
+    }
+  }
+  return result;
 }
 
 /** Flat bonus to initiative (the DEX mod already flows via effectiveStats). */

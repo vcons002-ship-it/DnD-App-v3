@@ -15,7 +15,7 @@ import {resolveAttackDamage} from './combat.js';
 
 const entity=(kind:TokenKind,id:string)=>kind==='pc'?getCharacter(id):getMonster(id);
 const reactionBlock=(e:{conditions:import('../../shared/types.js').Condition[]})=>spellActionBlockMessage({conditions:e.conditions.filter(c=>c.combatEffect?.spell!=='Command')});
-export const reactionSpent=(conditions:readonly {label:string}[])=>conditions.some(c=>/^reaction spent|^(incapacitated|paralyzed|petrified|stunned|unconscious)$/i.test(c.label));
+export const reactionSpent=(conditions:readonly {label:string;isConcentration?:boolean;combatEffect?:import('../../shared/types.js').Condition['combatEffect']}[])=>conditions.some(c=>/^reaction spent|^(incapacitated|paralyzed|petrified|stunned|unconscious)$/i.test(c.label) || (!c.isConcentration && ['slow','arms of hadar'].includes((c.combatEffect?.spell ?? '').trim().toLowerCase())));
 export function shieldGate(sid:string,kind:TokenKind,id:string,attackTotal?:number,natural20=false):PendingDamage['shield'] {
   const e=entity(kind,id);
   if(!e||e.sessionId!==sid||e.curHp<=0||isDeadEntity(kind,e)||shieldAcBonus(e)||reactionSpent(e.conditions)||reactionBlock(e))return;
@@ -102,7 +102,7 @@ export function shakeAwake(sid:string,actorId:string,targetId:string):string|und
   const actor=getToken(actorId),target=getToken(targetId),map=actor&&getMap(actor.mapId);
   if(!actor||!target||!map||map.sessionId!==sid||actor.mapId!==target.mapId||actor.kind===target.kind&&actor.refId===target.refId)return 'Choose another creature to shake awake.';
   const a=entity(actor.kind,actor.refId),e=entity(target.kind,target.refId);
-  if(!a||a.curHp<=0||reactionSpent(a.conditions.filter(c=>!/^reaction spent/i.test(c.label)))||spellActionBlockMessage(a))return 'The acting creature cannot take an action.';
+  if(!a||a.curHp<=0||a.conditions.some(c=>/^(incapacitated|paralyzed|petrified|stunned|unconscious)$/i.test(c.label))||spellActionBlockMessage(a))return 'The acting creature cannot take an action.';
   if(tokenDistanceFt(actor,target,map)>5||!hasLineOfSight(actor,target,map.walls))return 'Move within 5 feet of the creature to shake them awake.';
   const conditions=e?.conditions.filter(c=>c.label==='Hypnotic Pattern'&&c.combatEffect?.spell==='Hypnotic Pattern')??[];
   if(!conditions.length)return 'This creature is not affected by Hypnotic Pattern.';

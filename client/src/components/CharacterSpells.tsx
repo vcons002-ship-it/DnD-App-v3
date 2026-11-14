@@ -40,6 +40,8 @@ import { isCanonicalHasteProfile, effectiveSheetAbility, isMultiTargetSpell, spe
 import { spellCombatSupport } from '../../../shared/spellSupport';
 import { SpellCombatSupportBadge } from './SpellCombatSupport';
 import { spellActionBlock, spellActionBlockMessage } from '../../../shared/spellBuffs';
+import { NumberInput } from './NumberInput';
+import { SpellEffectEditor } from './SpellEffectEditor';
 
 const manualRiderNote = (ability: SheetAbility): string | undefined => {
   const name = ability.name.replace(/[\u2018\u2019]/g, "'").trim().toLowerCase();
@@ -242,6 +244,12 @@ export function CharacterSpells({
   const [aiAvail, setAiAvail] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [enrichId, setEnrichId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [customDraft, setCustomDraft] = useState<SheetAbility | null>(null);
+  const editingAbility = useMemo(
+    () => (editingId ? character.sheetAbilities.find((s) => s.id === editingId) ?? null : null),
+    [character.sheetAbilities, editingId],
+  );
 
   useEffect(() => {
     if (!adding) return;
@@ -478,6 +486,33 @@ export function CharacterSpells({
       roll: { kind: 'damage', dice: '1d6', ...(sourceClass ? { castingAbility: spellcastingAbilityForClass(sourceClass) ?? undefined } : {}) },
     });
     setOpen((o) => ({ ...o, [id]: true }));
+  };
+
+  const openNewCustomBuilder = () => {
+    const sourceClass = addClass || (classRoster?.length === 1 ? classRoster[0].className : undefined);
+    if ((classRoster?.length ?? 0) > 1 && !sourceClass) {
+      notify('Choose the class that learns this spell before adding it.');
+      return;
+    }
+    const id = crypto.randomUUID?.() ?? String(Date.now());
+    setCustomDraft({
+      id,
+      name: 'Custom Spell',
+      type: 'spell',
+      source: 'custom',
+      executionProfile: 'manual',
+      level: 1,
+      school: 'Evocation',
+      actionType: 'action',
+      prepared: true,
+      ...(sourceClass ? { sourceClass } : {}),
+      description: '',
+      roll: {
+        kind: 'damage',
+        dice: '2d6',
+        ...(sourceClass ? { castingAbility: spellcastingAbilityForClass(sourceClass) ?? undefined } : {}),
+      },
+    });
   };
 
   /** Move an entry up/down WITHIN its display group. Swaps it with its group
@@ -733,13 +768,23 @@ export function CharacterSpells({
             ) : null;
           })()}
           {editable && (
-            <button
-              className="res-x"
-              title="Remove"
-              onClick={() => removeSheetAbility(kind, character.id, a.id)}
-            >
-              ✕
-            </button>
+            <>
+              <button
+                className="btn tiny spell-edit-btn"
+                title="Edit spell mechanics, rolls, conditions, area & effects"
+                aria-label={`Edit ${a.name}`}
+                onClick={() => setEditingId(a.id)}
+              >
+                ✏️ Edit
+              </button>
+              <button
+                className="res-x"
+                title="Remove"
+                onClick={() => removeSheetAbility(kind, character.id, a.id)}
+              >
+                ✕
+              </button>
+            </>
           )}
         </div>
         {open[a.id] && (
@@ -759,15 +804,15 @@ export function CharacterSpells({
                   onChange={(e) => setSheetAbility(kind, character.id, { ...a, name: e.target.value })}
                 />
                 {a.type === 'spell' && (
-                  <input
+                  <NumberInput
                     className="sb-dc"
-                    type="number"
                     min={0}
                     max={9}
+                    emptyFallback={0}
                     title="Spell level (0 = cantrip)"
                     value={a.level ?? 0}
-                    onChange={(e) =>
-                      setSheetAbility(kind, character.id, { ...a, level: Number(e.target.value) })
+                    onValueChange={(v) =>
+                      setSheetAbility(kind, character.id, { ...a, level: v ?? 0 })
                     }
                   />
                 )}
@@ -923,13 +968,16 @@ export function CharacterSpells({
                         </option>
                       ))}
                     </select>
-                    <input
+                    <NumberInput
                       className="sb-dc"
+                      allowEmpty
+                      min={1}
+                      max={40}
                       placeholder="DC"
                       value={displayRoll.dc ?? ''}
-                      onChange={(e) =>
+                      onValueChange={(v) =>
                         patchRoll(a, {
-                          dc: e.target.value ? Number(e.target.value) : undefined,
+                          dc: v,
                         })
                       }
                     />
@@ -992,6 +1040,17 @@ export function CharacterSpells({
                   onClick={() => clearRoll(a)}
                 >
                   ✕
+                </button>
+              </div>
+            )}
+            {editable && (
+              <div>
+                <button
+                  type="button"
+                  className="btn tiny"
+                  onClick={() => setEditingId(a.id)}
+                >
+                  ⚙️ Edit all spell effects…
                 </button>
               </div>
             )}
@@ -1181,6 +1240,18 @@ export function CharacterSpells({
           {bookOpen && (
             <Spellbook
               onAdd={add}
+              onEditOwned={(spellName) => {
+                const match =
+                  character.sheetAbilities.find(
+                    (a) =>
+                      a.name.trim().toLowerCase() === spellName.trim().toLowerCase() &&
+                      ((classRoster?.length ?? 0) <= 1 || !addClass || a.sourceClass === addClass),
+                  ) ??
+                  character.sheetAbilities.find(
+                    (a) => a.name.trim().toLowerCase() === spellName.trim().toLowerCase(),
+                  );
+                if (match) setEditingId(match.id);
+              }}
               renderCast={hit=>{
                 const learned=character.sheetAbilities.filter(a=>isCastSpell(a)&&a.name.toLowerCase()===hit.name.toLowerCase());
                 const ability=learned.find(a=>a.sourceClass===addClass)??learned[0];
@@ -1193,6 +1264,34 @@ export function CharacterSpells({
               learningClasses={classRoster ?? undefined}
               learningClass={addClass}
               onLearningClassChange={name => setAddClass(name as CoreClass | '')}
+            />
+          )}
+          {editable && (editingAbility || customDraft) && (
+            <SpellEffectEditor
+              ability={(editingAbility ?? customDraft)!}
+              isNew={!editingAbility && !!customDraft}
+              casterType={kind}
+              classRoster={classRoster ?? undefined}
+              onSave={(updated) => {
+                setSheetAbility(kind, character.id, updated);
+                if (!editingAbility && customDraft) {
+                  setOpen((o) => ({ ...o, [updated.id]: true }));
+                }
+                setEditingId(null);
+                setCustomDraft(null);
+              }}
+              onRemove={
+                editingAbility
+                  ? () => {
+                      removeSheetAbility(kind, character.id, editingAbility.id);
+                      setEditingId(null);
+                    }
+                  : undefined
+              }
+              onClose={() => {
+                setEditingId(null);
+                setCustomDraft(null);
+              }}
             />
           )}
           {adding && (
@@ -1259,6 +1358,13 @@ export function CharacterSpells({
                   title="Author a homebrew spell — sets name, level, dice & roll inline"
                 >
                   ✏️ Create custom
+                </button>
+                <button
+                  className="btn tiny"
+                  onClick={openNewCustomBuilder}
+                  title="Build a custom spell or ability with full roll, area, condition, and buff controls"
+                >
+                  ⚙️ Build custom effect…
                 </button>
               </div>
             </div>

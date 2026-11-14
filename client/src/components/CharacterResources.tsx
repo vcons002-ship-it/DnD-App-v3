@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import type { Character } from '../../../shared/types';
 import { useStore } from '../state/socket';
 import { hitDicePoolsFor, isClassCounter, shortRestRecoveryForCharacter } from '../../../shared/rests';
+import { NumberInput } from './NumberInput';
 
 type Counter = { max: number; used: number; recharge?: 'short' | 'long' };
 
@@ -187,11 +188,11 @@ export function CharacterResources({
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addCustom()}
           />
-          <input
-            type="number"
+          <NumberInput
             value={max}
             min={1}
-            onChange={(e) => setMax(Math.max(1, Number(e.target.value)))}
+            emptyFallback={1}
+            onValueChange={(n) => { if (n !== undefined) setMax(n); }}
           />
           <button className="btn tiny" onClick={addCustom} disabled={!name.trim()}>
             Add

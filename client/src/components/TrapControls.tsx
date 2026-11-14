@@ -1,5 +1,6 @@
 import type { StateSnapshot } from '../../../shared/types';
 import { useStore } from '../state/socket';
+import { NumberInput } from './NumberInput';
 
 /**
  * Trap-specific controls layered onto a trap object. The DM gets a **Trigger**
@@ -67,13 +68,14 @@ export function TrapControls({
           )}
           <label className="trap-dc" title="Check DC a character must beat to disarm">
             Disarm DC
-            <input
-              type="number"
+            <NumberInput
               min={1}
+              max={30}
               value={dc ?? 12}
-              onChange={(e) =>
-                updateMonster({ monsterId, objectDc: Math.max(1, Number(e.target.value)) })
-              }
+              emptyFallback={12}
+              onValueChange={(n) => {
+                if (n !== undefined) updateMonster({ monsterId, objectDc: Math.max(1, n) });
+              }}
             />
           </label>
         </div>

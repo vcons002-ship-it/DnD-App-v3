@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { NumberInput } from './NumberInput';
 
 /**
  * Shared damage/heal control: an amount input + Damage/Heal buttons. `onApply`
@@ -22,10 +23,10 @@ export function DamageHealControls({
   const tiny = compact ? 'tiny ' : '';
   return (
     <div className={compact ? 'fm-dmg' : 'dmg-row'}>
-      <input
-        type="number"
+      <NumberInput
         value={amount}
-        onChange={(e) => setAmount(Number(e.target.value))}
+        emptyFallback={initial}
+        onValueChange={(n) => { if (n !== undefined) setAmount(n); }}
       />
       <button className={`btn ${tiny}red`} onClick={() => onApply(amount)}>
         {compact ? '−HP' : 'Damage'}

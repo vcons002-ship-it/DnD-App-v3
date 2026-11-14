@@ -6,6 +6,7 @@ import type { ClassRosterEntry, LevelUpChoices, LevelUpCommitRequest, LevelUpPla
 import { CORE_CLASSES_2024, permanentStats2024, subclassChoices2024, type CoreClass } from '../../../shared/characterProgression';
 import { resolveClassRoster } from '../../../shared/multiclass';
 import { useStore } from '../state/socket';
+import { NumberInput } from './NumberInput';
 import './character-level-up.css';
 
 const ABILITIES: AbilityKey[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
@@ -401,7 +402,7 @@ function ClassLevelsDialog({ character, onClose }: { character: Character; onClo
       {error && <p className="level-up-error" role="alert">{error}</p>}
       {classes.map((entry, index) => <fieldset className="level-up-class-row" key={index}><legend>{index === 0 ? 'Starting class' : `Additional class ${index}`}</legend>
         <label className="level-up-field">Class {index + 1}<select value={entry.className} disabled={busy} onChange={event => changeEntry(index, { className: event.target.value as ClassRosterEntry['className'], subclass: undefined })}>{CORE_CLASSES_2024.map(name => <option key={name} value={name} disabled={classes.some((other, i) => i !== index && other.className === name)}>{classLabel(name)}</option>)}</select></label>
-        <label className="level-up-field">Class level {index + 1}<input type="number" min={1} max={20} value={entry.level} disabled={busy} onChange={event => changeEntry(index, { level: Number(event.target.value) })} /></label>
+        <label className="level-up-field">Class level {index + 1}<NumberInput min={1} max={20} value={entry.level} emptyFallback={1} disabled={busy} onValueChange={n => { if (n !== undefined) changeEntry(index, { level: n }); }} /></label>
         {entry.level >= 3 && <label className="level-up-field">Subclass {index + 1}<select value={entry.subclass ?? ''} disabled={busy} onChange={event => changeEntry(index, { subclass: event.target.value || undefined })}><option value="">Choose later / custom subclass</option>{entry.subclass && !subclassChoices2024(entry.className).includes(entry.subclass) && <option value={entry.subclass}>{entry.subclass}</option>}{subclassChoices2024(entry.className).map(name => <option key={name} value={name}>{name}</option>)}</select></label>}
         <button className="btn tiny" disabled={busy} onClick={() => setClasses(current => current.filter((_, i) => i !== index))}>Remove class {index + 1}</button>
       </fieldset>)}

@@ -8,3 +8,9 @@ export function seesInvisible(e:{conditions:readonly Condition[];abilities?:read
   const traits=(e.abilities??[]).map(a=>`${a.name} ${a.description}`).join(' ');
   return [...traits.matchAll(/(?:blindsight|truesight)\s*:?\s*(\d+)\s*(?:ft|feet)/ig)].some(m=>distanceFt<=Number(m[1]));
 }
+export function ignoresBlur(e:{conditions:readonly Condition[];abilities?:readonly CreatureAbility[]},distanceFt:number){
+  if(isBlindCondition(e.conditions))return true;
+  if(e.conditions.some(c=>/^truesight$/i.test(c.label)))return true;
+  const traits=(e.abilities??[]).map(a=>`${a.name} ${a.description}`).join(' ');
+  return [...traits.matchAll(/(?:blindsight|truesight)\s*:?\s*(\d+)\s*(?:ft|feet)/ig)].some(m=>distanceFt<=Number(m[1]));
+}

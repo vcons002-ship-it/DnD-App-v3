@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MapPopup, ShopItem, StateSnapshot } from '../../../shared/types';
 import { useStore } from '../state/socket';
 import { apiFetch } from '../lib/api';
+import { NumberInput } from './NumberInput';
 
 /**
  * The popup that opens when a clickable map decal (a "shop") is clicked. Players
@@ -141,7 +142,7 @@ export function DecalPopup({ snapshot }: { snapshot: StateSnapshot }) {
                 <tr key={it.id}>
                   <td><input value={it.name} placeholder="name" onChange={(e) => patchItem(i, { name: e.target.value })} /></td>
                   <td className="num"><input className="px" value={it.price} placeholder="15 gp" onChange={(e) => patchItem(i, { price: e.target.value })} /></td>
-                  <td className="num"><input className="qx" type="number" value={it.qty ?? ''} placeholder="∞" onChange={(e) => patchItem(i, { qty: e.target.value === '' ? undefined : Number(e.target.value) })} /></td>
+                  <td className="num"><NumberInput className="qx" min={0} allowEmpty value={it.qty ?? ''} placeholder="∞" onValueChange={(qty) => patchItem(i, { qty })} /></td>
                   <td><input value={it.note ?? ''} placeholder="—" onChange={(e) => patchItem(i, { note: e.target.value || undefined })} /></td>
                   <td>
                     <button className="res-x" title="Remove item" onClick={() => draft && commit({ ...draft, items: draft.items.filter((_, idx) => idx !== i) })}>✕</button>

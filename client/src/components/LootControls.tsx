@@ -12,6 +12,7 @@ import { apiFetch } from '../lib/api';
 import { useStore } from '../state/socket';
 import { ItemLibrarySaveDialog, type SaveableItem } from './ItemLibrarySaveDialog';
 import { ModifierEditor } from './ModifierEditor';
+import { NumberInput } from './NumberInput';
 
 const newItemId = () => crypto.randomUUID?.() ?? String(Date.now() + Math.random());
 
@@ -269,26 +270,25 @@ export function LootControls({
         <div className="loot-edit">
           <label className="loot-gold-edit">
             Gold
-            <input
-              type="number"
+            <NumberInput
               min={0}
-              value={goldDraft ?? String(goldHeld)}
-              onChange={(e) => setGoldDraft(e.target.value)}
-              onBlur={() => {
-                if (goldDraft === null) return; // untouched — write nothing
-                const v = Math.max(0, Math.round(Number(goldDraft) || 0));
+              commitOnBlur
+              emptyFallback={0}
+              value={goldDraft === null ? goldHeld : goldDraft === '' ? '' : Number(goldDraft)}
+              onValueChange={(n) => {
                 setGoldDraft(null);
+                const v = Math.max(0, Math.round(n ?? 0));
                 if (v !== goldHeld) changeGold(v);
               }}
             />
           </label>
           <div className="item-add">
             <input placeholder="Item name" value={name} onChange={(e) => setName(e.target.value)} />
-            <input
-              type="number"
+            <NumberInput
               min={1}
               value={qty}
-              onChange={(e) => setQty(Math.max(1, Number(e.target.value)))}
+              emptyFallback={1}
+              onValueChange={(n) => { if (n !== undefined) setQty(n); }}
             />
             <button
               className="btn tiny"

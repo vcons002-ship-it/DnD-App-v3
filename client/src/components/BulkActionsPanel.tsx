@@ -5,6 +5,7 @@ import { resolveToken } from '../lib/entities';
 import { useStore } from '../state/socket';
 import { IconTools } from './IconTools';
 import { DamageHealControls } from './DamageHealControls';
+import { NumberInput } from './NumberInput';
 
 type Props = {
   snapshot: StateSnapshot;
@@ -138,10 +139,12 @@ export function BulkActionsPanel({
               ))}
             </select>
             <span className="muted">DC</span>
-            <input
-              type="number"
+            <NumberInput
               value={saveDc}
-              onChange={(e) => setSaveDc(Number(e.target.value))}
+              min={1}
+              max={30}
+              emptyFallback={10}
+              onValueChange={(n) => { if (n !== undefined) setSaveDc(n); }}
             />
             <button
               className="btn tiny"

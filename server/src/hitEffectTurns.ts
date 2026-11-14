@@ -10,7 +10,7 @@ import { markedEntity } from './marks.js';
 import {tokenDistanceFt} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import { hitEffectSave } from './hitFeatures.js';
-import { listTokens,listCharacters,listMonsters,isDeadEntity,getSessionById,getToken,getMap,endConcentration,clearCondition,applyDamage,addRollLog,setCondition } from './sessions.js';
+import { listTokens,listCharacters,listMonsters,isDeadEntity,getSessionById,getToken,getMap,endConcentration,clearCondition,applyDamage,addRollLog,setCondition,setTempHp } from './sessions.js';
 import { noteConcentration, stanceResistances } from './combat.js';
 
 /** Expiration and lost concentration apply even to creatures on another map.
@@ -43,7 +43,7 @@ export function expireTimedSpellEffects(sid:string) {
       const expired = round > 0 ? !fx.untilCasterTurn && !!fx.expiresRound && round>=fx.expiresRound
         : !!fx.expiresAt && fx.expiresAt<=Date.now();
       const ended = fx.concentration && !caster?.conditions.some(v=>v.isConcentration&&v.id===fx.castId);
-      const dead = ['hold person','hold monster'].includes(fx.spell.toLowerCase()) && !c.isConcentration && isDeadEntity(kind,e);
+      const dead = ['hold person','hold monster','slow','entangle','faerie fire',"tasha's hideous laughter"].includes(abilityKey({ name: fx.spell })) && !c.isConcentration && isDeadEntity(kind,e);
       if(expired || ended || dead) {clearCondition(kind,e.id,c.id);changed=true;}
     }
   return syncPassWithoutTrace(sid)||changed;
@@ -76,7 +76,16 @@ export function processHitEffects(sid:string,token:Token,phase:'start'|'end') {
       (fx.castId?v.id===fx.castId:abilityKey({name:v.label.replace(/^Concentration:\s*/i,'')})===abilityKey({name:fx.spell})))) {
       clearCondition(token.kind,token.refId,c.id); continue;
     }
+    if(fx.nextAttackDisadvantage && fx.spell==='Vicious Mockery' && phase==='end'){clearCondition(token.kind,token.refId,c.id);continue;}
     const tick=`${round}:${getSessionById(sid)?.activeTurnTokenId}:${phase}`;
+    if(phase==='start' && fx.tempHpPerTurn && !c.isConcentration && fx.lastTick!==tick) {
+      if(e.curHp>0 && !isDeadEntity(token.kind,e)) {
+        const gained=Math.max(0,fx.tempHpPerTurn-e.tempHp);
+        setTempHp(token.kind,token.refId,Math.max(e.tempHp,fx.tempHpPerTurn));
+        if(gained>0)addRollLog(sid,{roller:fx.spell,label:`${fx.spell} — Temporary HP`,expr:String(fx.tempHpPerTurn),total:gained,detail:`${e.name} gains ${fx.tempHpPerTurn} Temporary HP at the start of their turn (${fx.spell}).`});
+      }
+      if(fx.phase!==phase)setCondition(token.kind,token.refId,{...c,combatEffect:{...fx,lastTick:tick}});
+    }
     if(fx.phase!==phase || fx.lastTick===tick) continue;
     setCondition(token.kind,token.refId,{...c,combatEffect:{...fx,lastTick:tick}});
     if(fx.saveBeforeDamage&&fx.save&&hitEffectSave(sid,token,fx.save,fx.dc!,fx.spell)) {
