@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DAMAGE_TYPES } from '../../../shared/damage';
 import { isValidDiceExpression } from '../../../shared/dice';
@@ -20,6 +20,7 @@ import type {
   SmiteSpec,
   SpellCustomEffect,
 } from '../../../shared/types';
+import { restoreAbilityToRulesDefault } from '../lib/spellEditorHelpers';
 import { NumberInput } from './NumberInput';
 import { SpellCombatSupportBadge } from './SpellCombatSupport';
 
@@ -39,6 +40,7 @@ type Props = {
   casterType: 'pc' | 'monster';
   classRoster?: { className: string; level: number }[];
   onSave: (updated: SheetAbility) => void;
+  onSaveCopy?: (copy: SheetAbility) => void;
   onRemove?: () => void;
   onClose: () => void;
 };
@@ -189,6 +191,7 @@ export function SpellEffectEditor({
   casterType,
   classRoster,
   onSave,
+  onSaveCopy,
   onRemove,
   onClose,
 }: Props) {
@@ -207,6 +210,16 @@ export function SpellEffectEditor({
     () => isNew || ability.executionProfile === 'manual' || ability.source === 'custom',
   );
   const [resetToRulesRequested, setResetToRulesRequested] = useState(false);
+  const [restoredAbility, setRestoredAbility] = useState<SheetAbility | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useLayoutEffect(() => {
+    const node = dialogRef.current;
+    if (node && !node.open) node.showModal();
+    return () => {
+      if (node?.open) node.close();
+    };
+  }, []);
 
   // Identity, spellcasting & economy fields
   const [name, setName] = useState(ability.name);
@@ -343,17 +356,10 @@ export function SpellEffectEditor({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const markMech = () => {
     setDirtyMechanics(true);
     setResetToRulesRequested(false);
+    setRestoredAbility(null);
     setNotice(null);
   };
 
@@ -496,25 +502,32 @@ export function SpellEffectEditor({
     return hasActiveCustomEffect(ce) ? ce : undefined;
   };
 
-  const buildCandidateAbility = (): SheetAbility => {
+  const buildCandidateAbility = (forceManual = false): SheetAbility => {
+    const seed = restoredAbility ?? ability;
+    const activeCatalogDefaultArea =
+      type === 'spell'
+        ? spellAreaFor({ name: name.trim() || seed.name, type: 'spell', level })
+        : undefined;
     const cleanTags = tags.filter((t) => {
       const k = t.trim().toLowerCase();
       return k !== 'no-area' && (areaChoice !== 'none' || k !== 'aoe');
     });
-    if (areaChoice === 'none' && catalogDefaultArea) {
+    if (areaChoice === 'none' && activeCatalogDefaultArea) {
       cleanTags.push('no-area');
     }
 
     const willUseManualProfile =
-      !resetToRulesRequested &&
-      (dirtyMechanics ||
-        ability.executionProfile === 'manual' ||
-        ability.source === 'custom' ||
-        isNew);
+      forceManual ||
+      (!resetToRulesRequested &&
+        (dirtyMechanics ||
+          seed.executionProfile === 'manual' ||
+          seed.source === 'custom' ||
+          isNew));
 
     const baseAbility: SheetAbility = {
-      ...ability,
-      name: name.trim() || ability.name,
+      ...seed,
+      id: ability.id,
+      name: name.trim() || seed.name,
       type,
       ...(type === 'spell' || type === 'stance' ? { level } : { level: undefined }),
       school: school.trim() || undefined,
@@ -525,11 +538,31 @@ export function SpellEffectEditor({
       ...(casterType === 'pc' && type === 'spell' && level > 0 ? { prepared } : {}),
       description,
       upcast: upcast.trim() || undefined,
+      source: forceManual
+        ? 'custom'
+        : willUseManualProfile
+          ? seed.source
+          : seed.source === 'custom'
+            ? 'srd'
+            : seed.source,
       executionProfile: willUseManualProfile ? 'manual' : undefined,
     };
 
     if (!willUseManualProfile) {
-      return baseAbility;
+      const preservedCa = castingAbility || seed.roll?.castingAbility;
+      return {
+        ...baseAbility,
+        roll: seed.roll
+          ? {
+              ...seed.roll,
+              ...(preservedCa
+                ? { castingAbility: preservedCa as AbilityRoll['castingAbility'] }
+                : {}),
+            }
+          : undefined,
+        smite: seed.smite,
+        summon: seed.summon,
+      };
     }
 
     if (mode === 'manual') {
@@ -664,11 +697,11 @@ export function SpellEffectEditor({
     ? formatCustomEffectSummary(previewAbility.roll.customEffect)
     : undefined;
 
-  const validateAndSave = () => {
+  const validateForm = (): boolean => {
     setError(null);
     if (!name.trim()) {
       setError('Spell / ability name is required.');
-      return;
+      return false;
     }
     const diceChecks: [string, string][] =
       mode === 'smite'
@@ -697,16 +730,26 @@ export function SpellEffectEditor({
       const trimmed = expr.trim();
       if (trimmed && !isValidDiceExpression(trimmed)) {
         setError(`Invalid dice expression for "${label}": "${trimmed}". Examples: 2d6, 1d8+3, -1d4, 5.`);
-        return;
+        return false;
       }
     }
 
     if (mode === 'smite' && !smiteDice.trim()) {
       setError('Smite damage dice are required.');
-      return;
+      return false;
     }
 
-    onSave(previewAbility);
+    return true;
+  };
+
+  const handleSave = () => {
+    if (!validateForm()) return;
+    onSave(buildCandidateAbility(false));
+  };
+
+  const handleSaveCopy = () => {
+    if (!validateForm() || !onSaveCopy) return;
+    onSaveCopy(buildCandidateAbility(true));
   };
 
   const resetToRulesDefault = async () => {
@@ -729,23 +772,19 @@ export function SpellEffectEditor({
         setNotice(`No built-in SRD definition found for "${queryName}".`);
         return;
       }
-      const restoredRaw: SheetAbility = {
-        ...ability,
-        ...hit,
-        id: ability.id,
-        source: hit.source ?? 'srd',
-        sourceClass: sourceClass.trim() || ability.sourceClass,
+      const restoredRaw = restoreAbilityToRulesDefault(ability, hit, {
+        sourceClass,
         prepared,
-        executionProfile: undefined,
-      };
+      });
       const eff = effectiveSheetAbility(restoredRaw);
       const r = eff.roll;
+      setName(restoredRaw.name);
       setType(restoredRaw.type);
       setLevel(restoredRaw.level ?? 0);
       setSchool(restoredRaw.school ?? '');
       setActionType(restoredRaw.actionType ?? parseActionType(restoredRaw.meta) ?? '');
       setMeta(restoredRaw.meta ?? '');
-      setTags(eff.tags ?? restoredRaw.tags ?? []);
+      setTags(restoredRaw.tags ?? []);
       setDescription(restoredRaw.description ?? '');
       setUpcast(restoredRaw.upcast ?? '');
       setMode(initialEffectMode(eff));
@@ -769,7 +808,7 @@ export function SpellEffectEditor({
       setTargetMode(r?.targetMode ?? '');
       setMaxTargets(r?.maxTargets);
       setScaleTargets(r?.scaleTargets);
-      setCastingAbility(r?.castingAbility ?? '');
+      setCastingAbility(restoredRaw.roll?.castingAbility ?? eff.roll?.castingAbility ?? '');
       setCustomEffect(r?.customEffect ?? {});
       setExtraCureInput('');
       setSmiteDice(eff.smite?.dice ?? '2d8');
@@ -802,9 +841,10 @@ export function SpellEffectEditor({
       } else {
         setAreaChoice(catArea ? 'default' : 'none');
       }
+      setRestoredAbility(restoredRaw);
       setDirtyMechanics(false);
       setResetToRulesRequested(true);
-      setNotice(`Loaded default rules for "${restoredRaw.name}". Click Save to keep them.`);
+      setNotice(`Loaded default rules for "${restoredRaw.name}". Click Save Spell Effects to restore them.`);
     } catch {
       setError('Failed to look up default spell rules.');
     } finally {
@@ -839,14 +879,21 @@ export function SpellEffectEditor({
     mode === 'buff';
 
   return createPortal(
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal spell-effect-editor-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Edit spell ${ability.name || 'custom'}`}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <dialog
+      ref={dialogRef}
+      className="modal spell-effect-editor-modal"
+      aria-label={`Edit spell ${ability.name || 'custom'}`}
+      onKeyDown={(e) => e.stopPropagation()}
+      onCancel={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }}
+      onClick={(e) => {
+        if (e.target === dialogRef.current) onClose();
+      }}
+    >
+      <div className="see-surface" onClick={(e) => e.stopPropagation()}>
         <div className="see-head">
           <h3>{isNew ? '✨ Build Custom Spell / Ability' : `⚙️ Edit: ${name || ability.name}`}</h3>
           <SpellCombatSupportBadge ability={previewAbility} />
@@ -858,7 +905,7 @@ export function SpellEffectEditor({
         <div className="see-body">
           <div className="see-banner">
             <div>
-              {dirtyMechanics || ability.executionProfile === 'manual' || ability.source === 'custom' ? (
+              {previewAbility.executionProfile === 'manual' || previewAbility.source === 'custom' ? (
                 <>
                   <strong>Manual effect profile active.</strong> Your custom mechanics, rolls,
                   conditions, and area rules govern casting.
@@ -2277,14 +2324,24 @@ export function SpellEffectEditor({
               <button type="button" className="btn tiny" onClick={onClose}>
                 Cancel
               </button>
-              <button type="button" className="btn tiny on" onClick={validateAndSave}>
+              {!isNew && onSaveCopy && (
+                <button
+                  type="button"
+                  className="btn tiny"
+                  onClick={handleSaveCopy}
+                  title="Keep the original entry unchanged and save these mechanics as a new custom entry"
+                >
+                  📄 Save as Custom Copy
+                </button>
+              )}
+              <button type="button" className="btn tiny on" onClick={handleSave}>
                 💾 Save Spell Effects
               </button>
             </div>
           </div>
         </div>
       </div>
-    </div>,
+    </dialog>,
     document.body,
   );
 }

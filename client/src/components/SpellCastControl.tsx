@@ -6,9 +6,9 @@ import {targetLists,targetLabel} from '../lib/targets';
 import {spellCastCost,spellCastRestriction} from '../lib/spellcasting';
 import {AbilityButtons} from './AbilityButtons';
 import {ShowHealEnemies} from './ShowDeadTargets';
-import {effectiveSheetAbility} from '../../../shared/spellExecution';
+import {effectiveSheetAbility, isCanonicalHasteProfile, isMultiTargetSpell} from '../../../shared/spellExecution';
+import {abilityKey} from '../../../shared/hitFeatures';
 import {spellCombatSupport} from '../../../shared/spellSupport';
-import {isCanonicalHasteProfile} from '../../../shared/spellExecution';
 import {isAllyTouchOrBuffSpell,isSelfCombatSpell} from '../../../shared/combatSpells';
 
 /** A sheet/catalog entry opens setup; only its final Cast button submits. */
@@ -36,7 +36,13 @@ export function SpellCastControl({ability,caster,kind='pc',onMapRequest}:{abilit
    {restriction?<p role="status">{restriction}</p>:<>
     {attackTarget&&choices.attack.length>0&&<label>Single target (if needed)<select aria-label="Cast spell target" value={choices.attack.some(t=>t.id===target)?target:choices.attack[0].id} onChange={e=>setTarget(e.target.value)}>{choices.attack.map(t=><option key={t.id} value={t.id}>{targetLabel(snapshot!,t,actor)}</option>)}</select></label>}
     {allyTarget&&choices.heal.length>0&&<label>Ally or self<select aria-label="Cast ally target" value={choices.heal.some(t=>t.id===ally)?ally:choices.heal[0].id} onChange={e=>setAlly(e.target.value)}>{choices.heal.map(t=><option key={t.id} value={t.id}>{targetLabel(snapshot!,t,actor)}</option>)}</select><ShowHealEnemies/></label>}
-    <AbilityButtons abilities={[spell]} kind={kind} caster={live} targetTokenId={choices.attack.some(t=>t.id===target)?target:choices.attack[0]?.id} healTargetId={choices.heal.some(t=>t.id===ally)?ally:choices.heal[0]?.id} buffTargetId={choices.heal.some(t=>t.id===ally)?ally:choices.heal[0]?.id} onAfter={()=>{close();const state=useStore.getState();if(state.areaCast||state.teleportCast)onMapRequest?.();}}/>
+    <AbilityButtons abilities={[spell]} kind={kind} caster={live} targetTokenId={choices.attack.some(t=>t.id===target)?target:choices.attack[0]?.id} healTargetId={choices.heal.some(t=>t.id===ally)?ally:choices.heal[0]?.id} buffTargetId={choices.heal.some(t=>t.id===ally)?ally:choices.heal[0]?.id} onAfter={()=>{
+      close();
+      const state=useStore.getState();
+      const needsBattlefield=Boolean(state.areaCast||state.teleportCast||state.rayCast) ||
+        (!manual&&(abilityKey(spell)==='chromatic orb'||isMultiTargetSpell(spell,cost.level)||(execution.roll?.kind==='attack'&&(state.snapshot?.manualDamage??true))));
+      if(needsBattlefield)onMapRequest?.();
+    }}/>
    </>}
    <details><summary>Spell description</summary><p>{spell.description}</p></details>
   </dialog>,document.body)}</>;

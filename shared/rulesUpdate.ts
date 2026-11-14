@@ -14,6 +14,10 @@ const DEFINITION_FIELDS = [
 function withoutRuntime(a: Partial<SheetAbility>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of DEFINITION_FIELDS) if (a[f] !== undefined) out[f] = a[f];
+  if (a.roll) {
+    const { castingAbility: _ca, ...rest } = a.roll;
+    out.roll = rest;
+  }
   if (a.stance) {
     const { active: _a, targetId: _t, ...rest } = a.stance;
     out.stance = rest;
@@ -42,8 +46,10 @@ function stable(v: unknown): string {
 }
 
 /** Whether a saved entry's DEFINITION differs from the current rules DB entry of
- *  the same name. Ids, on/off state, marks and prepared flags are ignored. */
+ *  the same name. Ids, on/off state, marks, castingAbility, and prepared flags
+ *  are ignored; intentionally manual/custom entries are never nagged as outdated. */
 export function isOutdated(saved: SheetAbility, current: Partial<SheetAbility>): boolean {
+  if (saved.executionProfile === 'manual' || saved.source === 'custom') return false;
   // Reviewed 2024 advancement profiles must not be replaced by an unversioned
   // legacy database entry with the same name (notably Battle Master maneuvers).
   if (saved.tags?.includes('leveling-2024') && !current.tags?.includes('leveling-2024')) return false;
@@ -51,10 +57,11 @@ export function isOutdated(saved: SheetAbility, current: Partial<SheetAbility>):
 }
 
 /**
- * The saved entry rebuilt on the current definition: keeps its id and prepared
- * flag; takes the current type, level, text and mechanics. A stance, mastery or
- * maneuver comes back SWITCHED OFF — an update must never leave something armed
- * that nothing paid for (a spell-backed stance spends its slot when turned on).
+ * The saved entry rebuilt on the current definition: keeps its id, prepared
+ * flag, sourceClass, castingAbility, and class-grant tags; takes the current
+ * type, level, text and mechanics. A stance, mastery or maneuver comes back
+ * SWITCHED OFF — an update must never leave something armed that nothing paid
+ * for (a spell-backed stance spends its slot when turned on).
  */
 export function applyRulesUpdate(saved: SheetAbility, current: Partial<SheetAbility>): SheetAbility {
   const next: SheetAbility = {
@@ -63,6 +70,12 @@ export function applyRulesUpdate(saved: SheetAbility, current: Partial<SheetAbil
     type: current.type ?? saved.type,
     description: current.description ?? saved.description,
     ...(saved.prepared !== undefined ? { prepared: saved.prepared } : {}),
+    ...(saved.sourceClass !== undefined ? { sourceClass: saved.sourceClass } : {}),
+    ...(current.source !== undefined
+      ? { source: current.source }
+      : saved.source !== undefined && saved.source !== 'custom'
+        ? { source: saved.source }
+        : {}),
   };
   const copy = [
     'level', 'school', 'classes', 'tags', 'meta', 'actionType', 'upcast',
@@ -70,6 +83,15 @@ export function applyRulesUpdate(saved: SheetAbility, current: Partial<SheetAbil
   ] as const;
   for (const f of copy) {
     if (current[f] !== undefined) (next as Record<string, unknown>)[f] = current[f];
+  }
+  if (next.roll && !next.roll.castingAbility && saved.roll?.castingAbility) {
+    next.roll = { ...next.roll, castingAbility: saved.roll.castingAbility };
+  }
+  const grantTags = (saved.tags ?? []).filter((t) =>
+    ['always-prepared', 'bonus-cantrip', 'subclass-spell'].includes(t),
+  );
+  if (grantTags.length) {
+    next.tags = [...new Set([...(next.tags ?? []), ...grantTags])];
   }
   if (next.stance) next.stance = { ...next.stance, active: false, targetId: undefined };
   if (next.mastery) next.mastery = { ...next.mastery, active: false };

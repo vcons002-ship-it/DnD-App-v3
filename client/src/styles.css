@@ -1233,7 +1233,7 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
    when an attack resolves. The backdrop is CLICK-THROUGH so play isn't blocked;
    only the card captures a click (to skip early). */
 .roll-reveal-backdrop {
-  position: fixed; inset: 0; z-index: 60;
+  position: fixed; inset: 0; z-index: 75;
   display: flex; align-items: center; justify-content: center;
   pointer-events: none; /* non-blocking — the map stays interactive */
 }
@@ -2381,11 +2381,21 @@ html[data-render-mode="legacy"] :is(.dm-window,.player-hud,.damage-prompt-btn,.d
 .spell-effect-editor-modal {
   width: min(760px, 95vw);
   max-height: 88vh;
-  display: flex;
-  flex-direction: column;
+  margin: auto;
   padding: 0;
   overflow: hidden;
   border-color: var(--accent);
+  color: var(--text);
+}
+.spell-effect-editor-modal::backdrop {
+  background: #000a;
+}
+.spell-effect-editor-modal > .see-surface {
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;
+  width: 100%;
+  overflow: hidden;
 }
 .see-head {
   display: flex;
