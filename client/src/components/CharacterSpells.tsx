@@ -42,6 +42,7 @@ import { SpellCombatSupportBadge } from './SpellCombatSupport';
 import { spellActionBlock, spellActionBlockMessage } from '../../../shared/spellBuffs';
 import { NumberInput } from './NumberInput';
 import { SpellEffectEditor } from './SpellEffectEditor';
+import { finalizeCustomSpellCopy } from '../lib/spellEditorHelpers';
 
 const manualRiderNote = (ability: SheetAbility): string | undefined => {
   const name = ability.name.replace(/[\u2018\u2019]/g, "'").trim().toLowerCase();
@@ -1255,7 +1256,7 @@ export function CharacterSpells({
               renderCast={hit=>{
                 const learned=character.sheetAbilities.filter(a=>isCastSpell(a)&&a.name.toLowerCase()===hit.name.toLowerCase());
                 const ability=learned.find(a=>a.sourceClass===addClass)??learned[0];
-                return ability?<SpellCastControl ability={ability} caster={character} kind={kind} onMapRequest={onCombatRequest}/>:<button className="btn tiny" disabled title="Add this spell to your sheet before casting it.">Cast · learn first</button>;
+                return ability?<SpellCastControl ability={ability} caster={character} kind={kind} onMapRequest={() => { setBookOpen(false); onCombatRequest?.(); }}/>:<button className="btn tiny" disabled title="Add this spell to your sheet before casting it.">Cast · learn first</button>;
               }}
               onClose={() => setBookOpen(false)}
               ownedNames={
@@ -1280,6 +1281,21 @@ export function CharacterSpells({
                 setEditingId(null);
                 setCustomDraft(null);
               }}
+              onSaveCopy={
+                editingAbility
+                  ? (draftCopy) => {
+                      const savedCopy = finalizeCustomSpellCopy(
+                        draftCopy,
+                        editingAbility.name,
+                        character.sheetAbilities.map((a) => a.name),
+                      );
+                      setSheetAbility(kind, character.id, savedCopy);
+                      setOpen((o) => ({ ...o, [savedCopy.id]: true }));
+                      setEditingId(null);
+                      setCustomDraft(null);
+                    }
+                  : undefined
+              }
               onRemove={
                 editingAbility
                   ? () => {

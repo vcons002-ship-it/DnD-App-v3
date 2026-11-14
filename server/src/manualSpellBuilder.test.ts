@@ -26,6 +26,8 @@ import {
 import { processHitEffects } from './hitEffectTurns.js';
 import { withDiceSource } from '../../shared/dice.js';
 import { effectiveAc, saveExtra } from '../../shared/modifiers.js';
+import { applyRulesUpdate, isOutdated } from '../../shared/rulesUpdate.js';
+import { getSpell } from './spells/srd.js';
 import { spellAreaFor } from '../../shared/spellAreas.js';
 import { effectiveSpeed, rollBlessBaneBonus } from '../../shared/spellBuffs.js';
 import { effectiveSheetAbility, spellMaxTargets } from '../../shared/spellExecution.js';
@@ -506,5 +508,69 @@ describe('Manual spell effect builder end-to-end mechanics', () => {
     expect(summary?.text).toContain('3d8');
     expect(summary?.text).toContain('1d8/lvl');
     expect(summary?.text.toLowerCase()).toContain('necrotic');
+  });
+});
+
+describe('spell rules update & reset invariants', () => {
+  it('does not flag Sorcerous Burst, Chromatic Orb, or Scorching Ray for class-stamped castingAbility', () => {
+    for (const spellName of ['Sorcerous Burst', 'Chromatic Orb', 'Scorching Ray']) {
+      const db = getSpell(spellName)!;
+      expect(db).toBeTruthy();
+      const learned: SheetAbility = {
+        ...db,
+        id: `id-${spellName}`,
+        source: 'srd',
+        sourceClass: 'sorcerer',
+        roll: db.roll ? { ...db.roll, castingAbility: 'CHA' } : undefined,
+      };
+      expect(isOutdated(learned, { ...db, source: 'srd' })).toBe(false);
+    }
+  });
+
+  it('never flags manual or custom entries as outdated even when sharing an SRD spell name', () => {
+    const db = getSpell('Chromatic Orb')!;
+    const manualOrb: SheetAbility = {
+      ...db,
+      id: 'custom-orb',
+      source: 'custom',
+      executionProfile: 'manual',
+      roll: { kind: 'attack', dice: '4d8', damageType: 'cold', castingAbility: 'INT' },
+    };
+    expect(isOutdated(manualOrb, { ...db, source: 'srd' })).toBe(false);
+
+    const profileManualOnly: SheetAbility = {
+      ...db,
+      id: 'manual-orb',
+      source: 'srd',
+      executionProfile: 'manual',
+      roll: { kind: 'damage', dice: '3d8', damageType: 'fire' },
+    };
+    expect(isOutdated(profileManualOnly, { ...db, source: 'srd' })).toBe(false);
+  });
+
+  it('flags genuinely outdated spells and preserves sourceClass, castingAbility, prepared, and grant tags on update', () => {
+    const currentOrb = { ...getSpell('Chromatic Orb')!, source: 'srd' as const };
+    const legacyOrb: SheetAbility = {
+      id: 'legacy-orb-1',
+      name: 'Chromatic Orb',
+      type: 'spell',
+      level: 1,
+      source: 'srd',
+      sourceClass: 'sorcerer',
+      prepared: true,
+      tags: ['evocation', 'always-prepared', 'subclass-spell'],
+      description: 'Legacy 2014 orb without leaps.',
+      roll: { kind: 'attack', dice: '3d8', scaleDice: '1d8', baseLevel: 1, damageType: 'fire', castingAbility: 'CHA' },
+    };
+
+    expect(isOutdated(legacyOrb, currentOrb)).toBe(true);
+    const updated = applyRulesUpdate(legacyOrb, currentOrb);
+    expect(updated.id).toBe('legacy-orb-1');
+    expect(updated.prepared).toBe(true);
+    expect(updated.sourceClass).toBe('sorcerer');
+    expect(updated.roll?.castingAbility).toBe('CHA');
+    expect(updated.roll?.damageType).toBeUndefined();
+    expect(updated.tags).toEqual(expect.arrayContaining(['always-prepared', 'subclass-spell']));
+    expect(isOutdated(updated, currentOrb)).toBe(false);
   });
 });

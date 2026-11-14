@@ -275,6 +275,17 @@ const FullRollRevealOverlay = memo(function FullRollRevealOverlay() {
     if (s.snapshot?.role === 'dm') return roller === 'DM';
     return !!s.snapshot?.characters.some(c => c.name === roller && !!c.claimedBy && c.claimedBy === s.socket?.id);
   });
+  const ownRoll = useStore((s) => {
+    const entry = s.rollFx ? s.snapshot?.rollLog.find((r) => r.id === s.rollFx?.rollId) : undefined;
+    const roller = s.liveDice?.roller ?? entry?.roller;
+    if (!roller) return Boolean(s.resolvingDice);
+    if (s.snapshot?.role === 'dm') return roller === 'DM';
+    return Boolean(
+      s.snapshot?.characters.some(
+        (c) => c.name === roller && Boolean(c.claimedBy) && c.claimedBy === s.socket?.id,
+      ),
+    );
+  });
   // A new roll gets fresh stages AND fresh tween origins. Replacing an attack
   // with its damage must never briefly paint the previous roll's final total.
   const reviewingHiddenRoll=useStore(s=>s.hiddenRollReview);
@@ -299,9 +310,22 @@ const FullRollRevealOverlay = memo(function FullRollRevealOverlay() {
     explosionMs={completed&&hasDrukMaximum(tray)?physicalRollTimeline(completed.reveal,true,true).explosion:undefined}
     diceTrigger={completed&&tray.burstProgress?undefined:tray.diceTrigger??diceTriggerForTray(tray,completed?.reveal)}
   /> : reviewingHiddenRoll?<div className="roll-reveal-backdrop"><div className="roll-reveal private-review-fallback"><HiddenRollReview/></div></div>:sequence;
-  // Decided per roll, not once per mount: the guide may open or close between
-  // rolls. Keyed so the modal layer comes and goes with the decision.
-  const lift = ownLevelUpRoll && !!document.querySelector('dialog[data-level-up][open]');
+  // Decided per roll, not once per mount: the guide or sheet may open or close
+  // between rolls. Keyed so the top-layer modal dialog unmounts once empty.
+  const calculating = resolvingDice && !tray ? <div className="spell-calculating" role="status" aria-live="polite"><span aria-hidden="true"/>Calculating…</div> : null;
+  const hasOverlay = Boolean(content || calculating) && !showingMapImpact && !skippedLiveDice;
+  const levelUpDialogOpen = Boolean(document.querySelector('dialog[data-level-up][open]'));
+  const creatorDialogOpen = Boolean(document.querySelector('dialog.character-creator[open]'));
+  const otherModalDialogOpen = Boolean(
+    document.querySelector('dialog[open]:not([data-level-up]):not(.level-up-roll-layer)'),
+  );
+  const creatorStatRoll =
+    creatorDialogOpen && /starting (?:score|ability)/i.test(liveDice?.label ?? '');
+  const lift =
+    hasOverlay &&
+    (levelUpDialogOpen
+      ? ownLevelUpRoll
+      : otherModalDialogOpen && (ownRoll || creatorStatRoll));
   // Approval stays inside the mounted tray; no modal or canvas visibility swap.
   const presented=<RollOverlayPresence content={content} reduced={reducedMotion} clearImmediately={showingMapImpact||skippedLiveDice}/>;
   // Rolls whose card has already come and gone, for tests that would otherwise
@@ -309,9 +333,8 @@ const FullRollRevealOverlay = memo(function FullRollRevealOverlay() {
   const shownRolls=useRef(new Set<string>()),activeRolls=[completed?.rollId,rollFx?.rollId,liveDice?.id].filter((id):id is string=>!!id);
   for(const id of activeRolls)shownRolls.current.add(id);
   const history=<span hidden data-testid="roll-reveal-history" data-finished-rolls={JSON.stringify([...shownRolls.current].filter(id=>!activeRolls.includes(id)))}/>;
-  return <>{history}{lift ? <LevelUpRollLayer key="lift" player={player}>{presented}</LevelUpRollLayer> : presented}
-    {resolvingDice&&!tray&&<div className="spell-calculating" role="status" aria-live="polite"><span aria-hidden="true"/>Calculating…</div>}
-  </>;
+  const layerLabel = ownLevelUpRoll ? 'Level-up Hit Die roll' : 'Dice roll';
+  return <>{history}{lift ? <LevelUpRollLayer key="lift" player={player} label={layerLabel}>{presented}{calculating}</LevelUpRollLayer> : <>{presented}{calculating}</>}</>;
 });
 
 /** Fade the final card out without dropping a frame between consecutive rolls.
@@ -330,13 +353,13 @@ function RollOverlayPresence({content,reduced,clearImmediately}:{content:ReactNo
 }
 
 /** A native character dialog is above ordinary fixed overlays. Let the real
- * Hit Die tray sit above the level-up guide without closing or losing its draft. */
-function LevelUpRollLayer({ children, player }: { children: ReactNode; player: boolean }) {
+ * Hit Die or spell-roll tray sit above an open sheet/dialog without losing its draft. */
+function LevelUpRollLayer({ children, player, label = 'Level-up Hit Die roll' }: { children: ReactNode; player: boolean; label?: string }) {
   const [target] = useState(() => document.createElement('dialog'));
   useLayoutEffect(() => {
     if (!target) return;
     target.className = `level-up-roll-layer ${player ? 'player-fantasy' : 'dm-fantasy'}`;
-    target.setAttribute('aria-label', 'Level-up Hit Die roll');
+    target.setAttribute('aria-label', label);
     // Escape cannot cancel an authoritative physical toss. The normal result
     // card still handles skipping once that toss has completed.
     const preventCancel = (event: Event) => event.preventDefault();
@@ -344,7 +367,7 @@ function LevelUpRollLayer({ children, player }: { children: ReactNode; player: b
     document.body.append(target);
     target.showModal();
     return () => { target.removeEventListener('cancel', preventCancel); target.close(); target.remove(); };
-  }, [target, player]);
+  }, [target, player, label]);
   return target ? createPortal(children, target) : children;
 }
 
