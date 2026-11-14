@@ -73,7 +73,7 @@ concentration. An old Apply button cannot revive a completed casting.
 | Ice Storm | Description/components: 2d10 Bludgeoning + 4d6 Cold; +1d10 Bludgeoning per upcast. Separate typed pools now apply their defenses correctly; area selection remains table-managed. |
 | Flame Strike | Description/components: 5d6 Fire + 5d6 Radiant; +1d6 of each per upcast. Separate typed pools now apply their defenses correctly; area selection remains table-managed. |
 | Meteor Swarm | Description/components: 20d6 Fire + 20d6 Bludgeoning. Separate defenses and once-per-creature application are now enforced; sphere placement remains table-managed. |
-| True Strike, Aid, Prayer of Healing, Mass Heal | Correct descriptions; weapon-based attacks, max-HP changes, rests, or allocated healing pools are not ordinary single-target rolls. Remain manual. |
+| True Strike, Prayer of Healing, Mass Heal | Correct descriptions; weapon-based attacks, rests, or allocated healing pools are not ordinary single-target rolls. Remain manual. (Aid is now Partial with automated max/current HP buffing.) |
 | Glyph of Warding, Dream, Earthquake, Fire Shield, Geas, Elemental Weapon, Bestow Curse | Correct conditional timing: casting does not immediately apply their damage riders. Remain manual. |
 | Conjure Animals, Conjure Woodland Beings | New catalog entries describe the 2024 spirit areas and omit obsolete creature placeholders. Area/turn effects remain manual. |
 
@@ -100,13 +100,14 @@ spell slots, target limits, live repeat saves, critical modifiers, and preserved
 authored formulas. Browser tests run a disposable campaign with real Combat,
 Conditions, movement, initiative, and healing controls; no production save is used.
 
-Linked hit riders below are implemented; Heal condition removal remains a candidate:
+Linked hit riders and high-value combat automation are now implemented, bringing the 319-spell catalogue audit in [Spellbook support audit](SPELLBOOK_COMBAT_SUPPORT.md) to **41 Combat ready**, **76 Partial**, and **202 Manual**:
 
 - Guiding Bolt: now grants and consumes the next attack's advantage, with expiration.
 - Ray of Frost: now applies and expires the speed reduction.
-- Heal: remove Blinded, Deafened, and Poisoned with its existing fixed healing.
+- Heal (Combat ready): applies fixed healing (70, +10/upcast) without adding casting modifier and removes Blinded, Deafened, and Poisoned.
 - Shocking Grasp: now marks Opportunity Attacks as unavailable for its duration;
   other reactions remain available under the 2024 rule.
+- High-value spell automation batch: Bless & Bane (`+/-1d4` on attacks and saves including concentration, death, and turn-end repeat saves), Armor of Agathys (temp HP + Cold melee retaliation), Branding Smite (post-hit melee/ranged radiant damage, concentration, and Invisibility suppression), 12 combat buffs/restorations (Shield of Faith, Mage Armor, Blur, See Invisibility, Greater Invisibility, Heroism, Protection from Poison, Lesser Restoration, Greater Restoration, Spare the Dying, Revivify, Death Ward), 5 crowd-control spells (Faerie Fire, Entangle, Slow, Blindness/Deafness, Tasha's Hideous Laughter), plus Vicious Mockery, Arms of Hadar, and Harm (max-HP reduction cured by Greater Restoration or Long Rest).
 
 Rules sources: [2024 Free Rules spell descriptions](https://www.dndbeyond.com/sources/dnd/br-2024/spell-descriptions)
 and [Witch Bolt, licensed 2024 PHB compendium](https://roll20.net/compendium/dnd5e/Spells%3AWitch%20Bolt?expansion=32231&from_listings=true).

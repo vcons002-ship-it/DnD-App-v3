@@ -5,6 +5,7 @@ import type {MapState} from '../../../shared/types';
 import {draftWallShape,type MapGeometryDraft,type WallAnalysisPass} from '../../../shared/mapGeometryDraft';
 import {apiFetch} from '../lib/api';
 import {WallPerformanceNotice} from './WallPerformanceNotice';
+import { NumberInput } from './NumberInput';
 
 export function WallDraft({map,onClose,initialPass='both'}:{map:MapState;onClose:()=>void;initialPass?:WallAnalysisPass}) {
   const analysis=useMapAnalysisSource(map);
@@ -50,8 +51,8 @@ export function WallDraft({map,onClose,initialPass='both'}:{map:MapState;onClose
       {method==='ai'&&<label>Wall analysis <select aria-label="Wall analysis" disabled={busy} value={wallPass} onChange={e=>setWallPass(e.target.value as WallAnalysisPass)}><option value="both">Structural walls and natural boundaries</option><option value="structural">Structural walls only</option><option value="natural">Natural boundaries only</option></select></label>}
       {method==='ai'&&wallPass==='natural'&&<small>Runs the natural-boundary pass on the original map. No structural mask or feature filter. Apply adds selected boundaries and preserves existing walls.</small>}
       {method==='local'&&<><label>Walls <select aria-label="Wall contrast polarity" disabled={busy} value={polarity} onChange={e=>setPolarity(e.target.value)}><option value="dark">Darker than floor</option><option value="light">Lighter than floor</option></select></label>
-        <label>Threshold <input aria-label="Wall detection threshold" disabled={busy} type="number" min={0} max={255} value={threshold} onChange={e=>setThreshold(Number(e.target.value))} style={{width:65}}/></label>
-        <label>Minimum length (squares) <input aria-label="Minimum wall length" disabled={busy} type="number" min={1} max={10} value={minLength} onChange={e=>setMinLength(Number(e.target.value))} style={{width:50}}/></label></>}
+        <label>Threshold <NumberInput aria-label="Wall detection threshold" disabled={busy} min={0} max={255} value={threshold} emptyFallback={90} onValueChange={n=>{if(n!==undefined)setThreshold(n);}} style={{width:65}}/></label>
+        <label>Minimum length (squares) <NumberInput aria-label="Minimum wall length" disabled={busy} min={1} max={10} value={minLength} emptyFallback={2} onValueChange={n=>{if(n!==undefined)setMinLength(n);}} style={{width:58}}/></label></>}
       <button className="btn" disabled={busy||analysis.loading||!!analysis.error||!analysis.imagePath} onClick={analyze}>{busy?'Working…':draft?'Analyze again':'Analyze map'}</button>
       {draft&&<><button className="btn" disabled={busy||!selected.length} onClick={apply}>Apply {selected.length} walls</button><button className="btn" onClick={download}>Download JSON</button>
         <button className="btn" onClick={()=>setSelected([])}>Deselect all</button><label><input type="checkbox" checked={showArt} onChange={e=>setShowArt(e.target.checked)}/> Show map art</label></>}

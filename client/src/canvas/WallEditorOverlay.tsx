@@ -7,6 +7,7 @@ import type { StateSnapshot, Token } from '../../../shared/types';
 import { wallBoundarySegments, wallCenter, wallSvgPath, wallVertices } from '../../../shared/wallGeometry';
 import { ObjectControls } from '../components/ObjectControls';
 import type { WallTool } from '../components/WallMenu';
+import { NumberInput } from '../components/NumberInput';
 import { useStore } from '../state/socket';
 
 type Pt = { x: number; y: number };
@@ -460,15 +461,18 @@ export function WallAndDoorHud({
           {['draw', 'circle', 'freehand'].includes(wallTool) && (
             <label>
               Thickness{' '}
-              <input
+              <NumberInput
                 aria-label="Wall thickness in feet"
-                type="number"
                 min={0.1}
                 max={20}
                 step={0.25}
+                allowDecimal
                 value={wallThickness}
-                onChange={(e) => setWallThickness(Math.max(0.1, Math.min(20, Number(e.target.value) || 0.1)))}
-                style={{ width: 55 }}
+                emptyFallback={0.5}
+                onValueChange={(n) => {
+                  if (n !== undefined) setWallThickness(Math.max(0.1, Math.min(20, n)));
+                }}
+                style={{ width: 64 }}
               />{' '}
               ft
             </label>
@@ -477,21 +481,20 @@ export function WallAndDoorHud({
             <>
               <label>
                 Rotation{' '}
-                <input
+                <NumberInput
                   aria-label="Wall rotation in degrees"
-                  type="number"
                   min={-360}
                   max={360}
                   step={1}
                   value={Math.round(selectedWall.rotation ?? 0)}
-                  onChange={(e) => {
-                    const rotation = Number(e.target.value);
-                    if (Number.isFinite(rotation) && map)
+                  emptyFallback={0}
+                  onValueChange={(rotation) => {
+                    if (rotation !== undefined && Number.isFinite(rotation) && map)
                       useStore
                         .getState()
                         .editMapWalls(map.id, { update: { ...selectedWall, rotation: Math.max(-360, Math.min(360, rotation)) } });
                   }}
-                  style={{ width: 62 }}
+                  style={{ width: 68 }}
                 />{' '}
                 degrees
               </label>

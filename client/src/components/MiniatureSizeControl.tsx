@@ -2,6 +2,7 @@ import { miniatureBaseWidthFt } from '../../../shared/monsterAppearance';
 import { useEffect, useId, useState } from 'react';
 import type { Token } from '../../../shared/types';
 import { useStore } from '../state/socket';
+import { normalizeNumericDraft } from '../lib/numberInput';
 import './miniature-size-control.css';
 
 /** Visible base width controls the miniature and its hit region, not combat space. */
@@ -28,7 +29,7 @@ export function MiniatureSizeControl({ token }: { token: Token | null }) {
       <button className="btn" aria-label="Smaller figure" disabled={!token || draftWidth <= 0.5}
         onClick={() => apply(draftWidth - 0.5)}>&minus;</button>
       <input id={inputId} aria-label="Base width (ft)" type="number" min={0.5} max={120} step={0.5} disabled={!token}
-        value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => apply(draftWidth)}
+        value={draft} onChange={event => setDraft(normalizeNumericDraft(event.target.value, { allowNegative: false, allowDecimal: true }))} onBlur={() => apply(draftWidth)}
         onKeyDown={event => {
           if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
           if (event.key === 'Escape') { event.stopPropagation(); setDraft(String(baseWidth)); }

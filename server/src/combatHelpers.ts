@@ -1,9 +1,12 @@
-import type { Combatant } from '../../shared/combatMath.js';
+import { rollSavingThrow, type Combatant } from '../../shared/combatMath.js';
+import { saveAdvantage } from '../../shared/conditionEffects.js';
 import { rollDice, type DiceResult } from '../../shared/dice.js';
+import { abilityKey } from '../../shared/hitFeatures.js';
 import { spellKey } from '../../shared/linkedSpells.js';
 import { hasLineOfSight } from '../../shared/mapWalls.js';
 import { effectiveAc, effectiveStats, saveExtra, type ModSource } from '../../shared/modifiers.js';
 import { signed } from '../../shared/skills.js';
+import { rollBlessBaneBonus } from '../../shared/spellBuffs.js';
 import { effectiveSheetAbility } from '../../shared/spellExecution.js';
 import type {
   Character,
@@ -24,6 +27,7 @@ import { newId } from './db.js';
 import {
   addRollLog,
   applyDamage,
+  clearCondition,
   endConcentration,
   getCharacter,
   getMap,
@@ -84,7 +88,9 @@ export function targetGivesAdvantage(kind: TokenKind, refId: string): string[] {
     ...activeStances(kind, refId)
       .filter((ab) => ab.stance!.enemiesHaveAdvantage)
       .map((ab) => `target ${ab.name}`),
-    ...(e?.conditions.filter((c) => c.combatEffect?.nextAttackAdvantage).map((c) => c.combatEffect!.spell) ?? []),
+    ...(e?.conditions
+      .filter((c) => c.combatEffect?.nextAttackAdvantage || c.combatEffect?.grantsAdvantageToAttackers)
+      .map((c) => c.combatEffect!.spell) ?? []),
   ];
 }
 
@@ -103,10 +109,25 @@ export function combatLabels(conditions: Character['conditions']) {
 export function spellAttackDis(kind: TokenKind, id: string) {
   return (
     (kind === 'pc' ? getCharacter(id) : getMonster(id))?.conditions
-      .filter((c) => c.combatEffect?.attackDisadvantage)
+      .filter((c) => c.combatEffect?.attackDisadvantage || c.combatEffect?.nextAttackDisadvantage)
       .map((c) => c.combatEffect!.spell) ?? []
   );
 }
+
+export function consumeAttackerNextAttackEffects(kind: TokenKind, refId: string): void {
+  const e = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+  for (const c of e?.conditions ?? []) {
+    if (!c.combatEffect?.nextAttackDisadvantage) continue;
+    if (abilityKey({ name: c.combatEffect.spell }) === 'vicious mockery') {
+      clearCondition(kind, refId, c.id);
+    } else {
+      setCondition(kind, refId, { ...c, combatEffect: { ...c.combatEffect, nextAttackDisadvantage: false } });
+    }
+  }
+}
+
+const condResistances = (conds: Character['conditions']) =>
+  conds.flatMap((c) => (c.isConcentration ? [] : (c.combatEffect?.resistDamageTypes ?? [])));
 
 export function resolve(token: Token): Resolved | null {
   if (token.kind === 'pc') {
@@ -122,7 +143,7 @@ export function resolve(token: Token): Resolved | null {
       kind: 'pc',
       refId: ch.id,
       conditionLabels: combatLabels(ch.conditions),
-      resistances: [...ch.resistances, ...stanceResistances('pc', ch.id)],
+      resistances: [...ch.resistances, ...stanceResistances('pc', ch.id), ...condResistances(ch.conditions)],
       weaknesses: ch.weaknesses,
       immunities: ch.immunities ?? [],
       saveProficiencies: ch.saveProficiencies,
@@ -139,10 +160,11 @@ export function resolve(token: Token): Resolved | null {
     kind: 'monster',
     refId: m.id,
     conditionLabels: combatLabels(m.conditions),
-    resistances: [...m.resistances, ...stanceResistances('monster', m.id)],
+    resistances: [...m.resistances, ...stanceResistances('monster', m.id), ...condResistances(m.conditions)],
     weaknesses: m.weaknesses,
     immunities: m.immunities ?? [],
     saveProficiencies: m.saveProficiencies,
+    mod: m,
   };
 }
 
@@ -172,15 +194,46 @@ export function automatedHoldPerson(a: SheetAbility): boolean {
   );
 }
 
+export function automatedSingleTargetControl(
+  a: SheetAbility,
+): 'hold person' | 'hold monster' | 'blindness/deafness' | "tasha's hideous laughter" | null {
+  if (a.type !== 'spell' || a.source === 'custom' || a.executionProfile === 'manual') return null;
+  if (automatedHoldPerson(a)) {
+    return spellKey(a.name) === 'hold monster' ? 'hold monster' : 'hold person';
+  }
+  const key = abilityKey(a);
+  const roll = effectiveSheetAbility(a).roll;
+  if (
+    key === 'blindness/deafness' &&
+    a.level === 2 &&
+    roll?.kind === 'save' &&
+    roll.save?.toUpperCase() === 'CON' &&
+    (!roll.dice || roll.dice.trim() === '0')
+  ) {
+    return 'blindness/deafness';
+  }
+  if (
+    key === "tasha's hideous laughter" &&
+    a.level === 1 &&
+    roll?.kind === 'save' &&
+    roll.save?.toUpperCase() === 'WIS' &&
+    (!roll.dice || roll.dice.trim() === '0')
+  ) {
+    return "tasha's hideous laughter";
+  }
+  return null;
+}
+
 export function spellControlTargetError(sessionId: string, ability: SheetAbility, tokenId: string): string | undefined {
-  if (!automatedHoldPerson(ability)) return;
+  const ctrl = automatedSingleTargetControl(ability);
+  if (!ctrl) return;
   const token = spellTarget(sessionId, tokenId);
   const target = token && (token.kind === 'pc' ? getCharacter(token.refId) : getMonster(token.refId));
   if (!token || !target) return 'Choose a creature in this campaign.';
   if (isDeadEntity(token.kind, target) || (token.kind === 'monster' && (target as Monster).objectKind))
     return `${ability.name} requires a living creature.`;
   if (
-    spellKey(ability.name) === 'hold person' &&
+    ctrl === 'hold person' &&
     token.kind === 'monster' &&
     (!/^humanoid\b/i.test((target as Monster).creatureType.trim()) || (target as Monster).objectKind)
   )
@@ -228,13 +281,13 @@ export function spellApplyTargetError(
   if (!effect) return;
   if (effect.commandWord) return commandTargetError(sessionId, entry, tokenId);
   const caster = effect.casterKind === 'pc' ? getCharacter(effect.casterId) : getMonster(effect.casterId);
-  const concentration = caster?.conditions.find(
-    (c) => c.id === effect.concentrationConditionId && c.isConcentration,
-  );
+  const concentration = effect.concentrationConditionId
+    ? caster?.conditions.find((c) => c.id === effect.concentrationConditionId && c.isConcentration)
+    : undefined;
   const round = getSessionById(sessionId)?.combatRound ?? 0;
   const expiry = concentration?.combatEffect ?? effect;
   if (
-    !concentration ||
+    Boolean(effect.concentrationConditionId && !concentration) ||
     (round > 0 && expiry.expiresRound
       ? round >= expiry.expiresRound
       : (expiry.expiresAt ?? effect.expiresAt) <= Date.now())
@@ -431,7 +484,45 @@ export function noteConcentration(
   damage: number,
 ): void {
   if (damage <= 0) return;
-  const e = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+  let e = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+  if (!e) return;
+  if (!isDeadEntity(kind, e)) {
+    const laughterConditions = e.conditions.filter(
+      (c) =>
+        !c.isConcentration &&
+        abilityKey({ name: c.combatEffect?.spell ?? c.label }) === "tasha's hideous laughter",
+    );
+    if (laughterConditions.length) {
+      const labels = e.conditions.map((c) => c.label);
+      const proficient = e.saveProficiencies.some((s) => s.trim().toUpperCase() === 'WIS');
+      const adv = saveAdvantage(labels, 'WIS', 'adv', strFeatureAdv(kind, refId, 'WIS'));
+      const extra = saveExtra(e, 'WIS');
+      for (const c of laughterConditions) {
+        const dc = c.combatEffect?.dc ?? 10;
+        const cond = rollBlessBaneBonus(e, 'save');
+        const out = rollSavingThrow(
+          { stats: effectiveStats(e).scores, level: e.level, isMonster: kind !== 'pc' },
+          'WIS',
+          dc,
+          adv.state,
+          proficient,
+          "Tasha's Hideous Laughter — Damage WIS Save",
+        );
+        const total = out.total + extra.total + cond.bonus;
+        const passed = total >= dc;
+        if (passed) clearCondition(kind, refId, c.id);
+        addRollLog(sessionId, {
+          roller: e.name,
+          label: "Tasha's Hideous Laughter — Damage WIS save",
+          expr: 'WIS save (adv)',
+          total,
+          detail: `${e.name}: took ${damage} damage → WIS save (advantage) ${total} vs DC ${dc}${cond.notes.length ? ` (${cond.notes.join(', ')})` : ''}: ${passed ? "PASS — Tasha's Hideous Laughter ends." : 'FAIL — laughter continues.'}`,
+          hideMods: hidesMods(kind, refId),
+        });
+      }
+      e = kind === 'pc' ? getCharacter(refId) : getMonster(refId);
+    }
+  }
   if (!e || !e.conditions.some((c) => c.isConcentration)) return;
   // DC = half the damage, minimum 10 — and at most 30 (2024 PHB).
   const dc = Math.min(30, Math.max(10, Math.floor(damage / 2)));

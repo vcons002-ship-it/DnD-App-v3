@@ -10,6 +10,8 @@ import { abilityMod, proficiencyBonus } from '../../shared/skills.js';
 import { damageMultiplier, weaponIsMagical } from '../../shared/combatMath.js';
 import { saveAdvantage, saveAutoFail } from '../../shared/conditionEffects.js';
 import { effectiveStats, saveExtra } from '../../shared/modifiers.js';
+import { rollBlessBaneBonus } from '../../shared/spellBuffs.js';
+import { timedConcentration } from './combatHelpers.js';
 import { spellSaveDC } from '../../shared/spellMath.js';
 import { spellcastingKeyFor } from '../../shared/spellExecution.js';
 import { classLevelFor } from '../../shared/multiclass.js';
@@ -46,7 +48,7 @@ export function hitOptions(sid:string,ch:Character,at:Token,target:Token,w:Weapo
     const key=hitFeature(ab); if(!key) return false;
     if(hitSpell(key)&&victim&&'objectKind' in victim&&victim.objectKind)return false;
     if(hitSpell(key)) return hitLevels(ch,ab).length>0 && (!s?.activeTurnTokenId||s.activeTurnTokenId===at.id) &&
-      (!s?.activeTurnTokenId || !ch.sheetAbilities.some(a=>a.hitUsedTurn===`bonus:${turn}`)) && (key==='hail of thorns'?w.kind==='ranged':key==='ensnaring strike'||w.kind==='melee');
+      (!s?.activeTurnTokenId || !ch.sheetAbilities.some(a=>a.hitUsedTurn===`bonus:${turn}`)) && (key==='hail of thorns'?w.kind==='ranged':key==='ensnaring strike'||key==='branding smite'||w.kind==='melee');
     if(spent(ch,key,turn)) return false;
     if(key==='sneak attack') return (w.kind==='ranged'||(w.tags??[]).some(t=>t.toLowerCase()==='finesse')) && adv!=='dis' && (adv==='adv'||ally);
     if(key==='stunning strike') return monkWeapon(w) && ['Focus Points','Focus','Ki'].some(k=>ch.resources[k]?.used<ch.resources[k]?.max);
@@ -57,7 +59,7 @@ export function hitOptions(sid:string,ch:Character,at:Token,target:Token,w:Weapo
 
 function save(sid:string,target:Token,ab:string,dc:number,label:string,adv?:'adv') {
   const e=markedEntity(target.kind,target.refId)!;
-  const labels=e.conditions.map(c=>c.label), extra=saveExtra(e,ab);
+  const labels=e.conditions.map(c=>c.label), extra=saveExtra(e,ab), cond=rollBlessBaneBonus(e, 'save'), saveAdd=extra.total+cond.bonus;
   const state=saveAdvantage(labels,ab,adv,strFeatureAdv(target.kind,target.refId,ab)).state;
   const c={...e,stats:effectiveStats(e).scores,isMonster:target.kind==='monster',level:e.level??0};
   const killer=abilityKey({name:label})==='phantasmal killer';
@@ -69,11 +71,15 @@ function save(sid:string,target:Token,ab:string,dc:number,label:string,adv?:'adv
     : effectKey==='wrathful smite'?(passed?'Fear resisted or ended.':'Frightened - the effect continues.')
     : effectKey==='searing smite'?(passed?'Flames end after this turn\'s damage.':'Flames continue burning.')
     : effectKey==='hold person'?(passed?'Hold Person ends - no longer Paralyzed.':'Hold Person continues - Paralyzed; save again at the end of the next turn.')
+    : effectKey==='slow'?(passed?'Slow ends on this creature.':'Slow continues; save again at the end of the next turn.')
+    : effectKey==='blindness/deafness'?(passed?'Blindness/Deafness ends on this creature.':'Blindness/Deafness continues; save again at the end of the next turn.')
+    : effectKey==="tasha's hideous laughter"?(passed?"Tasha's Hideous Laughter ends - recovers from laughter.":'Still Incapacitated and laughing; save again at the end of the next turn.')
     : killer?(passed?'Phantasmal Killer ends - no damage.':'Phantasmal Killer continues - roll psychic damage.') : undefined;
-  const [out]=rollSaveBatch([{target,c,ability:ab,dc,mode:state,proficient:(e.saveProficiencies??[]).some(v=>v.toUpperCase()===ab),extra:extra.total,autoFail:!!saveAutoFail(labels,ab),passEffect:explain(true),failEffect:explain(false)}],`${label} — ${killer?'End-of-turn ':''}${ab} Saving Throw`);
-  const total=out.total+extra.total, passed=!saveAutoFail(labels,ab)&&total>=dc;
+  const [out]=rollSaveBatch([{target,c,ability:ab,dc,mode:state,proficient:(e.saveProficiencies??[]).some(v=>v.toUpperCase()===ab),extra:saveAdd,autoFail:!!saveAutoFail(labels,ab),passEffect:explain(true),failEffect:explain(false)}],`${label} — ${killer?'End-of-turn ':''}${ab} Saving Throw`);
+  const total=out.total+saveAdd, passed=!saveAutoFail(labels,ab)&&total>=dc;
   const explanation=explain(passed);
-  addRollLog(sid,{roller:e.name,label,expr:`${ab} save`,total,detail:`${e.name}: ${label} ${ab} save ${total} vs DC ${dc}: ${passed?'PASS':'FAIL'}${explanation?`. ${explanation}`:''}`,
+  const noteSuffix=cond.notes.length?` (${cond.notes.join(', ')})`:'';
+  addRollLog(sid,{roller:e.name,label,expr:`${ab} save`,total,detail:`${e.name}: ${label} ${ab} save ${total} vs DC ${dc}${noteSuffix}: ${passed?'PASS':'FAIL'}${explanation?`. ${explanation}`:''}`,
     reveal:{kind:'check',presentedLive:usingPhysicalDice(),title:`${label} - ${ab} Saving Throw`,attacker:e.name,d20:out.face,attackTotal:total,
       toHit:[{label:`${ab} save modifiers`,value:total-out.face}],outcome:passed?'pass':'fail',effectOutcome:explanation,
       visibilityTarget:{kind:target.kind,refId:target.refId}}});
@@ -115,24 +121,29 @@ export function resolveHitFeature(sid:string,roller:string,rollId:string,ability
     });
     // Show the shared damage first, then all target saves in one labeled throw.
     const damage=withDiceMetadata({label:'Hail of Thorns — Piercing Damage'},()=>rollDice(`${n}d10`))!,impactId=newId();
-    const requests=targets.map(t=>{
-      const entity=markedEntity(t.kind,t.refId)!,labels=entity.conditions.map(c=>c.label);
-      return {target:t,c:{...entity,stats:effectiveStats(entity).scores,isMonster:t.kind==='monster',level:entity.level??0},ability:'DEX',dc,
-        mode:saveAdvantage(labels,'DEX').state,proficient:(entity.saveProficiencies??[]).some(v=>v.toUpperCase()==='DEX'),extra:saveExtra(entity,'DEX').total,autoFail:!!saveAutoFail(labels,'DEX')};
+    const prep=targets.map(t=>{
+      const entity=markedEntity(t.kind,t.refId)!,labels=entity.conditions.map(c=>c.label),cond=rollBlessBaneBonus(entity);
+      return {
+        req:{target:t,c:{...entity,stats:effectiveStats(entity).scores,isMonster:t.kind==='monster',level:entity.level??0},ability:'DEX',dc,
+          mode:saveAdvantage(labels,'DEX').state,proficient:(entity.saveProficiencies??[]).some(v=>v.toUpperCase()==='DEX'),extra:saveExtra(entity,'DEX').total+cond.bonus,autoFail:!!saveAutoFail(labels,'DEX')},
+        condNotes:cond.notes,
+      };
     });
+    const requests=prep.map(p=>p.req);
     const outcomes=rollSaveBatch(requests,`${ab.name} — DEX Saving Throws`);
-    const saves=requests.map((r,i)=>({t:r.target,entity:markedEntity(r.target.kind,r.target.refId)!,out:outcomes[i],total:outcomes[i].total+r.extra,passed:!r.autoFail&&outcomes[i].total+r.extra>=dc}));
+    const saves=prep.map(({req:r,condNotes},i)=>({t:r.target,entity:markedEntity(r.target.kind,r.target.refId)!,out:outcomes[i],total:outcomes[i].total+r.extra,passed:!r.autoFail&&outcomes[i].total+r.extra>=dc,condNotes}));
     // The weapon and burst are distinct damage sources, but their map effects
     // wait for the final burst roll to finish (or be skipped).
     resolveAttackDamage(sid,roller,rollId,impactId);
-    for(const {t,entity,total,out,passed} of saves){
+    for(const {t,entity,total,out,passed,condNotes} of saves){
       const multiplier=damageMultiplier('piercing',[...entity.resistances,...stanceResistances(t.kind,t.refId)],entity.weaknesses,entity.immunities,{magical:true});
       const amount=Math.floor(Math.floor(damage.total*(passed?.5:1))*multiplier);
       const hpNote=applyDamageNoted(t.kind,t.refId,amount,'piercing',attacker,false,impactId,undefined,[{amount,damageType:'piercing',spell:'Hail of Thorns'}]);
       noteConcentration(sid,t.kind,t.refId,amount);
+      const condSuffix=condNotes.length?` (${condNotes.join(', ')})`:'';
       addRollLog(sid,{roller:entity.name,label:'Hail of Thorns: DEX save',expr:'DEX save',total,hpNote,
         hideMods:t.kind==='monster'&&getMonster(t.refId)?.disposition!=='friendly',
-        detail:`${entity.name}: DEX save ${total} vs DC ${dc}: ${passed?'PASS (half damage)':'FAIL'}; ${amount} piercing damage.`,
+        detail:`${entity.name}: DEX save ${total} vs DC ${dc}${condSuffix}: ${passed?'PASS (half damage)':'FAIL'}; ${amount} piercing damage.`,
         reveal:{presentedLive:usingPhysicalDice(),kind:'check',attacker:entity.name,target:entity.name,title:'Hail of Thorns: DEX save',effectOutcome:`${amount} piercing damage${passed?' (save for half)':''}.`,outcome:passed?'pass':'fail',d20:out.face,attackTotal:total,
           toHit:[{label:'DEX save modifiers',value:total-out.face}],visibilityTarget:{kind:t.kind,refId:t.refId}}});
     }
@@ -144,8 +155,8 @@ export function resolveHitFeature(sid:string,roller:string,rollId:string,ability
     return {ok:true};
   }
   const expr=key==='sneak attack'?`${Math.ceil(classLevelFor(ch,'rogue')/2)}d6`:key==='colossus slayer'?'1d8':key==='divine strike'?(classLevelFor(ch,'cleric')>=14?'2d8':'1d8'):
-    key==='searing smite'?`${n}d6`:key==='thunderous smite'?`${n+1}d6`:key==='wrathful smite'?`${n}d6`:undefined;
-  const type=key==='searing smite'?'fire':key==='thunderous smite'?'thunder':key==='wrathful smite'?'necrotic':key==='divine strike'?(ab.roll?.damageType||'radiant'):w.damageType;
+    key==='searing smite'?`${n}d6`:key==='thunderous smite'?`${n+1}d6`:key==='wrathful smite'?`${n}d6`:key==='branding smite'?`${n}d6`:undefined;
+  const type=key==='searing smite'?'fire':key==='thunderous smite'?'thunder':key==='wrathful smite'?'necrotic':key==='branding smite'?'radiant':key==='divine strike'?(ab.roll?.damageType||'radiant'):w.damageType;
   const rolls=expr?rollDicePool(Array.from({length:p.crit?2:1},(_,i)=>({expr,critical:i>0}))).filter((r):r is NonNullable<typeof r>=>r!==null):[];
   const raw=rolls.reduce((sum,r)=>sum+r.total,0);
   const sameType=type===w.damageType;
@@ -162,6 +173,12 @@ export function resolveHitFeature(sid:string,roller:string,rollId:string,ability
     spellSaveDC(ch.level,effectiveStats(ch).scores,spellcastingKeyFor(ch,ab));
   const effect:NonNullable<Condition['combatEffect']>={casterKind:'pc',casterId:ch.id,spell:ab.name,dc,expiresAt:Date.now()+60000,expiresRound:(getSessionById(sid)?.combatRound??0)+10};
   const condition=(label:string,extra:Partial<NonNullable<Condition['combatEffect']>>={})=>setCondition(target.kind,target.refId,{id:newId(),label,aura:'red',isConcentration:false,combatEffect:{...effect,...extra}});
+  if(key==='branding smite') {
+    const conc=timedConcentration('pc',ch.id,ab.name,10,n);
+    if(conc) setCondition(target.kind,target.refId,{id:newId(),label:'Branding Smite',aura:'red',isConcentration:false,
+      customText:'Sheds dim light in a 5-ft radius and cannot become invisible while active.',
+      combatEffect:{...conc,concentration:true,suppressesInvisibility:true}});
+  }
   if(key==='stunning strike') {
     const pass=save(sid,target,'CON',dc,ab.name);
     condition(pass?'Stunning Strike: Slowed':'Stunned',{untilCasterTurn:true,slow:pass,nextAttackAdvantage:pass});

@@ -16,6 +16,7 @@ import {sameBoardSnapshot} from '../../../shared/boardSnapshot';
 import {LegacyVisionOverlay} from './LegacyVisionOverlay';
 import {useLegacyMovement} from '../lib/useLegacyMovement';
 import {useTokenAppearance} from '../components/TokenAppearanceControl';
+import {normalizeNumericDraft} from '../lib/numberInput';
 import {apiFetch} from '../lib/api';
 import {MapArtwork} from './MapArtwork';
 import {useMapAnimation} from '../lib/useMapAnimation';
@@ -2306,7 +2307,7 @@ function MapStageInner({
                 type="number"
                 autoFocus
                 value={scaleFt}
-                onChange={(e) => setScaleFt(e.target.value)}
+                onChange={(e) => setScaleFt(normalizeNumericDraft(e.target.value, { allowNegative: false, allowDecimal: true }))}
                 onKeyDown={(e) => e.key === 'Enter' && applyScaleFromLine()}
               />
               <span>ft</span>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ModTarget, SheetModifier } from '../../../shared/types';
 import { SKILLS } from '../../../shared/skills';
 import { targetLabel } from '../../../shared/modifiers';
+import { NumberInput } from './NumberInput';
 
 const ABILITIES = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const;
 type AbilityKey = (typeof ABILITIES)[number];
@@ -153,11 +154,11 @@ export function ModifierEditor({
               <option value="set">= set to</option>
             </select>
           )}
-          <input
-            type="number"
+          <NumberInput
             className="mod-value"
             value={value}
-            onChange={(e) => setValue(Number(e.target.value))}
+            emptyFallback={0}
+            onValueChange={(n) => { if (n !== undefined) setValue(n); }}
             title={setScore && kind === 'ability' ? 'The score the ability becomes' : 'Bonus (can be negative)'}
           />
           <input

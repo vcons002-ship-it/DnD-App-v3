@@ -1,10 +1,11 @@
 import {useEffect,useState} from 'react';
 import {formatCharacterHeight,SPECIES_HEIGHTS,validCharacterHeight} from '../../../shared/characterHeight';
+import { normalizeNumericDraft } from '../lib/numberInput';
 import './character-height.css';
 export function CharacterHeightControl({value,species,onChange,disabled=false}:{value:number;species:string;onChange:(inches:number)=>void;disabled?:boolean}){
   const [feet,setFeet]=useState(String(Math.floor(value/12))),[inches,setInches]=useState(String(value%12));
   useEffect(()=>{setFeet(String(Math.floor(value/12)));setInches(String(value%12));},[value]);
-  const edit=(f:string,i:string)=>{setFeet(f);setInches(i);if(f===''||i==='')return;const total=Number(f)*12+Number(i);if(Number.isInteger(Number(f))&&Number.isInteger(Number(i))&&Number(i)>=0&&Number(i)<12&&validCharacterHeight(total))onChange(total);};
+  const edit=(rawF:string,rawI:string)=>{const f=normalizeNumericDraft(rawF,{allowNegative:false}),i=normalizeNumericDraft(rawI,{allowNegative:false});setFeet(f);setInches(i);if(f===''||i==='')return;const total=Number(f)*12+Number(i);if(Number.isInteger(Number(f))&&Number.isInteger(Number(i))&&Number(i)>=0&&Number(i)<12&&validCharacterHeight(total))onChange(total);};
   const restore=()=>{setFeet(String(Math.floor(value/12)));setInches(String(value%12));};
   return <fieldset className="character-height-control" disabled={disabled}><legend>Character height</legend><div>
     <button type="button" className="btn" aria-label="Decrease height by one inch" disabled={value<=6} onClick={()=>onChange(value-1)}>↓</button>

@@ -16,7 +16,7 @@ type Target=NonNullable<AbilityRollPayload['dispelTarget']>;
 const entity=(kind:TokenKind,id:string)=>kind==='pc'?getCharacter(id):getMonster(id);
 // Instantaneous spells can leave non-dispellable consequences, including
 // acid or next-turn attack penalties. Do not turn Dispel into damage undo.
-const instantaneous=new Set(['ray of frost','ray of sickness','chill touch','shocking grasp','guiding bolt',"melf's acid arrow",'ice knife']);
+const instantaneous=new Set(['ray of frost','ray of sickness','chill touch','shocking grasp','guiding bolt',"melf's acid arrow",'ice knife','vicious mockery','arms of hadar','harm']);
 const subjects=(sid:string)=>[...listCharacters(sid).map(e=>({kind:'pc' as const,e})),...listMonsters(sid).map(e=>({kind:'monster' as const,e}))];
 const excluded=(c:Condition)=>c.isConcentration||!!c.combatEffect?.parentConditionId||/^Reaction spent|^Haste lethargy/i.test(c.label);
 const controlsElsewhere=(c:Condition)=>!!c.combatEffect?.spellAction&&!['vampiric touch','flame blade'].includes(c.combatEffect.spell.toLowerCase());

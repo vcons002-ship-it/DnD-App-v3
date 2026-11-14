@@ -110,9 +110,13 @@ describe('Spellbook capabilities cover the actual catalogue without promising un
     expect(spellCombatSupport(entry)).toMatchObject({ status: 'manual', manualCastOnly: true });
     expect(entry).toEqual(before);
   });
-  it.each(['Ice Knife','Ice Storm','Flame Strike','Meteor Swarm','Aid','Armor of Agathys'])('enables reviewed linked damage for %s without rewriting the saved sheet',name=>{
+  it.each(['Ice Knife','Ice Storm','Flame Strike','Meteor Swarm','Aid'])('enables reviewed linked damage for %s without rewriting the saved sheet',name=>{
     const entry=spell(name),before=structuredClone(entry);
     expect(spellCombatSupport(entry)).toMatchObject({status:'partial',manualCastOnly:false});expect(entry).toEqual(before);
+  });
+  it('promotes Armor of Agathys to combat ready without rewriting the saved sheet',()=>{
+    const entry=spell('Armor of Agathys'),before=structuredClone(entry);
+    expect(spellCombatSupport(entry)).toMatchObject({status:'ready',manualCastOnly:false});expect(entry).toEqual(before);
   });
   it('preserves authored roll variants instead of forcing catalogue rules onto homebrew', () => {
     for (const flag of [{ source: 'custom' as const }, { executionProfile: 'manual' as const }]) {
@@ -159,7 +163,7 @@ describe('Spellbook capabilities cover the actual catalogue without promising un
     }
   });
   it('distinguishes post-hit spells, marks and buff markers from fully automated effects', () => {
-    for (const name of ["Hunter's Mark", 'Hex', 'Hail of Thorns', 'Ensnaring Strike'])
+    for (const name of ["Hunter's Mark", 'Hex', 'Hail of Thorns', 'Ensnaring Strike', 'Branding Smite'])
       expect(spellCombatSupport(spell(name)), name).toMatchObject({ status: 'partial', manualCastOnly: false });
     for (const name of ['Command']) {
       const support = spellCombatSupport(spell(name))!;
@@ -174,11 +178,17 @@ describe('Spellbook capabilities cover the actual catalogue without promising un
     expect(spellCombatSupport(spell('Guiding Bolt'))?.status).toBe('partial');
     expect(spellCombatSupport(spell('Mass Healing Word'))?.status).toBe('partial');
     expect(spellCombatSupport(spell('Regenerate'))?.status).toBe('partial');
+    expect(spellCombatSupport(spell('Branding Smite'))?.status).toBe('partial');
     expect(spellCombatSupport(spell('Haste'))!.automated.join(' ')).toMatch(/AC.*speed.*Dexterity/i);
     for(const name of ['Shield','Misty Step','Hypnotic Pattern','Pass without Trace'])expect(spellCombatSupport(spell(name))).toMatchObject({status:'ready',manualCastOnly:false});
   });
   it.each(['Eldritch Blast', 'Chromatic Orb', 'Magic Missile', 'Scorching Ray',
-    'Cure Wounds', 'Healing Word', 'Sacred Flame', 'Divine Smite', 'False Life', 'Poison Spray', 'Inflict Wounds'])
+    'Cure Wounds', 'Healing Word', 'Sacred Flame', 'Divine Smite', 'False Life', 'Poison Spray', 'Inflict Wounds',
+    'Armor of Agathys', 'Bless', 'Bane',
+    'Shield of Faith', 'Mage Armor', 'Blur', 'See Invisibility', 'Greater Invisibility', 'Heroism',
+    'Protection from Poison', 'Lesser Restoration', 'Greater Restoration', 'Spare the Dying', 'Revivify', 'Death Ward',
+    'Faerie Fire', 'Entangle', 'Slow', 'Blindness/Deafness', "Tasha's Hideous Laughter",
+    'Vicious Mockery', 'Arms of Hadar', 'Harm', 'Heal'])
   ('retains the reviewed core combat path for %s', name => {
     expect(spellCombatSupport(spell(name))).toMatchObject({ status: 'ready', manualCastOnly: false });
   });

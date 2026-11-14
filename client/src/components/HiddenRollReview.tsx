@@ -1,5 +1,6 @@
 import {useEffect,useState} from 'react';
 import {useStore} from '../state/socket';
+import {normalizeNumericDraft} from '../lib/numberInput';
 import './HiddenRollReview.css';
 
 /** DM-only approval of a fully calculated, still-uncommitted private command. */
@@ -52,7 +53,7 @@ export function HiddenRollReview(){
   </section>)}</div>
   {editing&&<form className="hidden-roll-entry" onSubmit={e=>{e.preventDefault();enter();}}>
    <p>{review.dice.every(d=>d.bonus!==undefined)?'Enter the total, including modifiers.':'Change any die face below; leave the others unchanged. Modifiers are added automatically.'}</p>
-   {inputs.map(input=><label key={input.key}>{input.label}<input type="number" min={input.min} max={input.max} step="1" required disabled={submitting} value={values[input.key]??input.initial} onChange={e=>setValues({...values,[input.key]:e.target.value})}/></label>)}
+   {inputs.map(input=><label key={input.key}>{input.label}<input type="number" min={input.min} max={input.max} step="1" required disabled={submitting} value={values[input.key]??String(input.initial)} onChange={e=>setValues({...values,[input.key]:normalizeNumericDraft(e.target.value)})}/></label>)}
    <button className="btn" disabled={!valid||submitting||!connected}>Review entered result</button>
   </form>}
   <footer><div className="hidden-roll-secondary">

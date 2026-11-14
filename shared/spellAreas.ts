@@ -24,7 +24,7 @@ const catalog:Record<string,SpellArea>={
  'mirage arcane':area('cube',5280,4000000,{ongoing:true}),'control weather':area('sphere',26400,0,{self:true,ongoing:true}),
  'acid splash':area('sphere',5,60), 'arms of hadar':area('emanation',10,0,{self:true,excludeCaster:true}),
  'burning hands':area('cone',15,0,{self:true}),'color spray':area('cone',15,0,{self:true}),
- 'entangle':area('cube',20,90),'faerie fire':area('cube',20,60),'fog cloud':area('sphere',20,120,{ongoing:true}),
+ 'entangle':area('cube',20,90,{ongoing:true,initialEffect:true}),'faerie fire':area('cube',20,60),'fog cloud':area('sphere',20,120,{ongoing:true}),
  'grease':area('cube',10,60),'sleep':area('sphere',5,60),'thunderwave':area('cube',15,0,{self:true,excludeCaster:true}),
  'calm emotions':area('sphere',20,60,{selective:true}),'cloud of daggers':area('cube',5,60,{ongoing:true}),
  'darkness':area('sphere',15,60,{ongoing:true}),'flaming sphere':area('sphere',5,60,{ongoing:true}),
@@ -59,6 +59,7 @@ export function spellAreaFor(a:Partial<SheetAbility>,castLevel?:number):SpellAre
     s.widthFt!==undefined&&(!Number.isFinite(s.widthFt)||s.widthFt<=0)||s.count!==undefined&&(!Number.isInteger(s.count)||s.count<1||s.count>40))return;
   return {...s};
  }
+ if(a.executionProfile==='manual'&&a.tags?.includes('no-area'))return;
  const key=(a.name??'').trim().toLowerCase(),preset=catalog[key];
  if(key==='pass without trace'&&(a.source==='custom'||a.executionProfile==='manual'))return;
  if(preset){const result={...preset};

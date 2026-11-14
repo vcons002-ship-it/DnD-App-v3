@@ -4,6 +4,7 @@ import { describeConsumable, parseConsumable } from '../../../shared/consumables
 import { useStore } from '../state/socket';
 import { ModifierEditor } from './ModifierEditor';
 import { ItemLibrarySaveDialog, type SaveableItem } from './ItemLibrarySaveDialog';
+import { NumberInput } from './NumberInput';
 
 /** Per-character inventory: editable list + add free-form or from the searchable
  *  library. Each item can carry a description, viewable in a popup window. */
@@ -74,15 +75,16 @@ export function CharacterItems({
       <div className="purse">
         <span className="purse-label">💰 Gold</span>
         {editable ? (
-          <input
-            type="number"
+          <NumberInput
             min={0}
             step={0.01}
+            allowDecimal
+            emptyFallback={0}
             className="purse-input"
             value={character.gold}
-            onChange={(e) =>
-              updateCharacter({ characterId: character.id, gold: Math.max(0, Number(e.target.value)) })
-            }
+            onValueChange={(n) => {
+              if (n !== undefined) updateCharacter({ characterId: character.id, gold: Math.max(0, n) });
+            }}
           />
         ) : (
           <span>{character.gold}</span>
@@ -181,11 +183,11 @@ export function CharacterItems({
         <>
           <div className="item-add">
             <input placeholder="Item name" value={name} onChange={(e) => setName(e.target.value)} />
-            <input
-              type="number"
+            <NumberInput
               value={qty}
               min={1}
-              onChange={(e) => setQty(Math.max(1, Number(e.target.value)))}
+              emptyFallback={1}
+              onValueChange={(n) => { if (n !== undefined) setQty(n); }}
             />
             <button
               className="btn tiny"

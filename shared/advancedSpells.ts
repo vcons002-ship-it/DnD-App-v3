@@ -8,7 +8,7 @@ export function advancedSpell(a:Partial<SheetAbility>):'invisibility'|'spike gro
   if(a.roll && !(a.roll.kind==='damage'&&(name==='spike growth'?['0','2d4']:['0']).includes(a.roll.dice??'')&&!a.roll.scaleDice&&!a.roll.save&&!a.roll.damageBonus))return;
   return name as ReturnType<typeof advancedSpell>;
 }
-export const isInvisible=(e:{conditions:readonly Condition[]}|undefined|null)=>!!e?.conditions.some(c=>c.label.trim().toLowerCase()==='invisible');
+export const isInvisible=(e:{conditions:readonly Condition[]}|undefined|null)=>!!e?.conditions.some(c=>!c.isConcentration&&c.label.trim().toLowerCase()==='invisible')&&!e?.conditions.some(c=>!c.isConcentration&&c.combatEffect?.suppressesInvisibility);
 
 /** Circular segment intervals let overlapping terrain count its movement only once. */
 export function spikeInterval(a:{x:number;y:number},b:{x:number;y:number},center:{x:number;y:number},radiusPx:number):[number,number]|undefined {

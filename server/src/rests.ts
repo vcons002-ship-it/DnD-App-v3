@@ -2,7 +2,7 @@
 // shared/rests.ts; this module applies them to stored characters.
 import { db } from './db.js';
 import {
-  addRollLog, getCharacter, isDeadEntity, listCharacters, updateCharacter,
+  addRollLog, clearCondition, getCharacter, isDeadEntity, listCharacters, updateCharacter,
 } from './sessions.js';
 import { applyDamageNoted } from './combat.js';
 import { rollDice } from '../../shared/dice.js';
@@ -75,16 +75,23 @@ export function restCharacter(sessionId: string, characterId: string, kind: Rest
   }
 
   if (kind === 'long') {
-    if ((c.hitDiceUsed ?? 0) > 0) {
-      out.restored.push(`Hit Dice ${hitDiceLeft(c)}→${Math.max(1, c.level)}`);
+    let charNow = getCharacter(characterId) ?? c;
+    const harmConds = charNow.conditions.filter((cond) => !!cond.combatEffect?.harmMaxHpReduction);
+    if (harmConds.length) {
+      for (const hc of harmConds) clearCondition('pc', characterId, hc.id);
+      charNow = getCharacter(characterId) ?? charNow;
+      out.restored.push('max HP restored');
+    }
+    if ((charNow.hitDiceUsed ?? 0) > 0) {
+      out.restored.push(`Hit Dice ${hitDiceLeft(charNow)}→${Math.max(1, charNow.level)}`);
       db.prepare("UPDATE characters SET hit_dice_used = 0, hit_dice_used_by_die = '{}' WHERE id = ?").run(characterId);
     }
     // Healing goes through the ordinary HP path, so the token pops a +X floater.
-    if (c.curHp < c.maxHp) {
-      applyDamageNoted('pc', characterId, -(c.maxHp - c.curHp));
-      out.restored.push(`HP ${c.curHp}→${c.maxHp}`);
+    if (charNow.curHp < charNow.maxHp) {
+      applyDamageNoted('pc', characterId, -(charNow.maxHp - charNow.curHp));
+      out.restored.push(`HP ${charNow.curHp}→${charNow.maxHp}`);
     }
-    if (c.tempHp > 0) {
+    if (charNow.tempHp > 0) {
       updateCharacter(characterId, { tempHp: 0 });
       out.restored.push('temp HP ends');
     }

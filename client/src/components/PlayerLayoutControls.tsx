@@ -7,8 +7,9 @@ import {DiceRenderingControl} from './DiceRenderingControl';
 import {HardwareBenchmarkPanel} from './LegacyModeControl';
 import {TokenAppearanceControl} from './TokenAppearanceControl';
 import {ServerRenderingAdvice} from './ServerRenderingControl';
-import {BuildVersionNote, PerfStatsSettingControl} from './ToolbarPerfStats';
+import { BuildVersionNote, PerfStatsSettingControl } from './ToolbarPerfStats';
 import type { PlayerLayoutController, PlayerPanelName, PlayerPanelSize } from '../lib/usePlayerLayout';
+import { normalizeNumericDraft } from '../lib/numberInput';
 
 export function ChatBubbleIcon() {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-5 3v-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" /><path d="M7 9h10M7 13h7" /></svg>;
@@ -77,7 +78,7 @@ function DimensionInput({ label, value, min, max, onCommit }: {
   }, [value]);
   return <input type="number" aria-label={label} min={Math.ceil(min)} max={Math.floor(max)} step="10" value={draft}
     onFocus={() => { focused.current = true; }}
-    onChange={(event) => setDraft(event.target.value)}
+    onChange={(event) => setDraft(normalizeNumericDraft(event.target.value, { allowNegative: false }))}
     onBlur={() => {
       focused.current = false;
       const parsed = Number(draft);

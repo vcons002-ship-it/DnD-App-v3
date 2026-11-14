@@ -6,7 +6,7 @@ import {spellAreaFor,tokenInSpellArea,areaExcludesCaster,areaOrigin,type SpellAr
 import type {Character,Monster,SheetAbility,TokenKind} from '../../shared/types.js';
 import {tokenDistanceFt} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
-import {withDiceSource,usingPhysicalDice} from '../../shared/dice.js';
+import {usingPhysicalDice} from '../../shared/dice.js';
 import {getMap,getCharacter,getMonster,getSessionById,listTokens,listRollLog,setRollApply,setRollReveal,isDeadEntity,addMeasurement,addRollLog,beginPlacedSpellImpact} from './sessions.js';
 import {resolveForcedSave,areaSaveRequest} from './combat.js';
 import {rollSaveBatch} from './saveDiceBatch.js';
@@ -62,8 +62,7 @@ export function resolvePlacedSpell(sid:string,roller:string,kind:TokenKind,caste
    const live=usingPhysicalDice();
    targets.forEach((t,i)=>{
      const out=saves[i];
-     if(out)withDiceSource(()=>out.faces,()=>resolveForcedSave(sid,source.id,t.id,undefined,undefined,live,saveArea));
-     else resolveForcedSave(sid,source.id,t.id,undefined,undefined,usingPhysicalDice(),saveArea);
+     resolveForcedSave(sid,source.id,t.id,undefined,undefined,live,saveArea,out?{faces:out.faces,condRoll:requests[i]?.condRoll}:undefined);
    });
    setRollApply(source.id,undefined);
    if(source.reveal&&!source.reveal.damageMods?.length)setRollReveal(source.id,{...source.reveal,presentedLive:usingPhysicalDice()});

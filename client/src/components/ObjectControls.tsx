@@ -2,6 +2,7 @@ import type { AuraColor, ObjectKind, StateSnapshot, Token } from '../../../share
 import { useStore } from '../state/socket';
 import { LootControls } from './LootControls';
 import { TrapControls } from './TrapControls';
+import { NumberInput } from './NumberInput';
 
 /** Object kinds that can hold loot (a container or a pile). */
 const LOOTABLE: ObjectKind[] = ['chest', 'item', 'other'];
@@ -117,7 +118,7 @@ export function ObjectControls({
       ) : (
         !compact && m.conditions.length === 0 && <p className="muted">No visible state.</p>
       )}
-      {editable&&(m.objectKind==='door'||m.objectKind==='chest')&&<label className="trap-dc">Lock DC <input aria-label="Lock DC" type="number" min={1} value={('objectDc' in m&&m.objectDc)||12} onChange={e=>updateMonster({monsterId:m.id,objectDc:Math.max(1,Number(e.target.value))})}/></label>}
+      {editable&&(m.objectKind==='door'||m.objectKind==='chest')&&<label className="trap-dc">Lock DC <NumberInput aria-label="Lock DC" min={1} max={30} value={('objectDc' in m&&m.objectDc)||12} emptyFallback={12} onValueChange={n=>{if(n!==undefined)updateMonster({monsterId:m.id,objectDc:Math.max(1,n)});}}/></label>}
       {/* Players (and the DM) can pick a locked door/chest or open an unlocked
           one — the missing affordance that made locked chests feel broken. */}
       {(m.objectKind === 'door' || m.objectKind === 'chest') && (() => {

@@ -53,6 +53,22 @@ export type Condition = {
     auraRecipients?: {kind:TokenKind;refId:string}[];
     stealthBonus?: number;
     aidMaxHpBonus?: number;
+    nextAttackDisadvantage?: boolean;
+    harmMaxHpReduction?: number;
+    tempHpPerTurn?: number;
+    immuneConditions?: string[];
+    resistDamageTypes?: string[];
+    grantsAdvantageToAttackers?: boolean;
+    suppressesInvisibility?: boolean;
+    acBonus?: number;
+    baseAc?: number;
+    baseAcAddsDex?: boolean;
+    attackBonus?: number;
+    saveBonus?: number;
+    attackBonusDice?: string;
+    saveBonusDice?: string;
+    speedBonus?: number;
+    zeroSpeed?: boolean;
   };
 
 };
@@ -325,6 +341,48 @@ export type CreatureAbility = {
 export type AbilityRecharge = { min?: number; rest?: 'short' | 'long'; spent?: boolean };
 
 /**
+ * Custom condition, buff, debuff, ongoing turn effect, or condition cure
+ * configured directly on a spell/ability's roll in the Spell Effect Editor.
+ */
+export type SpellCustomEffect = {
+  target?: 'affected' | 'self' | 'ally';
+  conditionLabel?: string;
+  aura?: 'red' | 'green' | 'blue';
+  note?: string;
+  durationRounds?: number;
+  untilTargetStart?: boolean;
+  untilCasterEnd?: boolean;
+  repeatSave?: string;
+  repeatPhase?: 'start' | 'end';
+  repeatDamage?: string;
+  repeatDamageType?: string;
+  saveBeforeDamage?: boolean;
+  tempHpPerTurn?: number;
+  acBonus?: number;
+  baseAc?: number;
+  baseAcAddsDex?: boolean;
+  attackBonus?: number;
+  saveBonus?: number;
+  attackBonusDice?: string;
+  saveBonusDice?: string;
+  grantsAdvantageToAttackers?: boolean;
+  nextAttackAdvantage?: boolean;
+  attackDisadvantage?: boolean;
+  nextAttackDisadvantage?: boolean;
+  checkDisadvantage?: boolean;
+  speedBonus?: number;
+  speedReduction?: number;
+  slow?: boolean;
+  zeroSpeed?: boolean;
+  preventsHealing?: boolean;
+  noOpportunityAttacks?: boolean;
+  suppressesInvisibility?: boolean;
+  resistDamageTypes?: string[];
+  immuneConditions?: string[];
+  cureConditions?: string[];
+};
+
+/**
  * A structured roll attached to a sheet spell/ability, resolved server-side so
  * the dice/to-hit/DC are never trusted from the client. `dice` is the base
  * damage/heal expression at `baseLevel`; `scaleDice` is added per slot level
@@ -335,8 +393,10 @@ export type AbilityRoll = {
   area?: import('./spellAreas.js').SpellArea;
   /** Original caster tier retained when CR damage is scaled independently. */
   crCasterLevel?: number;
-  /** Explicit monster spell attack bonus, including CR scaling. */
+  /** Explicit spell attack bonus override (PC or creature). */
   attackBonus?: number;
+  /** Whether a spell attack is melee or ranged (overrides description heuristic). */
+  attackRange?: 'melee' | 'ranged';
   /** Casting-time choices for a variable-type spell; a saved fixed type wins. */
   damageTypeChoices?: string[];
   /** What the roll button does. */
@@ -361,6 +421,8 @@ export type AbilityRoll = {
   damageBonus?: 'spellcasting';
   /** Maximum distinct creatures receiving one shared casting's effect. */
   maxTargets?: number;
+  /** Extra target recipients added per slot level above `baseLevel`. */
+  scaleTargets?: number;
   /** Reviewed self-healing features do not use the selected friendly target. */
   healTarget?: 'self' | 'selected';
   /** Explicit save DC (monster stat blocks give one); when unset it's derived. */
@@ -381,6 +443,8 @@ export type AbilityRoll = {
   scaleInstances?: number;
   /** Cantrip attack counts grow at levels 5/11/17 rather than by spell slot. */
   instanceScaling?: 'cantrip';
+  /** Manual condition, stat modifier, turn effect, or cure applied by this roll. */
+  customEffect?: SpellCustomEffect;
 };
 
 /**
@@ -1180,6 +1244,8 @@ export type PendingDamage = {
   rayDice?: string;
   rayDamageBonus?: { label: string; value: number };
   rayCastLevel?: number;
+  customEffect?: SpellCustomEffect;
+  customEffectMeta?: { spellName: string; castLevel?: number; castId: string; concentration: boolean; dc: number };
   /** Who takes it (and their name, so the button can read "→ Goblin"). */
   target: { kind: TokenKind; refId: string; name: string };
   /** Who dealt it — credits a PC's kill count when it drops the target. */
@@ -1189,6 +1255,7 @@ export type PendingDamage = {
   /** Final damage, post resist/vulnerability, riders included. */
   amount: number;
   damageType?: string;
+  isMeleeAttack?: boolean;
   /** Crit hit — a crit vs a downed PC is two death-save failures. */
   crit: boolean;
   /** The reveal payload: dice (with faces) and the flat modifier chips. */
@@ -1252,13 +1319,16 @@ export type RollEntry = {
     healing?: boolean;
     maxTargets?: number;
     damageBonus?: { label: string; value: number };
+    harmReduceMaxHp?: boolean;
     /** Server-created condition attached after a failed initial saving throw. */
     effect?: {
       commandWord?: string;
       casterKind: TokenKind; casterId: string; spell: string; condition: string;
       castLevel?: number; eligibleCreatureType?: string; durationRounds: number; expiresAt: number;
-      expiresRound?: number; castId: string; concentrationConditionId: string;
+      expiresRound?: number; castId: string; concentrationConditionId?: string;
       repeatSave?: string; repeatDamage?: string; damageType?: string; attackDisadvantage?: boolean; checkDisadvantage?: boolean;
+      nextAttackDisadvantage?: boolean; noOpportunityAttacks?: boolean; untilTargetStart?: boolean; once?: boolean;
+      grantsAdvantageToAttackers?: boolean; suppressesInvisibility?: boolean;
     };
     orb?: OrbChain;
     save?: string;
@@ -1293,7 +1363,12 @@ export type RollEntry = {
       toHitSteps?: { label: string; value: number }[];
       /** The armed next-roll override applies only to the first ray. */
       advantage?: 'adv' | 'dis';
+      customEffect?: SpellCustomEffect;
+      customEffectMeta?: { spellName: string; castLevel?: number; castId: string; concentration: boolean; dc: number };
     };
+    /** Manual custom effect + caster provenance resolved when target clicks are applied. */
+    customEffect?: SpellCustomEffect;
+    customEffectMeta?: { spellName: string; castLevel?: number; castId: string; concentration: boolean };
     /** Token ids already resolved for this cast — a save/auto-hit apply hits each
      *  creature at most once (each creature saves once vs an AoE; blocks the
      *  accidental double-click that would double the damage). */

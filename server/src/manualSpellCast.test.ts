@@ -62,12 +62,21 @@ describe('recorded casts for spells with manual effects', () => {
   });
 
   it('starts concentration for a manual buff and replaces the previous spell without inventing target conditions', () => {
-    const f = fixture('Bless'); setConcentration('pc', f.caster.id, 'Detect Magic');
+    const f = fixture('Expeditious Retreat'); setConcentration('pc', f.caster.id, 'Detect Magic');
+    f.cast({ castLevel: 1, targetTokenId: f.target.id });
+    const after = getCharacter(f.caster.id)!;
+    expect(after.spellSlots.L1.used).toBe(1);
+    expect(after.conditions.filter(c => c.isConcentration).map(c => c.label)).toEqual(['Concentration: Expeditious Retreat']);
+    expect(getMonster(f.monster.id)!.conditions).toEqual([]);
+    expect(listRollLog(f.session.id).find(entry => entry.label === 'Expeditious Retreat')!.detail).toMatch(/manual/i);
+  });
+  it('lets Bless with executionProfile manual opt out to manual concentration', () => {
+    const f = fixture('Bless', { executionProfile: 'manual' }); setConcentration('pc', f.caster.id, 'Detect Magic');
     f.cast({ castLevel: 1, targetTokenId: f.target.id });
     const after = getCharacter(f.caster.id)!;
     expect(after.spellSlots.L1.used).toBe(1);
     expect(after.conditions.filter(c => c.isConcentration).map(c => c.label)).toEqual(['Concentration: Bless']);
-    expect(getMonster(f.monster.id)!.conditions).toEqual([]);
+    expect(after.conditions.filter(c => c.label === 'Bless')).toEqual([]);
     expect(listRollLog(f.session.id).find(entry => entry.label === 'Bless')!.detail).toMatch(/manual/i);
   });
 

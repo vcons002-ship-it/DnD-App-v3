@@ -65,7 +65,18 @@ input, select, textarea {
   font: inherit;
 }
 input, textarea { width: 100%; margin: 4px 0; }
-input[type='number'] { width: 70px; }
+input[type='number'] {
+  width: 74px;
+  min-width: 56px;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 input[type='checkbox'], input[type='radio'] { width: auto; }
 select { max-width: 100%; }
 /* Hover feedback on form controls (none before — felt unresponsive on desktop). */
@@ -319,7 +330,7 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 .init-row { padding: 4px 0; cursor: pointer; }
 .init-row.sel { background: var(--panel-2); border-radius: 6px; }
 .init-row.turn { background: #3a3320; border-radius: 6px; box-shadow: inset 3px 0 0 var(--gold); }
-.init-input { width: 46px; }
+.init-input { width: 58px; text-align: center; }
 .init-name { flex: 1; }
 .init-order {
   display: inline-flex; align-items: center; justify-content: center;
@@ -699,18 +710,18 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 .statblock.editing label.sb-field { display: block; font-size: 11px; color: var(--muted); margin: 4px 0; }
 .statblock.editing label.sb-field input { margin-top: 2px; }
 .sb-meta-edit { display: flex; gap: 6px; flex-wrap: wrap; }
-.sb-meta-edit .mini input { width: 56px; }
+.sb-meta-edit .mini input { width: 64px; }
 /* Saving-throw proficiency toggles (one chip per ability). */
 .sb-saves-edit { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
 .sb-saves-label { font-size: 11px; color: var(--muted); width: 100%; }
 .sb-save-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
 .sb-save-chip.on { background: rgba(57, 196, 107, 0.18); border-color: var(--ok, #39c46b); }
 .sb-save-chip input { margin: 0; }
-.sb-ability-edit input { width: 100%; text-align: center; padding: 2px; }
+.sb-ability-edit input { width: 100%; min-width: 48px; text-align: center; padding: 3px 4px; }
 .sb-weapon-edit { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 3px 0; }
 .sb-weapon-edit input { margin: 0; }
 .sb-weapon-edit .sb-dmg { width: 70px; }
-.sb-weapon-edit .sb-tohit { width: 44px; }
+.sb-weapon-edit .sb-tohit { width: 56px; text-align: center; }
 .sb-weapon-edit .sb-weapon-ability { width: 64px; padding: 2px; }
 .sb-weapon-edit .sb-dmg-type { width: 84px; }
 .sb-weapon-edit .sb-tags { flex: 1; min-width: 110px; }
@@ -743,14 +754,15 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 .sb-edit-actions { display: flex; gap: 6px; margin-top: 8px; }
 /* Structured-roll editor for a monster action (kind / dice / save / DC / type). */
 .sb-roll-edit { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; flex-basis: 100%; margin: 2px 0 2px 4px; }
-.sb-roll-edit select, .sb-roll-edit input { width: auto; margin: 0; padding: 3px 5px; font-size: 12px; }
+.sb-roll-edit select, .sb-roll-edit input { width: auto; margin: 0; padding: 3px 6px; font-size: 12px; }
+.sb-roll-edit .sb-dc, .sb-roll-edit .sb-tohit { width: 60px; }
 /* Roll buttons shown next to a rollable action in the read view. */
 
 /* Floating menu: quick damage/heal + HP label */
 .floating-menu-title .fm-hp { color: var(--muted); font-weight: 600; flex-shrink: 0; }
 .fm-title-label { flex: 1; }
 .fm-dmg { display: flex; gap: 4px; align-items: center; padding: 4px; }
-.fm-dmg input { width: 52px; margin: 0; }
+.fm-dmg input { width: 64px; margin: 0; }
 .fm-attacks { display: flex; flex-direction: column; }
 .fm-attacker-icon { margin-right: 3px; }
 .fm-spell-attack { text-align: left; margin: 1px 4px; }
@@ -1063,7 +1075,7 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 .res-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; }
 .res-add, .item-add { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
 .res-add input:first-child, .item-add input:first-child { flex: 1; }
-.res-add input[type=number], .item-add input[type=number] { width: 48px; }
+.res-add input[type=number], .item-add input[type=number] { width: 60px; }
 
 /* Items */
 .items { margin-top: 10px; }
@@ -1914,7 +1926,7 @@ details.sheet-actions-traits[open] > summary::before { content: '▾ '; }
 .mod-row .mod-source { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mod-slot { color: var(--gold); }
 .mod-add { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
-.mod-add .mod-value { width: 52px; }
+.mod-add .mod-value { width: 62px; }
 .mod-add .mod-src-input { flex: 1; min-width: 90px; }
 .mod-slot-check { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
 
@@ -2359,3 +2371,146 @@ html[data-render-mode="legacy"] :is(.dm-window,.player-hud,.damage-prompt-btn,.d
 .rr-adv-reason.is-adv { color: #39ef87; }
 .rr-adv-reason.is-dis { color: #ff5365; }
 .rr-adv-reason.is-straight { color: #f5c518; }
+
+/* Spell effect editor modal & inline edit trigger */
+.spell-edit-btn {
+  padding: 2px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.spell-effect-editor-modal {
+  width: min(760px, 95vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border-color: var(--accent);
+}
+.see-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.see-head h3 { margin: 0; font-size: 16px; }
+.see-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.see-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(110, 168, 254, 0.35);
+  background: rgba(110, 168, 254, 0.08);
+  font-size: 12px;
+}
+.see-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.see-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.see-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.see-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.see-field input, .see-field select, .see-field textarea {
+  margin: 0;
+  width: 100%;
+  color: var(--text);
+  font-size: 13px;
+}
+.see-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+}
+.see-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.see-check input { margin: 0; width: auto; }
+.see-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.see-chip {
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.see-chip:hover { border-color: var(--accent); color: var(--text); }
+.see-chip.on {
+  background: rgba(57, 196, 107, 0.18);
+  border-color: var(--green);
+  color: #b7f5cf;
+}
+.see-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.see-preview {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+.see-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.see-actions-right {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}

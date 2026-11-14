@@ -9,6 +9,7 @@ import {ShowHealEnemies} from './ShowDeadTargets';
 import {effectiveSheetAbility} from '../../../shared/spellExecution';
 import {spellCombatSupport} from '../../../shared/spellSupport';
 import {isCanonicalHasteProfile} from '../../../shared/spellExecution';
+import {isAllyTouchOrBuffSpell,isSelfCombatSpell} from '../../../shared/combatSpells';
 
 /** A sheet/catalog entry opens setup; only its final Cast button submits. */
 export function SpellCastControl({ability,caster,kind='pc',onMapRequest}:{ability:SheetAbility;caster:Character|Monster;kind?:TokenKind;onMapRequest?:()=>void}){
@@ -18,8 +19,8 @@ export function SpellCastControl({ability,caster,kind='pc',onMapRequest}:{abilit
  const spell=live.sheetAbilities.find(a=>a.id===ability.id)??ability;
  const cost=spellCastCost(live,spell),restriction=spellCastRestriction(spell);
  const execution=effectiveSheetAbility(spell,cost.level),manual=spellCombatSupport(spell)?.manualCastOnly;
- const allyTarget=!manual&&(isCanonicalHasteProfile(spell)||execution.roll?.kind==='heal'&&execution.roll.healTarget!=='self');
- const attackTarget=!manual&&!allyTarget&&!execution.summon&&!!execution.roll;
+ const allyTarget=!manual&&(isCanonicalHasteProfile(spell)||isAllyTouchOrBuffSpell(spell)||execution.roll?.kind==='heal'&&execution.roll.healTarget!=='self');
+ const attackTarget=!manual&&!allyTarget&&!isSelfCombatSpell(spell)&&!execution.summon&&!!execution.roll;
  const actor=snapshot?.tokens.find(t=>t.kind===kind&&t.refId===caster.id);
  const choices=snapshot&&actor?targetLists(snapshot,actor,showDead,showHealEnemies):{attack:[],heal:[]};
  const [target,setTarget]=useState(''),[ally,setAlly]=useState('');

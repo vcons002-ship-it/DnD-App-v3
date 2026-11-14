@@ -18,6 +18,7 @@ import { useStore } from '../state/socket';
 import { SelectedTokenPanel } from '../components/SelectedTokenPanel';
 import { SidePanel } from '../components/SidePanel';
 import { DicePanel } from '../components/DicePanel';
+import { NumberInput } from '../components/NumberInput';
 import { KillScoreboard } from '../components/KillScoreboard';
 import { BulkActionsPanel } from '../components/BulkActionsPanel';
 import { ConditionPopover } from '../components/ConditionPopover';
@@ -455,10 +456,10 @@ const DataCard = memo(function DataCard({
         )}
 
         <div className="data-dmg">
-          <input
-            type="number"
+          <NumberInput
             value={amount}
-            onChange={(e) => setAmount(Number(e.target.value))}
+            emptyFallback={1}
+            onValueChange={(n) => { if (n !== undefined) setAmount(n); }}
           />
           <button
             className="btn tiny red"

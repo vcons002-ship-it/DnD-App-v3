@@ -13,6 +13,7 @@ import { prioritizeResourceRows, resourceSigilPresentation } from '../../../shar
 import { useStore } from '../state/socket';
 import { ResourceSigil } from './ResourceSigil';
 import { ResourceGem, type ResourceGemMotion } from './ResourceGem';
+import { normalizeNumericDraft } from '../lib/numberInput';
 import type { ResourceLayout } from '../lib/usePlayerLayout';
 import { arcPoint, resourceArc, MAX_RESOURCE_RINGS, RESOURCE_SYMBOL_BASELINE_INSET, type OrbArc, type OrbGeometry } from '../../../shared/orbResourceLayout';
 import './orb-resource-dock.css';
@@ -158,7 +159,7 @@ function AdjustCounter({
             step="1"
             value={maximum}
             onChange={(e) => {
-              setMaximum(e.target.value);
+              setMaximum(normalizeNumericDraft(e.target.value, { allowNegative: false }));
               setMaxEdited(true);
             }}
           />
@@ -170,7 +171,7 @@ function AdjustCounter({
             min="0"
             step="1"
             value={remaining ?? String(left)}
-            onChange={(e) => setRemaining(e.target.value)}
+            onChange={(e) => setRemaining(normalizeNumericDraft(e.target.value, { allowNegative: false }))}
           />
         </label>
       </div>

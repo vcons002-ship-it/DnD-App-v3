@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Character } from '../../../shared/types';
 import { useStore } from '../state/socket';
+import { normalizeNumericDraft } from '../lib/numberInput';
 import './orb-resource-dock.css';
 
 /** The player's existing manual row-creation controls, hosted by their sheet. */
@@ -53,7 +54,7 @@ export function PlayerResourceRowEditor({ character }: { character: Character })
           : <label>Spell level<select value={name || 'L1'} onChange={(event) => setName(event.target.value)}>
             {Array.from({ length: 9 }, (_, index) => <option key={index} value={`L${index + 1}`}>Level {index + 1}</option>)}
           </select></label>}
-        <label>Maximum<input required type="number" min="0" step="1" value={maximum} onChange={(event) => setMaximum(event.target.value)} /></label>
+        <label>Maximum<input required type="number" min="0" step="1" value={maximum} onChange={(event) => setMaximum(normalizeNumericDraft(event.target.value, { allowNegative: false }))} /></label>
         {exists && <p role="status">This row already exists. Use its label to edit it.</p>}
         <button className="btn" disabled={exists || !newKey}>Add row</button>
         <p className="muted">No fixed row limit. Custom rows remain available from the orb's resource icon. Adding a row does not add new automation.</p>
