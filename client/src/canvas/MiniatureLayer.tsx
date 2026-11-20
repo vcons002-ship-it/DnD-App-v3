@@ -309,7 +309,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const previewMaterial = new MeshBasicMaterial({color: '#83aab6', transparent:true, opacity:.3,depthWrite:false,toneMapped:false});
   const clearPreview = () => {
     if(preview)scene.remove(preview.root);
-    preview=null;delete host.dataset.previewTokenId;delete host.dataset.previewDrawCalls;
+    preview=null;tokensDirty=true;delete host.dataset.previewTokenId;delete host.dataset.previewDrawCalls;
   };
   const abort = new AbortController();
   let props = initial,sourceProps=initial;
@@ -385,6 +385,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let paintedReducedMotion: boolean | undefined;
   let drawnCameraKey = '';
+  let tokensDirty = true;
   const currentCameraKey = () => `${view.x}:${view.y}:${view.scale}:${props.tiltDegrees}:${props.rotationDegrees ?? 0}:${props.width}:${props.height}`;
   let syncedScene: {tokens:Props['tokens'];preloadDefinitions:Props['preloadDefinitions'];environmentPreview:Props['environmentPreview'];spellImpacts:Props['spellImpacts'];spellFog:Props['spellFog'];preparedSpellImpacts:Props['preparedSpellImpacts'];spellColorOverlay:Props['spellColorOverlay'];spellMist:Props['spellMist'];personalVision:Props['personalVision'];rollBackground:Props['rollBackground'];rollBackgroundPrepared:Props['rollBackgroundPrepared'];graphics:Props['graphics'];width:number;height:number;pixelRatio:number;mapId:string|undefined}|null=null;
 
@@ -516,6 +517,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       lastPaint = now;drawnCameraKey = currentCameraKey();
       const seconds = (now - started) / 1000;
       host.dataset.mirrorImageCount=String(props.tokens.reduce((n,t)=>n+(instances.has(t.id)?t.mirrorImages??0:0),0));
+      if(moves.size>0)tokensDirty=true;
       for(const [id,move] of moves)if(move.until<now)moves.delete(id);
       for (const token of props.tokens) {
         const instance = instances.get(token.id);
@@ -525,7 +527,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const position = {...(moves.get(token.id) ?? token),...props.visualPosition?.(token.id),...(preview?.id===token.id?{facing:preview.root.rotation.y}:{})};
         const wasVisible = instance.root.visible;
         instance.root.visible = props.isVisibleAt?.(token.id, position.x, position.y) ?? true;
-        if (battlefield && (wasVisible !== instance.root.visible || instance.root.position.x !== position.x || instance.root.position.z !== position.y || instance.root.rotation.y !== (position.facing ?? 0) || (animated && instance.shadowAnimated))) renderer.shadowMap.needsUpdate = true;
+        const tokenMoved = wasVisible !== instance.root.visible || instance.root.position.x !== position.x || instance.root.position.z !== position.y || instance.root.rotation.y !== (position.facing ?? 0);
+        if (tokenMoved) tokensDirty = true;
+        if (battlefield && (tokenMoved || (animated && instance.shadowAnimated))) renderer.shadowMap.needsUpdate = true;
         instance.root.position.set(position.x, 0, position.y);
         instance.root.rotation.y = position.facing ?? 0;
         instance.updateTransform();
@@ -578,29 +582,34 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       // Full illumination remains the default; the overlay is a diagnostic comparison.
       battlefield?.lighting.setTransient(props.spellColorOverlay?[]:impactLights);
       spellColor.draw(props.spellColorOverlay?impactLights:[],view,props.tiltDegrees,props.rotationDegrees??0,props.width,props.height);
-      battlefield?.setTokens(props.tokens.map(token => {
-        const instance=instances.get(token.id);
-        const x=instance?.root.position.x??token.x,y=instance?.root.position.z??token.y;
-        const body=instance?.mistBody?mistBodyInMap(instance.mistBody,x,y,instance.root.rotation.y,instance.root.scale.x):undefined;
-        return {id:token.id,x,y,diameter:token.diameter,body,visible:!!instance?.root.visible && !token.hidden && !token.sharedSightOnly};
-      }));
+      if (tokensDirty) {
+        tokensDirty = false;
+        battlefield?.setTokens(props.tokens.map(token => {
+          const instance=instances.get(token.id);
+          const x=instance?.root.position.x??token.x,y=instance?.root.position.z??token.y;
+          const body=instance?.mistBody?mistBodyInMap(instance.mistBody,x,y,instance.root.rotation.y,instance.root.scale.x):undefined;
+          return {id:token.id,x,y,diameter:token.diameter,body,visible:!!instance?.root.visible && !token.hidden && !token.sharedSightOnly};
+        }));
+        if(battlefield){
+          const ppf=props.environmentPreview?.pixelsPerFoot??12.8;
+          const carriers=new Map((props.environmentPreview?.carriedLanterns??[]).map(t=>[t.id,t]));
+          for(const token of props.tokens)if(token.carriedLantern&&!token.hidden)carriers.set(token.id,{...token,facing:token.facing??0});
+          battlefield.lighting.setCarried([...carriers.values()].flatMap(token=>{
+            const instance=instances.get(token.id),move=moves.get(token.id);
+            const x=instance?.root.position.x??move?.x??token.x,y=instance?.root.position.z??move?.y??token.y;
+            if(!(props.isVisibleAt?.(token.id,x,y)??true))return [];
+            if(instance){
+              const belt=instance.root.localToWorld(instance.lanternAnchor.clone()),facing=instance.root.rotation.y;
+              return [{id:token.id,x,y,fixtureX:belt.x-Math.cos(facing)*ppf*.34+Math.sin(facing)*ppf*.08,fixtureY:belt.z+Math.sin(facing)*ppf*.34+Math.cos(facing)*ppf*.08,height:ppf*CARRIED_LIGHT_HEIGHT_FT,fixtureHeight:belt.y-ppf*.52,facing}];
+            }
+            const facing=move?.facing??token.facing,dx=-token.diameter*.30,dz=token.diameter*.10;
+            return [{id:token.id,x,y,fixtureX:x+dx*Math.cos(facing)+dz*Math.sin(facing),fixtureY:y-dx*Math.sin(facing)+dz*Math.cos(facing),height:ppf*CARRIED_LIGHT_HEIGHT_FT,fixtureHeight:ppf*2.8,facing}];
+          }));
+        }
+      }
       if(battlefield){
         const disturbMist=props.spellMist!==false&&spellMistEnabled(props.graphics?.resolved,!!props.environmentPreview?.mist,props.environmentPreview?.mistInteraction!==false,reducedMotion.matches);
         battlefield.setSpellMist(disturbMist?spellImpacts.mistImpulses(now,seconds,props.environmentPreview?.pixelsPerFoot??12.8):[],disturbMist);
-        const ppf=props.environmentPreview?.pixelsPerFoot??12.8;
-        const carriers=new Map((props.environmentPreview?.carriedLanterns??[]).map(t=>[t.id,t]));
-        for(const token of props.tokens)if(token.carriedLantern&&!token.hidden)carriers.set(token.id,{...token,facing:token.facing??0});
-        battlefield.lighting.setCarried([...carriers.values()].flatMap(token=>{
-          const instance=instances.get(token.id),move=moves.get(token.id);
-          const x=instance?.root.position.x??move?.x??token.x,y=instance?.root.position.z??move?.y??token.y;
-          if(!(props.isVisibleAt?.(token.id,x,y)??true))return [];
-          if(instance){
-            const belt=instance.root.localToWorld(instance.lanternAnchor.clone()),facing=instance.root.rotation.y;
-            return [{id:token.id,x,y,fixtureX:belt.x-Math.cos(facing)*ppf*.34+Math.sin(facing)*ppf*.08,fixtureY:belt.z+Math.sin(facing)*ppf*.34+Math.cos(facing)*ppf*.08,height:ppf*CARRIED_LIGHT_HEIGHT_FT,fixtureHeight:belt.y-ppf*.52,facing}];
-          }
-          const facing=move?.facing??token.facing,dx=-token.diameter*.30,dz=token.diameter*.10;
-          return [{id:token.id,x,y,fixtureX:x+dx*Math.cos(facing)+dz*Math.sin(facing),fixtureY:y-dx*Math.sin(facing)+dz*Math.cos(facing),height:ppf*CARRIED_LIGHT_HEIGHT_FT,fixtureHeight:ppf*2.8,facing}];
-        }));
         battlefield.tick(reducedMotion.matches?0:seconds);
         props.onVisionLights?.(battlefield.lighting.lights);
       }
@@ -846,6 +855,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     if(preview?.id===id)clearPreview();cancelLoadingTask(`miniature:${id}`);cancelLoadingTask(`lod:${id}`);
     const instance = instances.get(id);
     if (!instance) return;
+    tokensDirty = true;
     disposeInstance(instance);
     instances.delete(id);
     bodySlots.delete(id);
@@ -1017,7 +1027,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       if(old.modelId===instance.modelId&&allowed.includes(old.url))preparedInstances.set(token.id,old);
       else disposeInstance(old);
     }
-    instances.set(token.id,instance);place(token,instance);scene.add(instance.root);
+    instances.set(token.id,instance);place(token,instance);scene.add(instance.root);tokensDirty=true;
     host.dataset.lodSwapCount=String(Number(host.dataset.lodSwapCount??0)+1);
     if(battlefield)renderer.shadowMap.needsUpdate=true;
     invalidate();
@@ -1072,6 +1082,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       return;
     }
     syncedScene = { tokens: next.tokens, preloadDefinitions: next.preloadDefinitions, environmentPreview: next.environmentPreview, spellImpacts: next.spellImpacts, spellFog: next.spellFog, preparedSpellImpacts: next.preparedSpellImpacts, spellColorOverlay: next.spellColorOverlay, spellMist: next.spellMist, personalVision: next.personalVision, rollBackground: next.rollBackground, rollBackgroundPrepared: next.rollBackgroundPrepared, graphics: next.graphics, width: next.width, height: next.height, pixelRatio: nextPixelRatio, mapId: nextMapId };
+    tokensDirty = true;
     if (disposed || failed) return;
     batches.restore();
     sourceProps=next;
@@ -1436,12 +1447,14 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       preview!.root.position.set(point.x,0,point.y);
       preview!.root.rotation.y=point.facing;
       preview!.root.visible=props.isVisibleAt?.(id,point.x,point.y)??true;
+      tokensDirty=true;
       invalidate();
     },
     moveToken(id, x, y, finished, facing) {
       if (disposed) return;
       const token = tokenById.get(id)??props.environmentPreview?.carriedLanterns?.find(t=>t.id===id);
       if (!token) return;
+      tokensDirty=true;
       if(finished)scheduleLod();
       if(finished && x===token.x && y===token.y && (facing===undefined || facing===token.facing)){
         moves.delete(id);invalidate();return;

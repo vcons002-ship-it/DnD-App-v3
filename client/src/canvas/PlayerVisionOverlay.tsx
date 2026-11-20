@@ -42,7 +42,9 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
  const wallsCache=useRef<{walls:PlayerVision['walls'];key:string}>({walls:undefined,key:'[]'});
  const polygonCache=useRef(new Map<string,{key:string;points:WallPoint[]}>());
  const projectedPolygons=useRef(new WeakMap<WallPoint[],{camera:string;path:string}>());
+ const worldPolygons=useRef(new WeakMap<WallPoint[],string>());
  const circlePaths=useRef(new Map<string,{key:string;path:string}>());
+ const worldCirclePaths=useRef(new Map<string,{key:string;path:string}>());
  const id=useId().replace(/:/g,'');
  const lightId=`vision-lights-${id}`,shadeId=`vision-shade-${id}`,nearId=`vision-near-${id}`,coverId=`vision-cover-${id}`;
  const flashId=`vision-visible-flash-${id}`;
@@ -115,6 +117,20 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    const result=poly.length?'M'+poly.map(p=>`${(width/2+p.x/p.w).toFixed(2)},${(height/2+p.y/p.w).toFixed(2)}`).join('L')+'Z':'';
    projectedPolygons.current.set(vertices,{camera:projectionKey,path:result});return result;
   };
+  const worldProject=(vertices:WallPoint[])=>{
+   const cached=worldPolygons.current.get(vertices);
+   if(cached!==undefined)return cached;
+   if(!vertices.length){worldPolygons.current.set(vertices,'');return '';}
+   let result='M';
+   for(let i=0;i<vertices.length;i++){
+    const v=vertices[i];
+    if(i>0)result+='L';
+    result+=`${v.x.toFixed(2)},${v.y.toFixed(2)}`;
+   }
+   result+='Z';
+   worldPolygons.current.set(vertices,result);
+   return result;
+  };
   const livePoint=(p:{id:string;x:number;y:number})=>state.current.presentation?.position(p.id)??live.current.get(p.id)??p;
   const path=(point:{id:string;x:number;y:number;beam?:LightBeam},radius:number,actual=false,occlude=false)=>{
    const p=actual?point:livePoint(point);
@@ -124,14 +140,37 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    const result=project(point.beam?lightBeamOutline(point.beam,radius):circleVertices.map(v=>({x:p.x+v.x*radius,y:p.y+v.y*radius})));
    circlePaths.current.set(slot,{key,path:result});return result;
   };
+  const worldPath=(point:{id:string;x:number;y:number;beam?:LightBeam},radius:number,actual=false,occlude=false)=>{
+   const p=actual?point:livePoint(point);
+   if(occlude)return worldProject(polygon({...p,id:point.id},radius));
+   const slot=point.id+':'+radius,key=[p.x,p.y,point.beam?`${point.beam.ax},${point.beam.ay},${point.beam.bx},${point.beam.by}`:''].join(':');activeKeys.add('wcircle:'+slot);
+   const cached=worldCirclePaths.current.get(slot);if(cached?.key===key)return cached.path;
+   const result=worldProject(point.beam?lightBeamOutline(point.beam,radius):circleVertices.map(v=>({x:p.x+v.x*radius,y:p.y+v.y*radius})));
+   worldCirclePaths.current.set(slot,{key,path:result});return result;
+  };
+  const worldTransform=`translate(${view.x} ${view.y}) scale(${view.scale})`;
+  const setWorldTransform=(node:SVGElement|null,enabled:boolean)=>{
+   if(!node)return;
+   if(enabled){
+    if(node.getAttribute('transform')!==worldTransform)node.setAttribute('transform',worldTransform);
+   }else if(node.hasAttribute('transform')){
+    node.removeAttribute('transform');
+   }
+  };
   const sourceLights=renderedLights.current??vision.lights;
   const positioned=(l:VisionLight)=>l.transient?l:stabilizeLight({...l,...livePoint(l)});
   // Separate retained nodes keep spell flashes from rebuilding sight, history,
   // ordinary attenuation bands, or the GPU terrain cover on every frame.
   ordinaryMask.current??=createVisionLightMask(lightPaths.current,lightClips.current,`vision-lamp-${id}`);
   if(spellPaths.current)spellMask.current??=createVisionLightMask(spellPaths.current,lightClips.current,`vision-spell-${id}`);
-  const projection={key:projectionKey,wallsKey,occluded:!!vision.walls?.length,ellipse:lightEllipse,
-   circle:(l:VisionLight,r:number)=>path(l,r,true),clip:(l:VisionLight)=>path(l,SIGHT_EXTENT,true,true)};
+  setWorldTransform(lightPaths.current,orthoUnrotated);
+  setWorldTransform(spellPaths.current,orthoUnrotated);
+  const worldEllipse=(cx:number,cy:number,r:number)=>({cx,cy,rx:r,ry:r,rotation:0});
+  const projection=orthoUnrotated
+   ?{key:'world',wallsKey,occluded:!!vision.walls?.length,ellipse:worldEllipse,
+     circle:(l:VisionLight,r:number)=>worldPath(l,r,true),clip:(l:VisionLight)=>worldPath(l,SIGHT_EXTENT,true,true)}
+   :{key:projectionKey,wallsKey,occluded:!!vision.walls?.length,ellipse:lightEllipse,
+     circle:(l:VisionLight,r:number)=>path(l,r,true),clip:(l:VisionLight)=>path(l,SIGHT_EXTENT,true,true)};
   prepareProjection.current=projection;
   const spellLights=sourceLights.filter(l=>l.transient&&state.current.spellLighting!==false);if(spellLights.length||(spellMask.current?.stats.lights??0)>0)spellMask.current?.sync(spellLights.map(positioned),projection);
   const finish=()=>{if(root.current){
@@ -175,18 +214,24 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
   }
   const sightD=vision.origins.map(o=>path(o,SIGHT_EXTENT,false,wallFog));
   setMarkup(sightPaths.current,sightD.map(d=>`<path d="${d}"/>`).join(''));
+  setWorldTransform(originPaths.current,orthoUnrotated);
   const circles=vision.origins.map((o,i)=>{
-   const d=!vision.heavy&&(wallFog&&!!vision.walls?.length===wallFog)?sightD[i]:path(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length);
+   const useSight=!vision.heavy&&(wallFog&&!!vision.walls?.length===wallFog);
+   const d=orthoUnrotated
+    ?(useSight?worldPath(o,SIGHT_EXTENT,false,wallFog):worldPath(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length))
+    :(useSight?sightD[i]:path(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length));
    return `<path fill="black" d="${d}"/>`;
   }).join('');
-  setMarkup(nearPaths.current,!vision.daylight&&!vision.heavy?vision.origins.map(o=>`<path d="${path(o,vision.radius,false,wallFog)}"/>`).join(''):'');
+  setWorldTransform(nearPaths.current,orthoUnrotated);
+  setMarkup(nearPaths.current,!vision.daylight&&!vision.heavy?vision.origins.map(o=>`<path d="${orthoUnrotated?worldPath(o,vision.radius,false,wallFog):path(o,vision.radius,false,wallFog)}"/>`).join(''):'');
   // Ordinary lanterns keep steady nominal vision geometry while the 3D renderer
   // and cosmetic spell-light bands animate independently.
   ordinaryMask.current.sync(ordinaryLights,projection);
   // Keep the SVG mask in the DOM and share light geometry between both masks.
   // Encoding/decoding two large SVG image URLs per frame caused mobile stalls.
   setMarkup(originPaths.current,circles);
-  setMarkup(retainedRange.current,vision.heavy?vision.origins.map(o=>`<path fill="white" d="${path(o,vision.radius)}"/>`).join(''):`<rect width="${width}" height="${height}" fill="white"/>`);
+  setWorldTransform(retainedRange.current,orthoUnrotated&&vision.heavy);
+  setMarkup(retainedRange.current,vision.heavy?vision.origins.map(o=>`<path fill="white" d="${orthoUnrotated?worldPath(o,vision.radius):path(o,vision.radius)}"/>`).join(''):`<rect width="${width}" height="${height}" fill="white"/>`);
   const originPolygon=(o:{id:string;x:number;y:number},radius:number)=>{
    const p=livePoint(o);
    return wallFog?polygon({...p,id:o.id},radius):circleVertices.map(v=>({x:p.x+v.x*radius,y:p.y+v.y*radius}));
@@ -200,6 +245,7 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    lights:ordinaryLights.map(source=>({source,polygon:polygon(source,SIGHT_EXTENT)}))};
   for(const slot of polygonCache.current.keys())if(!activeKeys.has(slot))polygonCache.current.delete(slot);}
   for(const slot of circlePaths.current.keys())if(!activeKeys.has('circle:'+slot))circlePaths.current.delete(slot);
+  for(const slot of worldCirclePaths.current.keys())if(!activeKeys.has('wcircle:'+slot))worldCirclePaths.current.delete(slot);
   // Cosmetic flashes restore color only inside already-visible terrain. They
   // never enter this cover or authorize/persist exploration. A flashing area
   // spell's reach joins the GPU cover alone, inside sight (see SpellFlash).

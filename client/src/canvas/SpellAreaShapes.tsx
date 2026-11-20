@@ -6,7 +6,9 @@ import { areaOrigin, areaPolygon, type SpellArea, type SpellAreaPlacement } from
 import { tokenRadiusPx, visionLit, visionShowsAffinity, type PlayerVision } from '../../../shared/playerVision';
 import { useLegacyMode } from '../lib/useEnvironmentQuality';
 import { useMapAnimation } from '../lib/useMapAnimation';
+import { computeTetherPillPlacement, type TetherObstacleToken } from '../lib/tetherPillPlacement';
 import { useStore } from '../state/socket';
+import { groundYScale } from './miniatureProjection';
 
 export type TargetAffinity = 'enemy' | 'neutral' | 'friendly' | 'unknown';
 
@@ -216,6 +218,44 @@ type RayToken = {
   miniatureWidthFt?: number;
 };
 
+function buildTetherObstacles(
+  caster: { id?: string; x: number; y: number; widthFt: number },
+  targets: readonly { token: RayToken }[],
+  obstacles: readonly RayToken[] | undefined,
+  getPosition?: (tokenId: string) => { x: number; y: number } | undefined,
+  getBaseWidthFt?: (token: RayToken) => number,
+  is3dToken?: (tokenId: string) => boolean,
+): TetherObstacleToken[] {
+  const seen = new Set<string>();
+  const out: TetherObstacleToken[] = [];
+  const push = (tok: { id?: string; x: number; y: number; widthFt: number }, rayTok?: RayToken) => {
+    const key = tok.id ?? '__caster__';
+    if (seen.has(key)) return;
+    seen.add(key);
+    const pos = tok.id ? getPosition?.(tok.id) : undefined;
+    const baseWidthFt = rayTok && getBaseWidthFt ? getBaseWidthFt(rayTok) : tok.widthFt;
+    out.push({
+      id: key,
+      x: pos ? pos.x : tok.x,
+      y: pos ? pos.y : tok.y,
+      baseWidthFt,
+      is3d: tok.id ? !!is3dToken?.(tok.id) : false,
+    });
+  };
+  push(caster, caster.id ? (caster as RayToken) : undefined);
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i].token;
+    push(t, t);
+  }
+  if (obstacles) {
+    for (let i = 0; i < obstacles.length; i++) {
+      const o = obstacles[i];
+      push(o, o);
+    }
+  }
+  return out;
+}
+
 export function SpellRayTargetShapes({
   caster,
   targets,
@@ -232,6 +272,9 @@ export function SpellRayTargetShapes({
   mapScale,
   formatMidLabel,
   distinct,
+  obstacles,
+  tiltDegrees = 0,
+  rotationDegrees = 0,
 }: {
   caster: { id?: string; x: number; y: number; widthFt: number; kind?: string; refId?: string; miniatureWidthFt?: number };
   targets: {
@@ -255,6 +298,9 @@ export function SpellRayTargetShapes({
   mapScale?: { feetPerSquare: number; gridSizePx: number } | null;
   formatMidLabel?: (distFt: number) => { midLabel: string; outOfRange: boolean };
   distinct?: boolean;
+  obstacles?: readonly RayToken[];
+  tiltDegrees?: number;
+  rotationDegrees?: number;
 }) {
   const groupRef = useRef<Konva.Group>(null);
   const legacyMode = useLegacyMode();
@@ -278,6 +324,9 @@ export function SpellRayTargetShapes({
     legacyMode,
     reducedMotion,
     hasDragPreview,
+    obstacles,
+    tiltDegrees,
+    rotationDegrees,
   });
   latestRef.current = {
     caster,
@@ -295,6 +344,9 @@ export function SpellRayTargetShapes({
     legacyMode,
     reducedMotion,
     hasDragPreview,
+    obstacles,
+    tiltDegrees,
+    rotationDegrees,
   };
 
   const defaultPalette = affinityPalette(affinity ?? targets[0]?.affinity ?? 'enemy');
@@ -318,6 +370,8 @@ export function SpellRayTargetShapes({
       midPill: Konva.Group | null;
       midPillRect: Konva.Rect | null;
       midPillText: Konva.Text | null;
+      midPillLeader: Konva.Line | null;
+      prevOffsetUV: { du: number; dv: number } | null;
       sx: number;
       sy: number;
       cx: number;
@@ -365,6 +419,8 @@ export function SpellRayTargetShapes({
           midPill,
           midPillRect: midPill?.findOne<Konva.Rect>('.ray-mid-pill-bg') ?? null,
           midPillText: midPill?.findOne<Konva.Text>('.ray-mid-pill-text') ?? null,
+          midPillLeader: bGroup.findOne<Konva.Line>('.ray-mid-pill-leader') ?? null,
+          prevOffsetUV: null,
           sx: 0,
           sy: 0,
           cx: 0,
@@ -392,12 +448,25 @@ export function SpellRayTargetShapes({
       };
     });
 
+    let lastFrameScale = NaN;
+    let lastFramePpf = NaN;
+    let lastFrameTilt = NaN;
+    let lastFrameRot = NaN;
+    let lastFrameObstacles: readonly RayToken[] | undefined;
+    let lastObsXs: number[] = [];
+    let lastObsYs: number[] = [];
+
     const hasLiveOverride = () => {
-      const { caster: curCaster, targets: curTargets, getPosition: curGetPos, hasDragPreview: curDrag } = latestRef.current;
+      const { caster: curCaster, targets: curTargets, obstacles: curObstacles, getPosition: curGetPos, hasDragPreview: curDrag } = latestRef.current;
       if (curDrag) return true;
       if (curCaster.id && curGetPos?.(curCaster.id)) return true;
       for (let i = 0; i < curTargets.length; i++) {
         if (curGetPos?.(curTargets[i].token.id)) return true;
+      }
+      if (hasPill && curObstacles && curGetPos) {
+        for (let i = 0; i < curObstacles.length; i++) {
+          if (curGetPos(curObstacles[i].id)) return true;
+        }
       }
       return false;
     };
@@ -418,7 +487,63 @@ export function SpellRayTargetShapes({
         formatMidLabel: curFormatMidLabel,
         legacyMode: curLegacy,
         reducedMotion: curReduced,
+        obstacles: curObstacles,
+        tiltDegrees: curTilt,
+        rotationDegrees: curRotation,
       } = latestRef.current;
+      const effTilt = curTilt ?? 0;
+      const effRot = curRotation ?? 0;
+      const invSy = 1 / Math.max(0.25, groundYScale(effTilt));
+      let obsChanged =
+        curScale !== lastFrameScale ||
+        curPpf !== lastFramePpf ||
+        effTilt !== lastFrameTilt ||
+        effRot !== lastFrameRot ||
+        curObstacles !== lastFrameObstacles;
+      if (!obsChanged && hasPill && curObstacles && curGetPos) {
+        for (let oi = 0; oi < curObstacles.length; oi++) {
+          const o = curObstacles[oi];
+          const lp = curGetPos(o.id);
+          const lx = lp ? lp.x : o.x;
+          const ly = lp ? lp.y : o.y;
+          if (lx !== lastObsXs[oi] || ly !== lastObsYs[oi]) {
+            obsChanged = true;
+            break;
+          }
+        }
+      }
+      if (obsChanged) {
+        lastFrameScale = curScale;
+        lastFramePpf = curPpf;
+        lastFrameTilt = effTilt;
+        lastFrameRot = effRot;
+        lastFrameObstacles = curObstacles;
+        if (curObstacles) {
+          if (lastObsXs.length !== curObstacles.length) {
+            lastObsXs = new Array(curObstacles.length);
+            lastObsYs = new Array(curObstacles.length);
+          }
+          for (let oi = 0; oi < curObstacles.length; oi++) {
+            const o = curObstacles[oi];
+            const lp = curGetPos?.(o.id);
+            lastObsXs[oi] = lp ? lp.x : o.x;
+            lastObsYs[oi] = lp ? lp.y : o.y;
+          }
+        } else {
+          lastObsXs = [];
+          lastObsYs = [];
+        }
+      }
+      let cachedFrameObstacles: TetherObstacleToken[] | null = null;
+      const getFrameObstacles = () =>
+        (cachedFrameObstacles ??= buildTetherObstacles(
+          curCaster,
+          curTargets,
+          curObstacles,
+          curGetPos,
+          curGetBaseWidth,
+          curIs3d,
+        ));
       const sec = now / 1000;
       const cPos = (curCaster.id ? curGetPos?.(curCaster.id) : undefined) ?? curCaster;
       const cBaseWidthFt = curCaster.id
@@ -572,9 +697,45 @@ export function SpellRayTargetShapes({
                 beam.midPillText.fill(effOut ? '#ffb3a3' : tPalette.spark);
               }
             }
-            if (geomChanged || styleChanged) {
-              const midPt = evalQuadraticBezier(beam.sx, beam.sy, beam.cx, beam.cy, beam.ex, beam.ey, 0.5);
-              beam.midPill.position({ x: midPt.x - pillW / 2, y: midPt.y - pillH / 2 });
+            if (geomChanged || styleChanged || obsChanged) {
+              const placement = computeTetherPillPlacement({
+                curve: {
+                  sx: beam.sx,
+                  sy: beam.sy,
+                  cx: beam.cx,
+                  cy: beam.cy,
+                  ex: beam.ex,
+                  ey: beam.ey,
+                },
+                pillW,
+                pillH,
+                pxPerFoot: curPpf,
+                scale: curScale,
+                tiltDegrees: effTilt,
+                rotationDegrees: effRot,
+                obstacles: getFrameObstacles(),
+                prevOffsetUV: beam.prevOffsetUV,
+              });
+              beam.prevOffsetUV = placement.offsetUV;
+              beam.midPill.position({ x: placement.x, y: placement.y });
+              beam.midPill.offsetX(pillW / 2);
+              beam.midPill.offsetY(pillH / 2);
+              beam.midPill.rotation(-effRot);
+              beam.midPill.scaleY(invSy);
+              if (beam.midPillLeader) {
+                beam.midPillLeader.visible(placement.showLeader);
+                if (placement.showLeader) {
+                  beam.midPillLeader.points([
+                    placement.anchorX,
+                    placement.anchorY,
+                    placement.x,
+                    placement.y,
+                  ]);
+                  beam.midPillLeader.stroke(effOut ? '#e07b67' : tPalette.border);
+                  beam.midPillLeader.strokeWidth(1.15 / curScale);
+                  beam.midPillLeader.dash([3.5 / curScale, 3 / curScale]);
+                }
+              }
             }
           } else {
             beam.lastOutOfRange = effOut;
@@ -678,7 +839,7 @@ export function SpellRayTargetShapes({
     if (reducedMotion || legacyMode) {
       syncControllerRef.current?.syncOnce();
     }
-  }, [reducedMotion, legacyMode, caster.x, caster.y, targets, scale, pxPerFoot, midLabel, outOfRange]);
+  }, [reducedMotion, legacyMode, caster.x, caster.y, targets, obstacles, tiltDegrees, rotationDegrees, scale, pxPerFoot, midLabel, outOfRange]);
 
   const cPos = (caster.id ? getPosition?.(caster.id) : undefined) ?? caster;
   const cBaseWidthFt = caster.id ? (getBaseWidthFt?.({ ...caster, id: caster.id }) ?? caster.widthFt) : caster.widthFt;
@@ -687,6 +848,10 @@ export function SpellRayTargetShapes({
   const arrowWing = 4.6 / scale;
   const travelLen = 7.5 / scale;
   const travelWing = 3.8 / scale;
+  const invSy = 1 / Math.max(0.25, groundYScale(tiltDegrees));
+  const initialObstacles = hasPill
+    ? buildTetherObstacles(caster, targets, obstacles, getPosition, getBaseWidthFt, is3dToken)
+    : [];
 
   return (
     <Group ref={groupRef} name="spell-ray-targets" listening={false}>
@@ -846,38 +1011,63 @@ export function SpellRayTargetShapes({
                     />
                   </Group>
                   {renderPill && k === 0 && (() => {
-                    const midPt = evalQuadraticBezier(sx, sy, cx, cy, ex, ey, 0.5);
                     const pillW = Math.max(44, renderPill.midLabel.length * 7.1 + 14) / scale;
                     const pillH = 19 / scale;
+                    const placement = computeTetherPillPlacement({
+                      curve: { sx, sy, cx, cy, ex, ey },
+                      pillW,
+                      pillH,
+                      pxPerFoot,
+                      scale,
+                      tiltDegrees,
+                      rotationDegrees,
+                      obstacles: initialObstacles,
+                    });
                     return (
-                      <Group
-                        name="ray-mid-pill"
-                        x={midPt.x - pillW / 2}
-                        y={midPt.y - pillH / 2}
-                        pillW={pillW}
-                        pillH={pillH}
-                      >
-                        <Rect
-                          name="ray-mid-pill-bg"
-                          width={pillW}
-                          height={pillH}
-                          fill="rgba(16, 18, 25, 0.88)"
+                      <>
+                        <Line
+                          name="ray-mid-pill-leader"
+                          visible={placement.showLeader}
+                          points={[placement.anchorX, placement.anchorY, placement.x, placement.y]}
                           stroke={effOutOfRange ? '#e07b67' : tPalette.border}
-                          strokeWidth={1.2 / scale}
-                          cornerRadius={pillH / 2}
+                          strokeWidth={1.15 / scale}
+                          dash={[3.5 / scale, 3 / scale]}
+                          opacity={0.78}
+                          lineCap="round"
                         />
-                        <Text
-                          name="ray-mid-pill-text"
-                          width={pillW}
-                          height={pillH}
-                          align="center"
-                          verticalAlign="middle"
-                          text={renderPill.midLabel}
-                          fill={effOutOfRange ? '#ffb3a3' : tPalette.spark}
-                          fontStyle="bold"
-                          fontSize={11 / scale}
-                        />
-                      </Group>
+                        <Group
+                          name="ray-mid-pill"
+                          x={placement.x}
+                          y={placement.y}
+                          offsetX={pillW / 2}
+                          offsetY={pillH / 2}
+                          rotation={-rotationDegrees}
+                          scaleY={invSy}
+                          pillW={pillW}
+                          pillH={pillH}
+                        >
+                          <Rect
+                            name="ray-mid-pill-bg"
+                            width={pillW}
+                            height={pillH}
+                            fill="rgba(16, 18, 25, 0.88)"
+                            stroke={effOutOfRange ? '#e07b67' : tPalette.border}
+                            strokeWidth={1.2 / scale}
+                            cornerRadius={pillH / 2}
+                          />
+                          <Text
+                            name="ray-mid-pill-text"
+                            width={pillW}
+                            height={pillH}
+                            align="center"
+                            verticalAlign="middle"
+                            text={renderPill.midLabel}
+                            fill={effOutOfRange ? '#ffb3a3' : tPalette.spark}
+                            fontStyle="bold"
+                            fontSize={11 / scale}
+                          />
+                        </Group>
+                      </>
                     );
                   })()}
                 </Group>

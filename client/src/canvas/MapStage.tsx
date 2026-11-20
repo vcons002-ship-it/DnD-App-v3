@@ -43,7 +43,7 @@ import { tokenVisibleAt } from '../../../shared/fog';
 import { monsterTint, monsterVariation } from '../../../shared/monsterAppearance';
 import { productionFamily } from '../../../shared/assetProduction';
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Stage, Layer, Group, Line, Rect, Circle, Text, Image as KonvaImage } from 'react-konva';
+import { Stage, Layer, Group, Line, Rect, Circle, Shape, Text, Image as KonvaImage } from 'react-konva';
 import { rollerColor } from '../lib/rollStyle';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import Konva from 'konva';
@@ -1052,23 +1052,40 @@ function MapStageInner({
   const viewRef = useRef(view), prevViewProp = useRef(view), pendingViewRef = useRef<View | null>(null);
   if (prevViewProp.current !== view) { prevViewProp.current = view; if (!pendingViewRef.current || (pendingViewRef.current.x === view.x && pendingViewRef.current.y === view.y && pendingViewRef.current.scale === view.scale)) { pendingViewRef.current = null; viewRef.current = view; } }
   const drawnViewRef = useRef({ x: view.x, y: view.y, scale: view.scale, sy: groundScaleY });
+  const suppressGroundHudSyncRef = useRef(false);
+  const hitDirtyRef = useRef(false);
+  const zoomSettleTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const activePanLayerRef = useRef<Konva.Layer | null>(null);
+  const lastPanDrawnRef = useRef<{ layer: Konva.Layer; x: number; y: number; sx: number; sy: number } | null>(null);
+  const refreshCameraHitLayers = useStableCallback(() => {
+    for (const layer of [layerRef.current, legacyFootstepsLayerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
+      layer?.drawHit();
+    }
+    hitDirtyRef.current = false;
+  });
   const paintView = useStableCallback((nextView: View) => {
     pendingViewRef.current = nextView; viewRef.current = nextView;
     visionRef.current?.camera({ view: nextView });
     const prev = drawnViewRef.current;
     if (prev.x !== nextView.x || prev.y !== nextView.y || prev.scale !== nextView.scale || prev.sy !== groundScaleY) {
       drawnViewRef.current = { x: nextView.x, y: nextView.y, scale: nextView.scale, sy: groundScaleY };
-      for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
-        if (!layer) continue;
-        layer.position({ x: nextView.x, y: nextView.y });
-        layer.scale({ x: nextView.scale, y: nextView.scale * groundScaleY });
-        layer.draw();
+      suppressGroundHudSyncRef.current = true;
+      try {
+        for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
+          if (!layer) continue;
+          layer.position({ x: nextView.x, y: nextView.y });
+          layer.scale({ x: nextView.scale, y: nextView.scale * groundScaleY });
+          layer.draw();
+        }
+        if (legacyFootstepsLayerRef.current) {
+          legacyFootstepsLayerRef.current.position({ x: nextView.x, y: nextView.y });
+          legacyFootstepsLayerRef.current.scale({ x: nextView.scale, y: nextView.scale });
+          legacyFootstepsLayerRef.current.draw();
+        }
+      } finally {
+        suppressGroundHudSyncRef.current = false;
       }
-      if (legacyFootstepsLayerRef.current) {
-        legacyFootstepsLayerRef.current.position({ x: nextView.x, y: nextView.y });
-        legacyFootstepsLayerRef.current.scale({ x: nextView.scale, y: nextView.scale });
-        legacyFootstepsLayerRef.current.draw();
-      }
+      hitDirtyRef.current = false;
     }
     miniatureRef.current?.setView(nextView, true);
   });
@@ -1077,30 +1094,95 @@ function MapStageInner({
     if (prev.x === target.x && prev.y === target.y && prev.scale === target.scale && prev.sy === groundScaleY) return;
     drawnViewRef.current = { x: target.x, y: target.y, scale: target.scale, sy: groundScaleY };
     visionRef.current?.camera({ view: target });
-    for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
-      if (!layer) continue;
-      layer.position({ x: target.x, y: target.y });
-      layer.scale({ x: target.scale, y: target.scale * groundScaleY });
-      layer.draw();
+    suppressGroundHudSyncRef.current = true;
+    try {
+      for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
+        if (!layer) continue;
+        layer.position({ x: target.x, y: target.y });
+        layer.scale({ x: target.scale, y: target.scale * groundScaleY });
+        layer.draw();
+      }
+      if (legacyFootstepsLayerRef.current) {
+        legacyFootstepsLayerRef.current.position({ x: target.x, y: target.y });
+        legacyFootstepsLayerRef.current.scale({ x: target.scale, y: target.scale });
+        legacyFootstepsLayerRef.current.draw();
+      }
+    } finally {
+      suppressGroundHudSyncRef.current = false;
     }
-    if (legacyFootstepsLayerRef.current) {
-      legacyFootstepsLayerRef.current.position({ x: target.x, y: target.y });
-      legacyFootstepsLayerRef.current.scale({ x: target.scale, y: target.scale });
-      legacyFootstepsLayerRef.current.draw();
-    }
+    hitDirtyRef.current = false;
   }, [view, groundScaleY]);
   const paintPan = useStableCallback((position:Pt) => {
     const nextView = { ...viewRef.current, ...position };
     pendingViewRef.current = nextView; viewRef.current = nextView;
     drawnViewRef.current = { x: position.x, y: position.y, scale: nextView.scale, sy: groundScaleY };
     visionRef.current?.camera({ view: nextView });
-    for (const layer of [layerRef.current, legacyFootstepsLayerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
-      if (layer) { layer.position(position); layer.draw(); }
+    suppressGroundHudSyncRef.current = true;
+    try {
+      for (const layer of [layerRef.current, legacyFootstepsLayerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
+        if (!layer) continue;
+        const expectedSy = layer === legacyFootstepsLayerRef.current ? nextView.scale : nextView.scale * groundScaleY;
+        const drawn = lastPanDrawnRef.current;
+        if (drawn && drawn.layer === layer && drawn.x === position.x && drawn.y === position.y && drawn.sx === nextView.scale && drawn.sy === expectedSy) {
+          continue;
+        }
+        layer.position(position);
+        layer.drawScene();
+      }
+    } finally {
+      suppressGroundHudSyncRef.current = false;
+      lastPanDrawnRef.current = null;
+    }
+    hitDirtyRef.current = true;
+    miniatureRef.current?.setView(nextView);
+  });
+  const paintZoom = useStableCallback((nextView: View) => {
+    pendingViewRef.current = nextView; viewRef.current = nextView;
+    visionRef.current?.camera({ view: nextView });
+    const prev = drawnViewRef.current;
+    if (prev.x !== nextView.x || prev.y !== nextView.y || prev.scale !== nextView.scale || prev.sy !== groundScaleY) {
+      drawnViewRef.current = { x: nextView.x, y: nextView.y, scale: nextView.scale, sy: groundScaleY };
+      suppressGroundHudSyncRef.current = true;
+      try {
+        for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
+          if (!layer) continue;
+          layer.position({ x: nextView.x, y: nextView.y });
+          layer.scale({ x: nextView.scale, y: nextView.scale * groundScaleY });
+          layer.drawScene();
+        }
+        if (legacyFootstepsLayerRef.current) {
+          legacyFootstepsLayerRef.current.position({ x: nextView.x, y: nextView.y });
+          legacyFootstepsLayerRef.current.scale({ x: nextView.scale, y: nextView.scale });
+          legacyFootstepsLayerRef.current.drawScene();
+        }
+      } finally {
+        suppressGroundHudSyncRef.current = false;
+      }
+      hitDirtyRef.current = true;
     }
     miniatureRef.current?.setView(nextView);
   });
   const panFrames=useMemo(()=>createLatestFrame(paintPan,run=>requestBattlefieldFrame(run,'camera'),cancelBattlefieldFrame),[paintPan]);
-  useEffect(()=>()=>panFrames.cancel(),[panFrames,map?.id,legacy]);
+  const zoomFrames=useMemo(()=>createLatestFrame(paintZoom,run=>requestBattlefieldFrame(run,'camera'),cancelBattlefieldFrame),[paintZoom]);
+  const commitZoom = useStableCallback(() => {
+    clearTimeout(zoomSettleTimerRef.current);
+    zoomSettleTimerRef.current = undefined;
+    zoomFrames.flush();
+    if (hitDirtyRef.current) refreshCameraHitLayers();
+    setView(viewRef.current);
+  });
+  const flushZoomHit = useStableCallback(() => {
+    if (zoomSettleTimerRef.current !== undefined || hitDirtyRef.current) {
+      zoomFrames.flush();
+      if (hitDirtyRef.current) refreshCameraHitLayers();
+    }
+  });
+  useEffect(()=>()=>{
+    panFrames.cancel();
+    zoomFrames.cancel();
+    clearTimeout(zoomSettleTimerRef.current);
+    zoomSettleTimerRef.current = undefined;
+  },[panFrames,zoomFrames,map?.id,legacy]);
 
   // Flat tokens belong to the ground plane, beneath miniature geometry.
   // Only ready miniature HUDs and shared tools belong above WebGL. Konva
@@ -1132,7 +1214,7 @@ function MapStageInner({
         }
       }
     };
-    const syncOverlay = () => overlayLayer.batchDraw();
+    const syncOverlay = () => { if (!suppressGroundHudSyncRef.current) overlayLayer.batchDraw(); };
     overlayLayer.on('draw.groundVisionHud', paintVisionHud);
     groundLayer.on('draw.groundVisionHud', syncOverlay);
     overlayLayer.batchDraw();
@@ -1155,10 +1237,31 @@ function MapStageInner({
     projectionCanvases.current=canvases;
     const input=legacy?undefined:installPerspectiveInput(stage,size.w,size.h,tilt,rotation,()=>projectionState.current);
     const retainedLayers=retained?[groundTokenLayerRef.current,sharedTokenLayerRef.current,...(legacy?[]:[tokenLayerRef.current])].filter((l):l is Konva.Layer=>!!l).map(layer=>installRetainedTokenLayer(layer,canvases[perspectiveLayers.indexOf(layer)]?.buffer)):[];
+    const baseLayer = layerRef.current;
+    const origBaseDrawHit = baseLayer?.drawHit;
+    if (baseLayer && origBaseDrawHit) {
+      baseLayer.drawHit = function(canvas, top) {
+        if (Konva.isDragging()) return this;
+        return origBaseDrawHit.call(this, canvas, top);
+      };
+    }
+    const panDedupLayers = [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current].filter((l): l is Konva.Layer => !!l);
+    for (const layer of panDedupLayers) {
+      layer.on('draw.panDedup', () => {
+        if (Konva.isDragging() && layer === activePanLayerRef.current) {
+          lastPanDrawnRef.current = { layer, x: layer.x(), y: layer.y(), sx: layer.scaleX(), sy: layer.scaleY() };
+        }
+      });
+    }
     for (const layer of stage.getLayers()) layer.draw();
     // Dispose wrappers in reverse order: the retained paint delegates to the
     // perspective buffer, whose padding must remain valid until it is removed.
-    return () => {retainedLayers.forEach(dispose=>dispose());input?.();canvases.forEach(dispose=>dispose());projectionCanvases.current=[];};
+    return () => {
+      panDedupLayers.forEach(l => l.off('.panDedup'));
+      if (baseLayer && origBaseDrawHit) baseLayer.drawHit = origBaseDrawHit;
+      lastPanDrawnRef.current = null;
+      retainedLayers.forEach(dispose=>dispose());input?.();canvases.forEach(dispose=>dispose());projectionCanvases.current=[];
+    };
   }, [size.w, size.h, dprKey, konvaPixelRatio, legacy, retained, map?.id, map?.slidesUrl, map?.imagePath]);
 
   const selectionBox = useBoxSelection({
@@ -1354,6 +1457,8 @@ function MapStageInner({
     const touches = (e.evt as TouchEvent).touches;
     if (touches && touches.length >= 2) {
       e.evt.preventDefault();
+      clearTimeout(zoomSettleTimerRef.current);
+      zoomSettleTimerRef.current = undefined;
       pinchRef.current = pinchData(touches); panFrames.cancel(); for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current]) if (layer?.isDragging()) { layer.stopDrag(); layer.position({ x: viewRef.current.x, y: viewRef.current.y }); }
       setPinching(true);
       return;
@@ -1497,7 +1602,7 @@ function MapStageInner({
     if (touches && touches.length >= 2 && pinchRef.current) {
       e.evt.preventDefault();
       const next = pinchData(touches); panFrames.cancel(); for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current]) if (layer?.isDragging()) { layer.stopDrag(); layer.position({ x: viewRef.current.x, y: viewRef.current.y }); }
-      zoomAtPoint(next.dist / pinchRef.current.dist, next.cx, next.cy);
+      zoomAtPoint(next.dist / pinchRef.current.dist, next.cx, next.cy, false);
       pinchRef.current = next;
       return;
     }
@@ -1553,6 +1658,7 @@ function MapStageInner({
     clickStart.current = null; // a press that ends any other way isn't a click
     if (pinchRef.current) {
       pinchRef.current = null;
+      commitZoom();
       setPinching(false);
       return;
     }
@@ -1653,31 +1759,36 @@ function MapStageInner({
 
   // Zoom by `factor`, keeping the container point (px,py) stationary. Shared by
   // the wheel, the +/− buttons (center) and two-finger pinch (the midpoint).
-  const zoomAtPoint = (factor: number, px: number, py: number) => {
+  const zoomAtPoint = (factor: number, px: number, py: number, immediate = false) => {
     const cur = viewRef.current, maxS = Math.max(fit.scale * 20, 6), nextS = clamp(cur.scale * factor, fit.scale * 0.25, maxS);
     const nextView = { scale: nextS, x: px - ((px - cur.x) / cur.scale) * nextS, y: py - ((py - cur.y) / cur.scale) * nextS };
-    userAdjusted.current = true; paintView(nextView); setView(nextView); if (nextView) return;
-    setView((v) => {
-      // Max zoom: generous relative to fit, but ALSO a floor over native (1:1)
-      // pixels so you can get right in close even on a big high-res map (where
-      // fit.scale is tiny) — for the "feel of scale" of a vast space.
-      const maxScale = Math.max(fit.scale * 20, 6);
-      const newScale = clamp(v.scale * factor, fit.scale * 0.25, maxScale);
-      const mx = (px - v.x) / v.scale;
-      const my = (py - v.y) / v.scale; userAdjusted.current = true;
-  
-      return { scale: newScale, x: px - mx * newScale, y: py - my * newScale };
-    });
+    userAdjusted.current = true;
+    if (immediate) {
+      zoomFrames.cancel();
+      clearTimeout(zoomSettleTimerRef.current);
+      zoomSettleTimerRef.current = undefined;
+      hitDirtyRef.current = false;
+      paintView(nextView);
+      setView(nextView);
+      return;
+    }
+    viewRef.current = nextView;
+    pendingViewRef.current = nextView;
+    zoomFrames.push(nextView);
+    if (!pinchRef.current) {
+      clearTimeout(zoomSettleTimerRef.current);
+      zoomSettleTimerRef.current = setTimeout(commitZoom, 140);
+    }
   };
   // Button zoom: step in/out around the viewport center.
-  const zoomBy = (factor: number) => zoomAtPoint(factor, size.w / 2, size.h / 2);
+  const zoomBy = (factor: number) => zoomAtPoint(factor, size.w / 2, size.h / 2, true);
 
   const handleWheel = (e: KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
     const stage = e.target.getStage();
     const pointer = stage?.getPointerPosition();
     if (!pointer) return;
-    zoomAtPoint(e.evt.deltaY > 0 ? 1 / 1.1 : 1.1, pointer.x, pointer.y);
+    zoomAtPoint(e.evt.deltaY > 0 ? 1 / 1.1 : 1.1, pointer.x, pointer.y, false);
   };
 
   // Distance + midpoint (container coords) between the first two active touches.
@@ -1720,6 +1831,12 @@ function MapStageInner({
   const panning = !placingLight && !onPlaceAt && !fogActive && !measureActive && !pinching;
   const handleLayerDragMove = (e: KonvaEventObject<DragEvent>) => {
     if (e.target.getClassName() !== 'Layer' || pinchRef.current) return;
+    if (zoomSettleTimerRef.current !== undefined) {
+      clearTimeout(zoomSettleTimerRef.current);
+      zoomSettleTimerRef.current = undefined;
+      zoomFrames.cancel();
+    }
+    activePanLayerRef.current = e.target as unknown as Konva.Layer;
     const position={x:e.target.x(),y:e.target.y()};
     // Legacy's precomputed mask/terrain only need cheap DOM transforms here.
     // Keep them aligned immediately; defer the canvas redraws to one RAF.
@@ -1729,20 +1846,25 @@ function MapStageInner({
   const handleLayerDragEnd = (e: KonvaEventObject<DragEvent>) => {
     // dragend bubbles; only react to the layer itself panning, not token drags.
     if (e.target.getClassName() !== 'Layer' || pinchRef.current) return;
+    activePanLayerRef.current = null;
+    lastPanDrawnRef.current = null;
     panFrames.push({x:e.target.x(),y:e.target.y()});panFrames.flush();
     // Pan synchronizes several layers, while Konva's release paint refreshes
     // only the directly dragged layer. Retained hit maps skipped paints during
     // the drag, so refresh every synchronized layer before the next pointer
     // event. Their scene pixels are already current; only input needs repaint.
-    for (const layer of [layerRef.current, legacyFootstepsLayerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
-      layer?.drawHit();
-    } if (Math.hypot(e.target.x() - view.x, e.target.y() - view.y) > 0.5) { userAdjusted.current = true;
+    refreshCameraHitLayers();
+    if (Math.hypot(e.target.x() - view.x, e.target.y() - view.y) > 0.5) { userAdjusted.current = true;
     }
 
     setView((v) => ({ ...v, x: e.target.x(), y: e.target.y() }));
   };
 
   const resetView = () => {
+    zoomFrames.cancel();
+    clearTimeout(zoomSettleTimerRef.current);
+    zoomSettleTimerRef.current = undefined;
+    hitDirtyRef.current = false;
     paintView(fit);
     userAdjusted.current = false; pendingViewRef.current = null;
     setView(fit);
@@ -1759,7 +1881,10 @@ function MapStageInner({
       if(previous.tilt!==tilt){layer.position({x:nextView.x,y:nextView.y});layer.scale({x:nextView.scale,y:nextView.scale*groundYScale(tilt)});}
       const labels=layer.find('.token-upright-hud');
       for(const label of labels){label.rotation(-rotation);invalidateRetainedToken(label);}
-      if(previous.tilt!==tilt || labels.length)layer.draw();
+      const pills=layer.find('.ray-mid-pill');
+      const invSy=1/Math.max(0.25,groundYScale(tilt));
+      for(const pill of pills){pill.rotation(-rotation);pill.scaleY(invSy);}
+      if(previous.tilt!==tilt || labels.length || pills.length)layer.draw();
     }
     miniatureRef.current?.setProjection(tilt,rotation,nextView);
     visionRef.current?.camera({tilt,rotation,view:nextView});
@@ -1771,10 +1896,15 @@ function MapStageInner({
   };
   const animateView = (nextTilt: number, nextRotation: number) => {
     if(legacy)return;
-    cancelBattlefieldFrame(viewAnimation.current);userAdjusted.current=true;
-    const {tilt:startTilt,rotation:startRotation}=projectionState.current,startView=view;
+    cancelBattlefieldFrame(viewAnimation.current);
+    clearTimeout(zoomSettleTimerRef.current);
+    zoomSettleTimerRef.current = undefined;
+    zoomFrames.flush();
+    hitDirtyRef.current = false;
+    userAdjusted.current=true;
+    const {tilt:startTilt,rotation:startRotation}=projectionState.current,startView=viewRef.current;
     const targetRotation=startRotation+((nextRotation-startRotation+180)%360+360)%360-180;
-    const centerY=(size.h/2-view.y)/groundYScale(startTilt),started=performance.now();
+    const centerY=(size.h/2-startView.y)/groundYScale(startTilt),started=performance.now();
     const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const tick=(now:number)=>{
       const t=reduced?1:Math.min(1,(now-started)/450),ease=t*t*(3-2*t);
@@ -1797,8 +1927,9 @@ function MapStageInner({
     const point=stage?.getPointerPosition();
     if(point && stage?.getIntersection(point)?.findAncestor('.token',true))return false;
     event.preventDefault();event.stopPropagation();cancelBattlefieldFrame(viewAnimation.current);
+    clearTimeout(zoomSettleTimerRef.current);zoomSettleTimerRef.current=undefined;zoomFrames.flush();
     userAdjusted.current=true;setMenu(null);setHover(null);
-    rotationGesture.current={x:event.clientX,start:projectionState.current.rotation,angle:projectionState.current.rotation,pointerId:event.pointerId,frame:0,view};
+    rotationGesture.current={x:event.clientX,start:projectionState.current.rotation,angle:projectionState.current.rotation,pointerId:event.pointerId,frame:0,view:viewRef.current};
     event.currentTarget.setPointerCapture(event.pointerId);return true;
   };
   const rotateMove=(event:React.PointerEvent<HTMLDivElement>)=>{
@@ -1877,14 +2008,14 @@ function MapStageInner({
 
   return (
     <div className="stage-wrap" data-motion-stage={legacyMovement.playback?'playing':'2'} data-render-mode={legacy?'legacy':'standard'} data-retained-rendering={String(retained)} ref={containerRef} {...activeSelectionBox.handlers}
-      onPointerDownCapture={e=>{if(!rotateStart(e))activeSelectionBox.handlers.onPointerDownCapture(e);}}
+      onPointerDownCapture={e=>{flushZoomHit();if(!rotateStart(e))activeSelectionBox.handlers.onPointerDownCapture(e);}}
       onPointerMoveCapture={e=>{if(!rotateMove(e))activeSelectionBox.handlers.onPointerMoveCapture(e);}}
       onPointerUpCapture={e=>{if(!rotateEnd(e))activeSelectionBox.handlers.onPointerUpCapture(e);}}
       onPointerCancelCapture={e=>{if(!rotateEnd(e))activeSelectionBox.handlers.onPointerCancelCapture();}}
       onLostPointerCapture={e=>{if(!rotateEnd(e))activeSelectionBox.handlers.onLostPointerCapture();}}
       // Safari may retarget contextmenu to this wrapper while it owns pointer
       // capture. Cover that target too, preserving token context-menu bubbling.
-      onContextMenuCapture={e=>{const target=e.target;if(target instanceof Element&&(target===e.currentTarget||target.closest('.konvajs-content')||target instanceof HTMLCanvasElement))e.preventDefault();}}
+      onContextMenuCapture={e=>{flushZoomHit();const target=e.target;if(target instanceof Element&&(target===e.currentTarget||target.closest('.konvajs-content')||target instanceof HTMLCanvasElement))e.preventDefault();}}
       onDragStartCapture={e=>{if(e.target instanceof HTMLCanvasElement)e.preventDefault();}}>
       <MapLoadingBar />
       {activeSelectionBox.box && <div className="dm-selection-box" data-testid="dm-selection-box" aria-hidden="true"
@@ -1961,15 +2092,26 @@ function MapStageInner({
               {!image && tiles.length === 0 && (
                 <Rect width={imgW} height={imgH} fill="#2a2f3a" />
               )}
-              <Group ref={gridRef} name="battlefield-grid" listening={false}>{gridLines.map((pts, i) => (
-                <Line
-                  key={i}
-                  points={pts}
-                  stroke={gridHot ? '#ffffffcc' : '#ffffff5c'}
-                  strokeWidth={gridHot ? 1.5 : 1}
-                  listening={false}
-                />
-              ))}</Group>
+              <Group ref={gridRef} name="battlefield-grid" listening={false}>
+                {gridLines.length > 0 && (
+                  <Shape
+                    name="battlefield-grid-lines"
+                    listening={false}
+                    perfectDrawEnabled={false}
+                    stroke={gridHot ? '#ffffffcc' : '#ffffff5c'}
+                    strokeWidth={gridHot ? 1.5 : 1}
+                    sceneFunc={(ctx, shape) => {
+                      ctx.beginPath();
+                      for (let i = 0; i < gridLines.length; i++) {
+                        const pts = gridLines[i];
+                        ctx.moveTo(pts[0], pts[1]);
+                        ctx.lineTo(pts[2], pts[3]);
+                      }
+                      ctx.strokeShape(shape);
+                    }}
+                  />
+                )}
+              </Group>
               {/* Map fog: covered terrain. For players the cover is opaque and
                   EXACTLY the off-map backdrop colour (CANVAS_BG), so a covered
                   area is indistinguishable from empty space beyond the map — no
@@ -2218,7 +2360,7 @@ function MapStageInner({
               // Targeting is a UI overlay, never a source of terrain visibility.
               ref={layer=>{spellAreaLayerRef.current=layer;if(layer){const c=layer.getNativeCanvasElement();c.style.zIndex='6';c.style.pointerEvents='none';c.dataset.testid='spell-area-canvas';}}}>
               {map&&<SharedSpellAreas mapId={map.id} hideId={areaCast?areaSocketId:undefined} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare}/>}
-              {map&&<CombatTargetLine tokens={actionSnapshot.tokens} mapId={map.id} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare} getPosition={getLiveTokenPosition} getBaseWidthFt={getTokenBaseWidthFt} is3dToken={isMiniatureTokenReady}/>}
+              {map&&<CombatTargetLine tokens={actionSnapshot.tokens} mapId={map.id} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare} getPosition={getLiveTokenPosition} getBaseWidthFt={getTokenBaseWidthFt} is3dToken={isMiniatureTokenReady} isVisibleAt={tokenVisibleAtPosition} tiltDegrees={tiltDegrees} rotationDegrees={rotationDegrees}/>}
               {areaCast&&areaActor&&map&&<SpellAreaShapes spellName={areaCast.name} scale={view.scale} spec={areaCast.spec} placement={areaPreview} caster={areaActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} previewState="aiming" targets={areaTargets.filter(t=>!areaExcluded.includes(t.id)).map(t=>({...t,baseWidthFt:getTokenBaseWidthFt(t),affinity:resolveTargetAffinity(actionSnapshot.monsters,areaActor,t,{role:snapshot.role,vision:snapshot.playerVision,map:snapshot.map,affinityIds:legacyAffinity})}))}/>}
               {rayCast&&rayActor&&map&&<SpellRayTargetShapes caster={rayActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} rangeFt={rayCast.rangeFt} scale={view.scale} damageType={rayCast.damageType} spellName={rayCast.name} distinct={rayCast.distinct} affinity={rayCast.kind === 'allies' ? 'friendly' : 'enemy'} getPosition={getLiveTokenPosition} getBaseWidthFt={getTokenBaseWidthFt} is3dToken={isMiniatureTokenReady} targets={(() => {
                 const byId = new Map<string, { token: Token; count: number; tag: string; affinity: TargetAffinity }>();

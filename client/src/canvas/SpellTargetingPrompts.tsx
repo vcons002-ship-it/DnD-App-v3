@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect } from 'react';
+import { memo, useCallback, useEffect, useMemo } from 'react';
 import { tokenDistanceFt } from '../../../shared/distance';
 import type { StateSnapshot } from '../../../shared/types';
 import { formatTetherRangePill } from '../../../shared/weaponRange';
@@ -51,6 +51,9 @@ export const CombatTargetLine = memo(function CombatTargetLine({
   getPosition,
   getBaseWidthFt,
   is3dToken,
+  isVisibleAt,
+  tiltDegrees = 0,
+  rotationDegrees = 0,
 }: {
   tokens: StateSnapshot['tokens'];
   mapId: string;
@@ -59,6 +62,9 @@ export const CombatTargetLine = memo(function CombatTargetLine({
   getPosition?: (tokenId: string) => { x: number; y: number } | undefined;
   getBaseWidthFt?: (token: { id: string; widthFt: number; kind?: string; refId?: string; miniatureWidthFt?: number }) => number;
   is3dToken?: (tokenId: string) => boolean;
+  isVisibleAt?: (id: string, x: number, y: number) => boolean;
+  tiltDegrees?: number;
+  rotationDegrees?: number;
 }) {
   const storeSnapshot = useStore((s) => s.snapshot);
   const showTargetLine = useStore((s) => s.showTargetLine);
@@ -73,6 +79,40 @@ export const CombatTargetLine = memo(function CombatTargetLine({
     (distFt: number) => formatTetherRangePill(distFt, { hoveredWeapon, weaponsOnlyList }),
     [hoveredWeapon, weaponsOnlyList],
   );
+  const getEffectivePosition = useCallback(
+    (id: string) =>
+      getPosition?.(id) ??
+      (tokenDragPreview?.tokenId === id ? { x: tokenDragPreview.x, y: tokenDragPreview.y } : undefined),
+    [getPosition, tokenDragPreview],
+  );
+  const visibleObstacles = useMemo(() => {
+    if (!showTargetLine || rayCast || areaCast) return [];
+    const role = storeSnapshot?.role;
+    const doorIds = new Set<string>();
+    for (const wall of storeSnapshot?.map?.walls ?? []) {
+      if (wall.tokenId) doorIds.add(wall.tokenId);
+    }
+    return (storeSnapshot?.tokens ?? tokens).filter((t) => {
+      if (t.mapId !== mapId || t.partiallyRevealed || doorIds.has(t.id)) return false;
+      if (t.isHidden && role !== 'dm') return false;
+      if (isVisibleAt) {
+        const pos = getEffectivePosition(t.id) ?? t;
+        if (!isVisibleAt(t.id, pos.x, pos.y)) return false;
+      }
+      return true;
+    });
+  }, [
+    showTargetLine,
+    rayCast,
+    areaCast,
+    storeSnapshot?.role,
+    storeSnapshot?.map?.walls,
+    storeSnapshot?.tokens,
+    tokens,
+    mapId,
+    isVisibleAt,
+    getEffectivePosition,
+  ]);
   if (!showTargetLine || rayCast || areaCast) return null;
   const active = floatingMenuTarget ?? combatPanelTarget;
   if (!active || active.attackerTokenId === active.targetTokenId) return null;
@@ -88,12 +128,8 @@ export const CombatTargetLine = memo(function CombatTargetLine({
       (t) => t.id === active.targetTokenId && t.mapId === mapId && !t.sharedSightOnly && !t.partiallyRevealed,
     );
   if (!caster || !target) return null;
-  const casterLivePos =
-    (getPosition ? getPosition(caster.id) : undefined) ??
-    (tokenDragPreview?.tokenId === caster.id ? { x: tokenDragPreview.x, y: tokenDragPreview.y } : undefined);
-  const targetLivePos =
-    (getPosition ? getPosition(target.id) : undefined) ??
-    (tokenDragPreview?.tokenId === target.id ? { x: tokenDragPreview.x, y: tokenDragPreview.y } : undefined);
+  const casterLivePos = getEffectivePosition(caster.id);
+  const targetLivePos = getEffectivePosition(target.id);
   const affinityIds = storeSnapshot?.serverRendering?.enabled && storeSnapshot.legacyGeometry !== undefined ? new Set(storeSnapshot.legacyGeometry?.affinity ?? []) : undefined;
   const targetDisposition = resolveTargetAffinity(storeSnapshot?.monsters, caster, target, {
     role: storeSnapshot?.role,
@@ -112,9 +148,12 @@ export const CombatTargetLine = memo(function CombatTargetLine({
       scale={scale}
       showCount={false}
       affinity={targetDisposition}
-      getPosition={getPosition}
+      getPosition={getEffectivePosition}
       getBaseWidthFt={getBaseWidthFt}
       is3dToken={is3dToken}
+      obstacles={visibleObstacles}
+      tiltDegrees={tiltDegrees}
+      rotationDegrees={rotationDegrees}
       mapScale={storeSnapshot?.map}
       formatMidLabel={storeSnapshot?.map ? formatMidLabel : undefined}
       midLabel={
