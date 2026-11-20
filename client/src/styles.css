@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #16181d;
   --panel: #1f232b;
   --panel-2: #272c36;
@@ -79,6 +80,7 @@ input[type='number']::-webkit-outer-spin-button {
 }
 input[type='checkbox'], input[type='radio'] { width: auto; }
 select { max-width: 100%; }
+select option, select optgroup { background-color: var(--panel-2); color: var(--text); }
 /* Hover feedback on form controls (none before — felt unresponsive on desktop). */
 input:hover:not(:disabled),
 select:hover:not(:disabled),

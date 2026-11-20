@@ -1,6 +1,6 @@
 import {
   AlwaysStencilFunc, EqualStencilFunc, KeepStencilOp, ReplaceStencilOp,
-  BufferGeometry, CanvasTexture, CustomBlending, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, FramebufferTexture, Mesh, NearestFilter,
+  BufferGeometry, CanvasTexture, Color, CustomBlending, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, FramebufferTexture, Mesh, NearestFilter,
   MeshBasicMaterial, NoBlending, OrthographicCamera, PlaneGeometry, RGBAFormat, Scene,
   OneFactor, OneMinusSrcColorFactor, OneMinusSrcAlphaFactor, ShaderMaterial, ShapeUtils, Vector2, WebGLRenderTarget,
   Matrix4,Vector4,type Camera, type Texture, type WebGLRenderer,
@@ -53,20 +53,30 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
   const lamp = new ShaderMaterial({...blend,side:DoubleSide,depthTest:false,depthWrite:false,toneMapped:false,
     stencilWrite:true,stencilRef:1,stencilFunc:EqualStencilFunc,
     stencilFail:KeepStencilOp,stencilZFail:KeepStencilOp,stencilZPass:KeepStencilOp,
-    uniforms:{source:{value:new Vector4()},strength:{value:0}},
-    vertexShader:'varying vec2 world; void main(){world=position.xz;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+    vertexShader:'attribute vec4 lampSource;attribute float lampStrength;varying vec2 world;varying vec4 vLampSource;varying float vLampStrength;void main(){world=position.xz;vLampSource=lampSource;vLampStrength=lampStrength;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
     fragmentShader:`${lightFalloffGlsl}
-      uniform vec4 source;uniform float strength;varying vec2 world;
+      varying vec2 world;varying vec4 vLampSource;varying float vLampStrength;
       void main(){
         // Match the existing 48 nested SVG attenuation bands, including their
         // sampling offset, rather than changing light reach during optimization.
-        float d=length(world-source.xz),r=source.w;
+        float d=length(world-vLampSource.xz),r=vLampSource.w;
         float band=ceil(d*32./max(.001,r));
         float sampleDistance=max(0.,band*r/32.-r/64.);
-        float a=band>48.?0.:lightColorCoverage(lightIrradiance(length(vec2(sampleDistance,source.y)),r,strength));
+        float a=band>48.?0.:lightColorCoverage(lightIrradiance(length(vec2(sampleDistance,vLampSource.y)),r,vLampStrength));
         gl_FragColor=vec4(a,0.,0.,a);
       }`,
   });
+  const lampGeometry = new BufferGeometry();
+  const mergedLampsMesh = new Mesh(lampGeometry, lamp);
+  mergedLampsMesh.frustumCulled = false;
+  mergedLampsMesh.renderOrder = 3;
+  mergedLampsMesh.visible = false;
+  coverScene.add(mergedLampsMesh);
+  const lampTriCache = new WeakMap<WallPoint[], Float32Array>();
+  let lampVertCapacity = 0;
+  let lampPosAttr: Float32BufferAttribute | undefined;
+  let lampSourceAttr: Float32BufferAttribute | undefined;
+  let lampStrengthAttr: Float32BufferAttribute | undefined;
   // Flash reach, limited to sight like a lamp, at the glow's own falloff.
   const flashLamp = new ShaderMaterial({...blend,side:DoubleSide,depthTest:false,depthWrite:false,toneMapped:false,
     stencilWrite:true,stencilRef:1,stencilFunc:EqualStencilFunc,
@@ -200,26 +210,73 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
   };
   let updates=0;
   const exploredRings=new WeakMap<object,{outer:WallPoint[];holes:WallPoint[][]}>();
+  const coverClearColor = new Color();
   const sync=(next:VisionCoverFrame)=>{
     const live=new Set<string>();
-    const add=(id:string,points:WallPoint[],material:MeshBasicMaterial|ShaderMaterial,order:number,source?:VisionLight,holes?:WallPoint[][])=>{
+    const add=(id:string,points:WallPoint[],material:MeshBasicMaterial|ShaderMaterial,order:number,holes?:WallPoint[][])=>{
       if(points.length<3)return;live.add(id);let entry=entries.get(id);
-      if(!entry){const mesh=new Mesh(geometry(points,holes),source?material.clone():material);mesh.frustumCulled=false;mesh.renderOrder=order;coverScene.add(mesh);entry={mesh,points};entries.set(id,entry);}
+      if(!entry){const mesh=new Mesh(geometry(points,holes),material);mesh.frustumCulled=false;mesh.renderOrder=order;coverScene.add(mesh);entry={mesh,points};entries.set(id,entry);}
       else if(entry.points!==points){entry.mesh.geometry.dispose();entry.mesh.geometry=geometry(points,holes);entry.points=points;}
-      entry.mesh.renderOrder=order;if(!source)entry.mesh.material=material;
-      if(source){const m=entry.mesh.material as ShaderMaterial;m.uniforms.source.value.set(source.x,source.height,source.y,source.radius);m.uniforms.strength.value=source.strength;}
+      entry.mesh.renderOrder=order;entry.mesh.material=material;
     };
     next.explored.forEach((rings,i)=>{
       let converted=exploredRings.get(rings);
       if(!converted){const [outer,...holes]=rings.map(r=>r.map(([x,y])=>({x,y})));converted={outer,holes};exploredRings.set(rings,converted);}
-      if(converted.outer)add('memory:'+i,converted.outer,next.memoryRange?rangedMemory:remembered,next.memoryRange?5:1,undefined,converted.holes);
+      if(converted.outer)add('memory:'+i,converted.outer,next.memoryRange?rangedMemory:remembered,next.memoryRange?5:1,converted.holes);
     });
     next.sight.forEach((p,i)=>add('sight:'+i,p,stencil,0));
     next.origins.forEach((p,i)=>add('origin:'+i,p,white,2));
     next.grade?.near.forEach((p,i)=>add('near:'+i,p,near,2));
-    next.lights.forEach(({polygon,source},i)=>add('light:'+i,polygon,lamp,3,source));
     next.memoryRange?.forEach((p,i)=>add('range:'+i,p,rangeStencil,4));
-    for(const [id,entry] of entries)if(!live.has(id)){coverScene.remove(entry.mesh);entry.mesh.geometry.dispose();if(id.startsWith('light:'))(entry.mesh.material as ShaderMaterial).dispose();entries.delete(id);}
+    for(const [id,entry] of entries)if(!live.has(id)){coverScene.remove(entry.mesh);entry.mesh.geometry.dispose();entries.delete(id);}
+
+    let totalVerts=0;
+    const lampParts:{tris:Float32Array;source:VisionLight}[]=[];
+    for(const {polygon,source} of next.lights){
+      if(polygon.length<3)continue;
+      let tris=lampTriCache.get(polygon);
+      if(!tris){
+        const vertices=polygon.map(p=>new Vector2(p.x,p.y));
+        const indices=ShapeUtils.triangulateShape(vertices,[]).flat();
+        tris=new Float32Array(indices.length*3);
+        for(let k=0;k<indices.length;k++){
+          const pt=vertices[indices[k]],o=k*3;
+          tris[o]=pt.x;tris[o+1]=0;tris[o+2]=pt.y;
+        }
+        lampTriCache.set(polygon,tris);
+      }
+      if(tris.length>0){totalVerts+=tris.length/3;lampParts.push({tris,source});}
+    }
+    if(totalVerts>0){
+      if(lampVertCapacity<totalVerts){
+        lampVertCapacity=2**Math.ceil(Math.log2(Math.max(16,totalVerts)));
+        lampPosAttr=new Float32BufferAttribute(new Float32Array(lampVertCapacity*3),3);
+        lampSourceAttr=new Float32BufferAttribute(new Float32Array(lampVertCapacity*4),4);
+        lampStrengthAttr=new Float32BufferAttribute(new Float32Array(lampVertCapacity),1);
+        lampGeometry.setAttribute('position',lampPosAttr);
+        lampGeometry.setAttribute('lampSource',lampSourceAttr);
+        lampGeometry.setAttribute('lampStrength',lampStrengthAttr);
+      }
+      const posArr=lampPosAttr!.array as Float32Array;
+      const srcArr=lampSourceAttr!.array as Float32Array;
+      const strArr=lampStrengthAttr!.array as Float32Array;
+      let vOffset=0;
+      for(const {tris,source} of lampParts){
+        const vertCount=tris.length/3;
+        posArr.set(tris,vOffset*3);
+        for(let k=0;k<vertCount;k++){
+          const sOff=(vOffset+k)*4;
+          srcArr[sOff]=source.x;srcArr[sOff+1]=source.height;srcArr[sOff+2]=source.y;srcArr[sOff+3]=source.radius;
+          strArr[vOffset+k]=source.strength;
+        }
+        vOffset+=vertCount;
+      }
+      lampPosAttr!.needsUpdate=true;
+      lampSourceAttr!.needsUpdate=true;
+      lampStrengthAttr!.needsUpdate=true;
+      lampGeometry.setDrawRange(0,totalVerts);
+      mergedLampsMesh.visible=true;
+    }else mergedLampsMesh.visible=false;
   };
   const originalZ=host.style.zIndex;
   let lastZ=originalZ,lastCompositeAttr='',lastGradingAttr='',lastFullAttr='',lastCoverUpdates=-1,lastSpellFlashes=-1;
@@ -280,10 +337,12 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
       const key=camera.projectionMatrix.elements.join(',')+':'+camera.matrixWorld.elements.join(',');
       // A flash changes every frame it shines, and once more when it ends.
       if(previous!==next||cameraKey!==key||flashes.length||flashCount){
-        if(previous!==next)sync(next);if(flashes.length||flashCount)syncFlashes(flashes);const target=renderer.getRenderTarget(),pending=renderer.shadowMap.needsUpdate;
+        if(previous!==next)sync(next);if(flashes.length||flashCount)syncFlashes(flashes);
+        const target=renderer.getRenderTarget(),pending=renderer.shadowMap.needsUpdate,clearAlpha=renderer.getClearAlpha();
+        renderer.getClearColor(coverClearColor);
         renderer.shadowMap.needsUpdate=false;
-        try{renderer.setRenderTarget(cover);renderer.clear(true,true,true);renderer.render(coverScene,camera);}
-        finally{renderer.setRenderTarget(target);renderer.shadowMap.needsUpdate=pending;}
+        try{renderer.setRenderTarget(cover);renderer.setClearColor(0x000000,0);renderer.clear(true,true,true);renderer.render(coverScene,camera);}
+        finally{renderer.setRenderTarget(target);renderer.setClearColor(coverClearColor,clearAlpha);renderer.shadowMap.needsUpdate=pending;}
         previous=next;cameraKey=key;updates++;
       }
       if(lastCoverUpdates!==updates){host.dataset.visionCoverUpdates=String(updates);lastCoverUpdates=updates;}
@@ -308,6 +367,6 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
       try{renderer.autoClear=false;renderer.render(quadScene,quadCamera);}
       finally{renderer.autoClear=autoClear;}
     },
-    dispose(){host.style.zIndex=originalZ;if(host.parentElement){delete host.parentElement.dataset.gpuVisionGrade;delete host.parentElement.dataset.gpuVisionFull;}for(const [id,e] of entries){e.mesh.geometry.dispose();if(id.startsWith('light:'))(e.mesh.material as ShaderMaterial).dispose();}entries.clear();white.dispose();near.dispose();remembered.dispose();rangedMemory.dispose();rangeStencil.dispose();stencil.dispose();lamp.dispose();flashLamp.dispose();for(const e of flashEntries){e.mesh.geometry.dispose();e.mesh.material.dispose();}flashEntries.length=0;cover.dispose();frame?.dispose();memory?.dispose();bodyGrades.dispose();bodyCenters.dispose();composite.dispose();quadGeometry.dispose();},
+    dispose(){host.style.zIndex=originalZ;if(host.parentElement){delete host.parentElement.dataset.gpuVisionGrade;delete host.parentElement.dataset.gpuVisionFull;}for(const entry of entries.values()){entry.mesh.geometry.dispose();}entries.clear();lampGeometry.dispose();white.dispose();near.dispose();remembered.dispose();rangedMemory.dispose();rangeStencil.dispose();stencil.dispose();lamp.dispose();flashLamp.dispose();for(const e of flashEntries){e.mesh.geometry.dispose();e.mesh.material.dispose();}flashEntries.length=0;cover.dispose();frame?.dispose();memory?.dispose();bodyGrades.dispose();bodyCenters.dispose();composite.dispose();quadGeometry.dispose();},
   };
 }

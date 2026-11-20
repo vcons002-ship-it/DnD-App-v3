@@ -12,7 +12,9 @@
 .dm-fantasy :is(.dm-window, .dm-tool-rail, .dm-campaign-menu, .map-tool-menus, .dm-turn-bar) { zoom: var(--dm-ui-scale, 1); }
 .dm-fantasy .body { display: block; isolation: isolate; }
 .dm-fantasy .center { position: absolute; inset: 0; width: 100%; height: 100%; }
-.dm-fantasy .btn { border-radius: 4px; color: #eee5d2; border-color: #62533c; background: linear-gradient(#303034, #1c1e22); }
+.dm-fantasy .btn { border-radius: 4px; color: #eee5d2; border-color: #62533c; background: #1c1e22 linear-gradient(#303034, #1c1e22); }
+.dm-fantasy select, .dm-fantasy select.btn { background-color: #1c1e22; color: #eee5d2; color-scheme: dark; }
+.dm-fantasy select option, .dm-fantasy select optgroup { background-color: #1c1e22; color: #eee5d2; }
 .dm-fantasy .btn:hover { border-color: #dec087; background: linear-gradient(#454039, #25252a); }
 .dm-fantasy .btn.on, .dm-fantasy .btn.primary { background: linear-gradient(#57482c, #2b2923); border-color: #c8ab72; }
 .dm-fantasy .btn.danger { color: #f0a8a1; border-color: #84544a; }

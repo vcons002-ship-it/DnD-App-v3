@@ -52,6 +52,7 @@ import { useImage } from './useImage';
 import { TokenShape, DISPOSITION_HEX } from './TokenShape';
 import type { MiniatureLayerHandle, MiniatureToken } from './MiniatureLayer';
 import type { GpuMapFloorConfig } from './gpuMapFloor';
+import { createGroundTokenSpriteReader } from './gpuGroundTokens';
 import { exploredTerrainBrightness } from '../../../shared/terrainLighting';
 import { createMiniatureNameReader, setMiniatureNamesRendered } from './miniatureNameLabels';
 import { MiniatureFallback } from './MiniatureFallback';
@@ -1051,25 +1052,42 @@ function MapStageInner({
     }
   },[]);
 
+  const readGroundSprites = useMemo(() => createGroundTokenSpriteReader(), []);
   const baseLayerDirtyRef = useRef(false);
+  const groundLayerDirtyRef = useRef(false);
+  const activeCameraGesture = () =>
+    (Konva.isDragging() && activePanLayerRef.current !== null) ||
+    zoomSettleTimerRef.current !== undefined ||
+    pinchRef.current !== null ||
+    rotationGesture.current !== null;
+  const flushDirtyGroundLayers = () => {
+    if (baseLayerDirtyRef.current) {
+      baseLayerDirtyRef.current = false;
+      layerRef.current?.drawScene();
+    }
+    if (groundLayerDirtyRef.current) {
+      groundLayerDirtyRef.current = false;
+      groundTokenLayerRef.current?.drawScene();
+    }
+  };
   const handleGpuFloorChange = useCallback((active: boolean) => {
+    const baseEl = layerRef.current?.getNativeCanvasElement();
+    const groundEl = groundTokenLayerRef.current?.getNativeCanvasElement();
+    if (baseEl) baseEl.style.opacity = active ? '0' : '';
+    if (groundEl) groundEl.style.opacity = active ? '0' : '';
+    spellAreaLayerRef.current?.batchDraw();
     if (!active) {
-      if (baseLayerDirtyRef.current) {
-        baseLayerDirtyRef.current = false;
-        layerRef.current?.drawScene();
-      }
+      flushDirtyGroundLayers();
       visionRef.current?.frame();
     }
   }, []);
   const gpuFloorEligible = useMemo(() => {
-    if (legacy || miniaturesUnavailable || !map || map.slidesUrl || tilesMode || mapFogEnabled || (tokenFogEnabled && isDm)) return false;
+    if (legacy || miniaturesUnavailable || !map || map.slidesUrl || tilesMode || fogActive) return false;
+    if (!use3dTokens || !use3dMonsters) return false;
     if (map.imagePath && !(baseW > 0 && baseH > 0)) return false;
     if (snapshot.annotations.some((a) => a.kind === 'image' && !!a.url)) return false;
-    const has2dGroundTokens = snapshot.tokens.some(
-      (t) => !t.sharedSightOnly && !doorTokenIds.has(t.id) && !hiddenGhosts.has(t.id) && !(readyMiniatures.has(t.id) && miniatureIds.has(t.id)),
-    );
-    return !has2dGroundTokens;
-  }, [legacy, miniaturesUnavailable, map, tilesMode, mapFogEnabled, tokenFogEnabled, isDm, baseW, baseH, snapshot.annotations, snapshot.tokens, doors, hiddenGhosts, readyMiniatures, miniatureIds]);
+    return true;
+  }, [legacy, miniaturesUnavailable, map, tilesMode, fogActive, use3dTokens, use3dMonsters, baseW, baseH, snapshot.annotations]);
   const floorTerrain = useMemo<GpuMapFloorConfig | undefined>(() => {
     if (!gpuFloorEligible || !map) return undefined;
     return {
@@ -1081,8 +1099,17 @@ function MapStageInner({
       grid: map.gridHidden ? undefined : { size: grid, x: map.gridOffsetX ?? 0, y: map.gridOffsetY ?? 0, hot: gridHot },
       canvasBg: CANVAS_BG,
       exploredBrightness: exploredTerrainBrightness(map.environment, !!activeVision?.heavy),
+      manualFog: (mapFogEnabled || (tokenFogEnabled && isDm)) ? {
+        grid,
+        colMin,
+        colMax,
+        rowMin,
+        rowMax,
+        mapFog: mapFogEnabled ? { revealed: map.mapFogRevealed ?? [], color: isDm ? '#04060a' : CANVAS_BG, opacity: isDm ? 0.5 : 1 } : undefined,
+        tokenFog: tokenFogEnabled && isDm ? { revealed: map.tokenFogRevealed ?? [], color: '#7a3df0', opacity: 0.35 } : undefined,
+      } : undefined,
     };
-  }, [gpuFloorEligible, map?.id, map?.imagePath, map?.videoPath, map?.gridHidden, map?.gridOffsetX, map?.gridOffsetY, map?.environment, animateMap, baseW, baseH, tiles, extX0, extY0, imgW, imgH, grid, gridHot, activeVision?.heavy]);
+  }, [gpuFloorEligible, map?.id, map?.imagePath, map?.videoPath, map?.gridHidden, map?.gridOffsetX, map?.gridOffsetY, map?.environment, map?.mapFogRevealed, map?.tokenFogRevealed, mapFogEnabled, tokenFogEnabled, isDm, animateMap, baseW, baseH, tiles, extX0, extY0, imgW, imgH, colMin, colMax, rowMin, rowMax, grid, gridHot, activeVision?.heavy]);
 
   const viewRef = useRef(view), prevViewProp = useRef(view), pendingViewRef = useRef<View | null>(null);
   if (prevViewProp.current !== view) { prevViewProp.current = view; if (!pendingViewRef.current || (pendingViewRef.current.x === view.x && pendingViewRef.current.y === view.y && pendingViewRef.current.scale === view.scale)) { pendingViewRef.current = null; viewRef.current = view; } }
@@ -1095,7 +1122,7 @@ function MapStageInner({
     if (!overlay) return false;
     if (overlay.getChildren().some((c) => c.isVisible() && c.getAbsoluteOpacity() > 0)) return true;
     const ground = groundTokenLayerRef.current;
-    if (!renderVisionLayer || !ground) return false;
+    if (!(renderVisionLayer || containerRef.current?.dataset.gpuFloorActive === 'true') || !ground) return false;
     for (const child of ground.getChildren()) {
       if (!(child instanceof Konva.Group) || !child.hasName('token') || !child.isVisible() || child.getAbsoluteOpacity() <= 0) continue;
       const hud = child.findOne<Konva.Group>('.token-upright-hud');
@@ -1237,10 +1264,7 @@ function MapStageInner({
     clearTimeout(zoomSettleTimerRef.current);
     zoomSettleTimerRef.current = undefined;
     zoomFrames.flush();
-    if (baseLayerDirtyRef.current) {
-      baseLayerDirtyRef.current = false;
-      layerRef.current?.drawScene();
-    }
+    flushDirtyGroundLayers();
     if (hitDirtyRef.current) refreshCameraHitLayers();
     setView(viewRef.current);
   });
@@ -1264,8 +1288,15 @@ function MapStageInner({
     const background = layerRef.current?.getNativeCanvasElement();
     const groundTokens = groundTokenLayerRef.current?.getNativeCanvasElement();
     const foreground = tokenLayerRef.current?.getNativeCanvasElement();
-    if (background) background.style.zIndex = legacyTerrain?'1':'0';
-    if (groundTokens) groundTokens.style.zIndex = legacy?'1':'0';
+    const gpuFloor = containerRef.current?.dataset.gpuFloorActive === 'true';
+    if (background) {
+      background.style.zIndex = legacyTerrain ? '1' : '0';
+      background.style.opacity = gpuFloor ? '0' : '';
+    }
+    if (groundTokens) {
+      groundTokens.style.zIndex = legacy ? '1' : '0';
+      groundTokens.style.opacity = gpuFloor ? '0' : '';
+    }
     if (foreground) foreground.style.zIndex = '4';
     const shared=sharedTokenLayerRef.current?.getNativeCanvasElement();
     if(shared){const colorMemory=map?.explorationMode!=='off'&&!usesDarknessVision(map);shared.style.zIndex='4';shared.style.filter=colorMemory?'none':'grayscale(1)';shared.style.opacity=colorMemory?'1':'.78';shared.style.pointerEvents='none';shared.dataset.testid='shared-sight-hud';}
@@ -1274,8 +1305,9 @@ function MapStageInner({
   useLayoutEffect(() => {
     const groundLayer = groundTokenLayerRef.current;
     const overlayLayer = spellAreaLayerRef.current;
-    if (!groundLayer || !overlayLayer || !renderVisionLayer) return;
+    if (!groundLayer || !overlayLayer || !(renderVisionLayer || gpuFloorEligible)) return;
     const paintVisionHud = () => {
+      if (!renderVisionLayer && containerRef.current?.dataset.gpuFloorActive !== 'true') return;
       const canvas = overlayLayer.getCanvas();
       const buffer = overlayLayer.getAttr('retainedPerspectiveBuffer');
       for (const child of groundLayer.getChildren()) {
@@ -1296,7 +1328,7 @@ function MapStageInner({
       groundLayer.off('.groundVisionHud');
       overlayLayer.batchDraw();
     };
-  }, [renderVisionLayer, dprKey, legacy, map?.id]);
+  }, [renderVisionLayer, gpuFloorEligible, dprKey, legacy, map?.id]);
 
   useLayoutEffect(() => {
     const stage = stageRef.current;
@@ -1311,8 +1343,10 @@ function MapStageInner({
     const input=legacy?undefined:installPerspectiveInput(stage,size.w,size.h,tilt,rotation,()=>projectionState.current);
     const retainedLayers=retained?[groundTokenLayerRef.current,sharedTokenLayerRef.current,...(legacy?[]:[tokenLayerRef.current])].filter((l):l is Konva.Layer=>!!l).map(layer=>installRetainedTokenLayer(layer,canvases[perspectiveLayers.indexOf(layer)]?.buffer)):[];
     const baseLayer = layerRef.current;
+    const groundLayer = groundTokenLayerRef.current;
     const origBaseDrawHit = baseLayer?.drawHit;
     const origBaseDrawScene = baseLayer?.drawScene;
+    const origGroundDrawScene = groundLayer?.drawScene;
     if (baseLayer && origBaseDrawHit) {
       baseLayer.drawHit = function(canvas, top) {
         if (Konva.isDragging()) return this;
@@ -1321,12 +1355,22 @@ function MapStageInner({
     }
     if (baseLayer && origBaseDrawScene) {
       baseLayer.drawScene = function(canvas, top) {
-        if (!canvas && !top && ((Konva.isDragging() && activePanLayerRef.current !== null) || zoomSettleTimerRef.current !== undefined) && containerRef.current?.dataset.gpuFloorActive === 'true') {
+        if (!canvas && !top && activeCameraGesture() && containerRef.current?.dataset.gpuFloorActive === 'true') {
           baseLayerDirtyRef.current = true;
           return this;
         }
         baseLayerDirtyRef.current = false;
         return origBaseDrawScene.call(this, canvas, top);
+      };
+    }
+    if (groundLayer && origGroundDrawScene) {
+      groundLayer.drawScene = function(canvas, top) {
+        if (!canvas && !top && activeCameraGesture() && containerRef.current?.dataset.gpuFloorActive === 'true') {
+          groundLayerDirtyRef.current = true;
+          return this;
+        }
+        groundLayerDirtyRef.current = false;
+        return origGroundDrawScene.call(this, canvas, top);
       };
     }
     const panDedupLayers = [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current].filter((l): l is Konva.Layer => !!l);
@@ -1347,7 +1391,9 @@ function MapStageInner({
       panDedupLayers.forEach(l => l.off('.panDedup'));
       if (baseLayer && origBaseDrawHit) baseLayer.drawHit = origBaseDrawHit;
       if (baseLayer && origBaseDrawScene) baseLayer.drawScene = origBaseDrawScene;
+      if (groundLayer && origGroundDrawScene) groundLayer.drawScene = origGroundDrawScene;
       baseLayerDirtyRef.current = false;
+      groundLayerDirtyRef.current = false;
       lastPanDrawnRef.current = null;
       retainedLayers.forEach(dispose=>dispose());input?.();canvases.forEach(dispose=>dispose());projectionCanvases.current=[];
     };
@@ -1938,10 +1984,7 @@ function MapStageInner({
     activePanLayerRef.current = null;
     lastPanDrawnRef.current = null;
     panFrames.push({x:e.target.x(),y:e.target.y()});panFrames.flush();
-    if (baseLayerDirtyRef.current) {
-      baseLayerDirtyRef.current = false;
-      layerRef.current?.drawScene();
-    }
+    flushDirtyGroundLayers();
     // Pan synchronizes several layers, while Konva's release paint refreshes
     // only the directly dragged layer. Retained hit maps skipped paints during
     // the drag, so refresh every synchronized layer before the next pointer
@@ -2002,6 +2045,7 @@ function MapStageInner({
     if(rotationLabel.current)rotationLabel.current.hidden=Math.abs(rotation%360)<.01;
   };
   const commitProjection=(tilt:number,rotation:number,nextView:View)=>{
+    flushDirtyGroundLayers();
     if(hitDirtyRef.current)refreshCameraHitLayers();
     setTiltDegrees(tilt);setRotationDegrees(rotation);setView(nextView);
     safeSetItem(rotationKey,String(rotation%360));
@@ -2053,8 +2097,9 @@ function MapStageInner({
   const rotateEnd=(event:React.PointerEvent<HTMLDivElement>)=>{
     const gesture=rotationGesture.current;if(!gesture || gesture.pointerId!==event.pointerId)return false;
     event.preventDefault();event.stopPropagation();cancelBattlefieldFrame(gesture.frame);
+    rotationGesture.current=null;
     paintProjection(projectionState.current.tilt,gesture.angle,gesture.view);
-    commitProjection(projectionState.current.tilt,gesture.angle,gesture.view);rotationGesture.current=null;
+    commitProjection(projectionState.current.tilt,gesture.angle,gesture.view);
     if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);return true;
   };
 
@@ -2118,6 +2163,8 @@ function MapStageInner({
     );
   });
 
+  const liveView = viewRef.current;
+
   return (
     <div className="stage-wrap" data-motion-stage={legacyMovement.playback?'playing':'2'} data-render-mode={legacy?'legacy':'standard'} data-retained-rendering={String(retained)} ref={containerRef} {...activeSelectionBox.handlers}
       onPointerDownCapture={e=>{flushZoomHit();if(!rotateStart(e))activeSelectionBox.handlers.onPointerDownCapture(e);}}
@@ -2160,10 +2207,10 @@ function MapStageInner({
           >
             <Layer
               ref={layerRef}
-              x={view.x}
-              y={view.y}
-              scaleX={view.scale}
-              scaleY={view.scale * groundScaleY}
+              x={liveView.x}
+              y={liveView.y}
+              scaleX={liveView.scale}
+              scaleY={liveView.scale * groundScaleY}
               draggable={panning}
               onDragMove={handleLayerDragMove}
               onDragEnd={handleLayerDragEnd}
@@ -2293,7 +2340,7 @@ function MapStageInner({
                 pxPerFoot={pxPerFoot}
               />}
             </Layer>
-            {legacy&&<Layer name="legacy-footsteps" listening={false} x={view.x} y={view.y} scaleX={view.scale} scaleY={view.scale}
+            {legacy&&<Layer name="legacy-footsteps" listening={false} x={liveView.x} y={liveView.y} scaleX={liveView.scale} scaleY={liveView.scale}
               ref={layer=>{legacyFootstepsLayerRef.current=layer;if(layer){const canvas=layer.getNativeCanvasElement();canvas.style.zIndex=legacy?'1':'0';canvas.style.pointerEvents='none';canvas.dataset.testid='legacy-footsteps';}}}>
               <FootprintLayer key={map?.id} compact tokens={snapshot.tokens} pxPerFoot={pxPerFoot} isVisibleAt={tokenVisibleAtPosition}
                 movementDurationMs={legacyMovement.playback?.durationMs??(snapshot.legacyGeometry!==undefined?0:undefined)} visualPosition={presentation.position}/>
@@ -2301,10 +2348,10 @@ function MapStageInner({
             <Layer
               ref={groundTokenLayerRef}
               name="ground-token-layer"
-              x={view.x}
-              y={view.y}
-              scaleX={view.scale}
-              scaleY={view.scale * groundScaleY}
+              x={liveView.x}
+              y={liveView.y}
+              scaleX={liveView.scale}
+              scaleY={liveView.scale * groundScaleY}
               draggable={panning}
               onDragMove={handleLayerDragMove}
               onDragEnd={handleLayerDragEnd}
@@ -2315,10 +2362,10 @@ function MapStageInner({
             <Layer
               ref={tokenLayerRef}
               name="miniature-hud-layer"
-              x={view.x}
-              y={view.y}
-              scaleX={view.scale}
-              scaleY={view.scale * groundScaleY}
+              x={liveView.x}
+              y={liveView.y}
+              scaleX={liveView.scale}
+              scaleY={liveView.scale * groundScaleY}
               draggable={panning}
               onDragMove={handleLayerDragMove}
               onDragEnd={handleLayerDragEnd}
@@ -2464,11 +2511,11 @@ function MapStageInner({
               )}
             </Layer>
             <Layer ref={sharedTokenLayerRef} name="shared-sight-layer" listening={false}
-              x={view.x} y={view.y} scaleX={view.scale} scaleY={view.scale * groundScaleY}>
+              x={liveView.x} y={liveView.y} scaleX={liveView.scale} scaleY={liveView.scale * groundScaleY}>
               {renderTokens(false, true)}{renderTokens(true, true)}
             </Layer>
             <Layer name="spell-area-overlay" listening={false}
-              x={view.x} y={view.y} scaleX={view.scale} scaleY={view.scale * groundScaleY}
+              x={liveView.x} y={liveView.y} scaleX={liveView.scale} scaleY={liveView.scale * groundScaleY}
               // Targeting is a UI overlay, never a source of terrain visibility.
               ref={layer=>{spellAreaLayerRef.current=layer;if(layer){const c=layer.getNativeCanvasElement();c.style.zIndex='6';c.style.pointerEvents='none';c.dataset.testid='spell-area-canvas';}}}>
               {map&&<SharedSpellAreas mapId={map.id} hideId={areaCast?areaSocketId:undefined} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare}/>}
@@ -2499,7 +2546,7 @@ function MapStageInner({
           </Stage>
           {!legacy&&(miniatureTokens.length > 0 || preloadMiniatures.length > 0 || environment || spellImpacts.length > 0) && <MiniatureFallback onUnavailable={handleMiniatureUnavailable}><Suspense fallback={null}>
             <MiniatureLayer preparedSpellImpacts={preparedSpellImpacts} spellColorOverlay={spellColorOverlay} spellMist={spellMist} key={map?.id} ref={miniatureRef} rollBackground={rollBackground} rollBackgroundPrepared={rollBackgroundPrepared} personalVision={renderPlayerVision&&(usesMapVision(map)||!!snapshot.playerVision?.heavy)} tokens={miniatureTokens} rayTargetIds={rayCast?rayTargets:undefined} preloadDefinitions={preloadMiniatures} onFailed={setFailedMiniatures} onUnavailable={handleMiniatureUnavailable} view={view} isVisibleAt={tokenVisibleAtPosition}
-              environmentPreview={environment} floorTerrain={floorTerrain} onGpuFloorChange={handleGpuFloorChange} footprints={readFootprints} spellImpacts={spellImpacts} spellFog={spellFog} visualPosition={presentation.position} memoryTerrainCanvas={memoryTerrainCanvas} visionCoverFrame={visionCoverFrame}
+              environmentPreview={environment} floorTerrain={floorTerrain} groundTokenSprites={() => readGroundSprites(groundTokenLayerRef.current)} onGpuFloorChange={handleGpuFloorChange} footprints={readFootprints} spellImpacts={spellImpacts} spellFog={spellFog} visualPosition={presentation.position} memoryTerrainCanvas={memoryTerrainCanvas} visionCoverFrame={visionCoverFrame}
               tiltDegrees={tiltDegrees} rotationDegrees={rotationDegrees} width={size.w} height={size.h} onReady={handleMiniatureReady}
               nameLabels={miniatureNameLabels} onRenderedNames={handleRenderedNames} onVisionLights={renderPlayerVision?handleVisionLights:undefined} onPrepareVisionLights={renderPlayerVision?handlePrepareVisionLights:undefined} />
           </Suspense></MiniatureFallback>}
