@@ -1,23 +1,25 @@
 import {acquireAnimatedMap} from './animatedMapMedia';
+import {acquireMapTileTexture} from './mapTileTextures';
 import {lightFalloffGlsl} from '../../../shared/lightFalloff';
 import {exploredTerrainBrightness,HEAVY_DARKVISION_MEMORY_BRIGHTNESS,REGULAR_DARKVISION_TERRAIN_BRIGHTNESS} from '../../../shared/terrainLighting';
-import {Mesh,PlaneGeometry,ShaderMaterial,TextureLoader,VideoTexture,Vector2,Scene,FramebufferTexture,type Texture,type Camera,type WebGLRenderer} from 'three';
+import {Color,Mesh,PlaneGeometry,ShaderMaterial,VideoTexture,Vector2,Scene,WebGLRenderTarget,type Texture,type Camera,type WebGLRenderer} from 'three';
 import type {EnvironmentPreviewSettings} from './battlefieldEnvironment';
 import {environmentVisibilityGlsl,type createEnvironmentVisibility} from './environmentVisibility';
 import {torchFieldGlsl,type createBattlefieldLighting} from './battlefieldLighting';
 /** Read original artwork, before the darkness grade removes its useful detail. */
-export function createDarkvisionTerrain(scene:Scene,visibility:ReturnType<typeof createEnvironmentVisibility>['uniforms'],lights:ReturnType<typeof createBattlefieldLighting>['fieldUniforms'],grade:ReturnType<typeof createBattlefieldLighting>['terrainGrade'],depth:{texture:Texture;resolution:Vector2},invalidate:()=>void){
- const entries:{mesh:Mesh;memory:Mesh;texture:Texture;material:ShaderMaterial;memoryMaterial:ShaderMaterial;release:()=>void;videoTexture?:VideoTexture}[]=[];let key='',generation=0,memoryKey='';
- const memoryScene=new Scene();let lastCanvas:HTMLCanvasElement|null=null,memoryVersion=0,memoryTexture:FramebufferTexture|undefined;
+export function createDarkvisionTerrain(scene:Scene,renderer:WebGLRenderer,visibility:ReturnType<typeof createEnvironmentVisibility>['uniforms'],lights:ReturnType<typeof createBattlefieldLighting>['fieldUniforms'],grade:ReturnType<typeof createBattlefieldLighting>['terrainGrade'],depth:{texture:Texture;resolution:Vector2},invalidate:()=>void){
+ const entries:{mesh:Mesh;memory:Mesh;texture:Texture;material:ShaderMaterial;memoryMaterial:ShaderMaterial;release:()=>void;releaseTile:()=>void;videoTexture?:VideoTexture}[]=[];let key='',generation=0,memoryKey='';
+ const memoryScene=new Scene(),savedClearColor=new Color();let lastCanvas:HTMLCanvasElement|null=null,memoryVersion=0,memoryTarget:WebGLRenderTarget|undefined;
  const memoryBrightness={value:.2};
  const clear=()=>{generation++;memoryKey='';
   if(lastCanvas){lastCanvas.getContext('2d')?.clearRect(0,0,lastCanvas.width,lastCanvas.height);lastCanvas.dataset.ready='false';}
-  for(const e of entries){scene.remove(e.mesh);memoryScene.remove(e.memory);e.mesh.geometry.dispose();e.material.dispose();e.memoryMaterial.dispose();e.texture.dispose();e.videoTexture?.dispose();e.release();}entries.length=0;};
+  for(const e of entries){scene.remove(e.mesh);memoryScene.remove(e.memory);e.mesh.geometry.dispose();e.material.dispose();e.memoryMaterial.dispose();e.videoTexture?.dispose();e.release();e.releaseTile();}entries.length=0;};
  return {update(settings:EnvironmentPreviewSettings){
   memoryBrightness.value=exploredTerrainBrightness(settings);
   const enabled=!!settings.darkvisionTerrain;
   const tiles=settings.darkvisionTerrain??[];
-  const next=JSON.stringify([enabled,!!settings.heavyDarkness,tiles,settings.darkvisionGrid]);if(next===key)return;key=next;clear();if(!enabled)return;
+  const maxTex=settings.maxMapTextureResolutionPx??8192;
+  const next=JSON.stringify([enabled,!!settings.heavyDarkness,maxTex,tiles,settings.darkvisionGrid]);if(next===key)return;key=next;clear();if(!enabled)return;
   const version=generation;
   for(const [index,tile] of tiles.entries()){
    const material=new ShaderMaterial({transparent:true,depthTest:false,depthWrite:false,toneMapped:false,uniforms:{...visibility,...lights,...grade,memoryPass:{value:0},memoryBrightness,figureDepth:{value:depth.texture},resolution:{value:depth.resolution},art:{value:null},texel:{value:new Vector2(1/1024,1/1024)},gridSize:{value:settings.darkvisionGrid?.size??0},gridOffset:{value:new Vector2(settings.darkvisionGrid?.x??0,settings.darkvisionGrid?.y??0)}},
@@ -25,6 +27,7 @@ export function createDarkvisionTerrain(scene:Scene,visibility:ReturnType<typeof
     fragmentShader:`${environmentVisibilityGlsl}${torchFieldGlsl}${lightFalloffGlsl}
      uniform sampler2D art,figureDepth;uniform vec2 texel,resolution,gridOffset;uniform float gridSize,memoryPass,memoryBrightness,gradeOpacity,sceneTintStrength;uniform vec3 gradeColor,sceneTint;varying vec2 artUv;varying vec3 world;
      float lum(vec2 p){return dot(texture2D(art,p).rgb,vec3(.2126,.7152,.0722));}
+     vec3 toSrgb(vec3 c){return mix(pow(max(c,vec3(0.)),vec3(1./2.4))*1.055-vec3(.055),c*12.92,lessThanEqual(c,vec3(.0031308)));}
      void main(){if(memoryPass<.5&&(environmentVisible(world.xz)<.5||texture2D(figureDepth,gl_FragCoord.xy/resolution).r<.999999))discard;
       vec4 lightField=torchFieldAt(world.xz);vec3 illumination=lightField.rgb;float strength=max(illumination.r,max(illumination.g,illumination.b));float coverage=lightColorCoverage(strength),unlit=1.-coverage;
       vec4 source=texture2D(art,artUv);float l=dot(source.rgb,vec3(.2126,.7152,.0722)),detail=0.;
@@ -45,7 +48,7 @@ export function createDarkvisionTerrain(scene:Scene,visibility:ReturnType<typeof
        // Memory contains artwork/grid only: no torches, creatures or weather.
        float alpha=gradeOpacity+sceneTintStrength*(1.-gradeOpacity);
        vec3 tint=(gradeColor*gradeOpacity*(1.-sceneTintStrength)+sceneTint*sceneTintStrength)/max(.001,alpha);
-       vec3 ground=mix(source.rgb,linearToOutputTexel(vec4(tint,1.)).rgb,alpha);
+       vec3 ground=mix(source.rgb,toSrgb(tint),alpha);
        // Softer memory highlights for contours, bright artwork and the grid.
        // Keep the darker ground grade and current-sight recovery unchanged.
        float remembered=dot(mix(ground,vec3(.35),recovery),vec3(.2126,.7152,.0722));
@@ -69,11 +72,21 @@ export function createDarkvisionTerrain(scene:Scene,visibility:ReturnType<typeof
    // Share texture/grade uniforms, but select the terrain-only output for memory.
    memoryMaterial.uniforms={...material.uniforms,memoryPass:{value:1}};
    const memory=new Mesh(mesh.geometry,memoryMaterial);memory.copy(mesh,false);memory.material=memoryMaterial;memory.visible=false;memoryScene.add(memory);
-   const texture=new TextureLoader().load(tile.url,loaded=>{if(version!==generation){loaded.dispose();return;}loaded.anisotropy=8;loaded.needsUpdate=true;material.uniforms.texel.value.set(1/loaded.image.width,1/loaded.image.height);mesh.visible=memory.visible=true;memoryKey='';invalidate();},undefined,()=>{});
+   let videoTexture:VideoTexture|undefined;
+   let readyFired=false;
+   const acquiredTile=acquireMapTileTexture(renderer,tile.url,maxTex,(w,h)=>{
+    if(version!==generation)return;
+    readyFired=true;
+    material.uniforms.texel.value.set(1/Math.max(1,w),1/Math.max(1,h));
+    mesh.visible=memory.visible=true;
+    memoryKey='';
+    invalidate();
+   });
+   const texture=acquiredTile.texture;
    material.uniforms.art.value=texture;
    // Memory always reads the poster, never the live animation or scene effects.
    memoryMaterial.uniforms.art={value:texture};
-   let release=()=>{},videoTexture:VideoTexture|undefined;
+   let release=()=>{};
    if(tile.videoPath){
     const handle=acquireAnimatedMap(tile.videoPath),e=handle.entry;
     videoTexture=new VideoTexture(e.video);videoTexture.generateMipmaps=false;
@@ -82,22 +95,45 @@ export function createDarkvisionTerrain(scene:Scene,visibility:ReturnType<typeof
     e.listeners.add(refresh);e.frameListeners.add(paint);refresh();
     release=()=>{e.listeners.delete(refresh);e.frameListeners.delete(paint);handle.release();};
    }
-   entries.push({mesh,memory,texture,material,memoryMaterial,release,videoTexture});
+   entries.push({mesh,memory,texture,material,memoryMaterial,release,releaseTile:acquiredTile.release,videoTexture});
+   if(readyFired)mesh.visible=memory.visible=true;
   }
- },renderMemory(renderer:WebGLRenderer,camera:Camera,canvas:HTMLCanvasElement|null,gpuComposite=false){
-  if(!canvas||!entries.length||entries.some(e=>!e.memory.visible))return;
+ },renderMemory(renderer:WebGLRenderer,camera:Camera,canvas:HTMLCanvasElement|null,gpuComposite=false,modeOverride?:1|2|3){
+  if((!gpuComposite&&!canvas)||!entries.length||entries.some(e=>!e.memory.visible))return;
   const w=renderer.domElement.width,h=renderer.domElement.height;
-  const mode=canvas.dataset.mode==='retained'?3:canvas.dataset.mode==='regular'?2:1,copy2d=!gpuComposite;
+  const mode=modeOverride??(canvas?.dataset.mode==='retained'?3:canvas?.dataset.mode==='regular'?2:1),copy2d=!gpuComposite;
   const next=JSON.stringify([key,w,h,mode,copy2d,memoryBrightness.value,camera.projectionMatrix.elements,camera.matrixWorld.elements,grade.gradeColor.value.toArray(),grade.gradeOpacity.value,grade.sceneTint.value.toArray(),grade.sceneTintStrength.value]);
   if(canvas===lastCanvas&&next===memoryKey)return;
   lastCanvas=canvas;memoryKey=next;
-  if(copy2d&&(canvas.width!==w||canvas.height!==h)){canvas.width=w;canvas.height=h;}
+  if(copy2d&&canvas&&(canvas.width!==w||canvas.height!==h)){canvas.width=w;canvas.height=h;}
   for(const entry of entries)entry.memoryMaterial.uniforms.memoryPass.value=mode;
-  renderer.render(memoryScene,camera);
-  if(!memoryTexture||memoryTexture.image.width!==w||memoryTexture.image.height!==h){memoryTexture?.dispose();memoryTexture=new FramebufferTexture(w,h);}
-  renderer.state.activeTexture(renderer.getContext().TEXTURE0);renderer.copyFramebufferToTexture(memoryTexture);
-  if(copy2d){const context=canvas.getContext('2d')!;context.clearRect(0,0,w,h);context.drawImage(renderer.domElement,0,0);}
-  canvas.dataset.ready='true';
-  canvas.dataset.version=String(++memoryVersion);
- },get memoryTexture(){return memoryTexture??null;},dispose(){clear();memoryTexture?.dispose();memoryTexture=undefined;}};
+  if(gpuComposite){
+   if(!memoryTarget||memoryTarget.width!==w||memoryTarget.height!==h){
+    memoryTarget?.dispose();
+    memoryTarget=new WebGLRenderTarget(w,h,{depthBuffer:false,stencilBuffer:false});
+   }
+   const prevTarget=renderer.getRenderTarget(),prevAutoClear=renderer.autoClear,prevAlpha=renderer.getClearAlpha(),prevShadow=renderer.shadowMap.needsUpdate;
+   renderer.getClearColor(savedClearColor);
+   try{
+    renderer.shadowMap.needsUpdate=false;
+    renderer.setRenderTarget(memoryTarget);
+    renderer.setClearColor(0x000000,0);
+    renderer.autoClear=true;
+    renderer.clear(true,false,false);
+    renderer.render(memoryScene,camera);
+   }finally{
+    renderer.setRenderTarget(prevTarget);
+    renderer.setClearColor(savedClearColor,prevAlpha);
+    renderer.autoClear=prevAutoClear;
+    renderer.shadowMap.needsUpdate=prevShadow;
+   }
+  }else{
+   renderer.render(memoryScene,camera);
+   if(canvas){const context=canvas.getContext('2d')!;context.clearRect(0,0,w,h);context.drawImage(renderer.domElement,0,0);}
+  }
+  if(canvas){
+   canvas.dataset.ready='true';
+   canvas.dataset.version=String(++memoryVersion);
+  }
+ },get memoryTexture(){return memoryTarget?.texture??null;},dispose(){clear();memoryTarget?.dispose();memoryTarget=undefined;}};
 }

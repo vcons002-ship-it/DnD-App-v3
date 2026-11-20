@@ -26,9 +26,11 @@ import {DEATH_SKULL,SPIRITUAL_WEAPON,miniatureForLod,miniatureForPreload} from '
 import {NEUTRAL_MINIATURE_LIGHTING} from './miniatureLightingDefaults';
 import {COMBAT_ROLE_ICON} from '../../../shared/combatRole';
 import type {CombatRole} from '../../../shared/types';
+import { createGpuMapFloor, type GpuMapFloorConfig } from './gpuMapFloor';
+import { mergeStaticHeroMeshes } from './miniatureStaticMerge';
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Vector2, Color, AnimationMixer, ACESFilmicToneMapping, DirectionalLight, Group, HemisphereLight,
+  Vector2, Color, AnimationMixer, ACESFilmicToneMapping, BufferGeometry, DirectionalLight, Group, HemisphereLight,
   Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PMREMGenerator, RingGeometry,
   Box3, Sprite, SpriteMaterial, CanvasTexture, PlaneGeometry, Scene, SkinnedMesh, Texture, DepthTexture, Matrix4, Vector3, WebGLRenderer, PerspectiveCamera, WebGLRenderTarget,
   DataTexture, NearestFilter, RGBAFormat, ShaderMaterial, HalfFloatType,
@@ -126,6 +128,8 @@ type Props = {
   onRenderedNames?: (ids: ReadonlySet<string>) => void;
   /** Shared renderer settings for figure illumination. */
   environmentPreview?: EnvironmentPreviewSettings;
+  floorTerrain?: GpuMapFloorConfig;
+  onGpuFloorChange?: (active: boolean) => void;
 };
 export type MiniatureLayerHandle = {
   headPosition: (id:string)=>{x:number;y:number}|undefined;
@@ -179,6 +183,7 @@ type Instance = {
   mistBody?: MistBody;
   fx: FxManifest | null;
   lightning: ReturnType<typeof createVanecLightning> | null;
+  mergedGeometries?: BufferGeometry[];
 };
 type Engine = MiniatureLayerHandle & { sync: (props: Props) => void; dispose: () => void };
 
@@ -263,6 +268,15 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const legacyVision=new URLSearchParams(location.search).get('legacyVisionLift')==='1'||!initial.visionCoverFrame;
   let visionLift=legacyVision?createMiniatureVisionLift(renderer,host,outlineMask.texture):null;
   const visionComposite=legacyVision?null:createMiniatureVisionComposite(renderer,host,outlineMask.texture,outlineMask.depthTexture);
+  const gpuMapFloor=createGpuMapFloor(scene,renderer,()=>invalidate());
+  let lastGpuFloorActive=false;
+  const setGpuFloorActive=(active:boolean)=>{
+    if(host.parentElement){
+      const next=active?'true':'false';
+      if(host.parentElement.dataset.gpuFloorActive!==next)host.parentElement.dataset.gpuFloorActive=next;
+    }
+    if(lastGpuFloorActive!==active){lastGpuFloorActive=active;props.onGpuFloorChange?.(active);}
+  };
   // Copy only the party-awareness pass above the personal vision cover. Reuse
   // this renderer and its loaded assets; never copy terrain, lights or effects.
   const sharedCanvas=document.createElement('canvas');
@@ -313,7 +327,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     scene.environment = environment.texture;
     scene.environmentIntensity = NEUTRAL_MINIATURE_LIGHTING.reflection;
   } catch (error) {
-    spellImpacts.dispose();spellColor.dispose();localShadows.dispose();
+    spellImpacts.dispose();spellColor.dispose();localShadows.dispose();gpuMapFloor.dispose();
     sharedCanvas.remove();sharedDepth.dispose();sharedTarget.dispose();sharedQuadGeometry.dispose();sharedCompositeMaterial.dispose();names.dispose();visionLift?.dispose();visionComposite?.dispose();
     silhouette.dispose();outlineMask.dispose(); maskMaterial.dispose();
     environment?.dispose();
@@ -424,7 +438,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   let drawnCameraKey = '';
   let tokensDirty = true;
   const currentCameraKey = () => `${view.x}:${view.y}:${view.scale}:${props.tiltDegrees}:${props.rotationDegrees ?? 0}:${props.width}:${props.height}`;
-  let syncedScene: {tokens:Props['tokens'];preloadDefinitions:Props['preloadDefinitions'];environmentPreview:Props['environmentPreview'];spellImpacts:Props['spellImpacts'];spellFog:Props['spellFog'];preparedSpellImpacts:Props['preparedSpellImpacts'];spellColorOverlay:Props['spellColorOverlay'];spellMist:Props['spellMist'];personalVision:Props['personalVision'];rollBackground:Props['rollBackground'];rollBackgroundPrepared:Props['rollBackgroundPrepared'];graphics:Props['graphics'];width:number;height:number;pixelRatio:number;mapId:string|undefined}|null=null;
+  let syncedScene: {tokens:Props['tokens'];preloadDefinitions:Props['preloadDefinitions'];environmentPreview:Props['environmentPreview'];floorTerrain:Props['floorTerrain'];spellImpacts:Props['spellImpacts'];spellFog:Props['spellFog'];preparedSpellImpacts:Props['preparedSpellImpacts'];spellColorOverlay:Props['spellColorOverlay'];spellMist:Props['spellMist'];personalVision:Props['personalVision'];rollBackground:Props['rollBackground'];rollBackgroundPrepared:Props['rollBackgroundPrepared'];graphics:Props['graphics'];width:number;height:number;pixelRatio:number;mapId:string|undefined}|null=null;
 
   const updateCamera = () => {
     const scale = Math.max(0.0001, view.scale);
@@ -486,6 +500,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const fail = () => {
     if (disposed) return;
     failed = true;
+    setGpuFloorActive(false);
     props.onUnavailable?.();
     renderer.domElement.style.visibility = 'hidden';
     cancelBattlefieldFrame(frame);
@@ -711,9 +726,20 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const sharedTokenIdsStr=visibleSharedIds.join(',');
         if(sharedTokenIdsCache!==sharedTokenIdsStr){sharedTokenIdsCache=sharedTokenIdsStr;sharedCanvas.dataset.tokenIds=sharedTokenIdsStr;}
         const colorMemory=useStore.getState().snapshot?.map?.explorationMode!=='off'&&!environment?.darkvisionTerrain;
-        const needsGpuMemory=!!sightFrame?.explored.length&&!!(props.environmentPreview?.heavyDarkness||props.environmentPreview?.darkvisionTerrain);
-        if(needsGpuMemory)battlefield?.renderMemory(renderer,camera,props.memoryTerrainCanvas?.()??null,!!visionComposite);
-        const useComposite=!!visionComposite&&!!sightFrame&&(!needsGpuMemory||sightFrame.memory?.dataset.ready==='true');
+        const gpuFloorActive=!!props.floorTerrain&&gpuMapFloor.ready;
+        gpuMapFloor.setVisible(gpuFloorActive);
+        setGpuFloorActive(gpuFloorActive);
+        const hasExplored=!!sightFrame?.explored.length;
+        const needsGpuMemory=hasExplored&&!!(props.environmentPreview?.heavyDarkness||props.environmentPreview?.darkvisionTerrain);
+        let memoryTex:Texture|null=null;
+        if(needsGpuMemory&&battlefield){
+          battlefield.renderMemory(renderer,camera,props.memoryTerrainCanvas?.()??null,!!visionComposite);
+          memoryTex=battlefield.memoryTexture;
+        }else if(gpuFloorActive&&hasExplored){
+          gpuMapFloor.renderMemory(renderer,camera,!!sightFrame.keepRevealed,props.floorTerrain!.exploredBrightness);
+          memoryTex=gpuMapFloor.memoryTexture;
+        }
+        const useComposite=!!visionComposite&&!!sightFrame&&(!needsGpuMemory||!!memoryTex||sightFrame.memory?.dataset.ready==='true');
         const gpuCompositeActive=!!props.personalVision&&useComposite&&(!!sightFrame.enabled||(!!sightFrame.grade&&!sightFrame.grade.daylight));
         const sharedAnimated=visibleSharedIds.some(id=>{const inst=instances.get(id);return !!(inst?.mixer||inst?.fx||inst?.lightning);});
         // Static awareness need not redraw for weather or torch flicker. Camera,
@@ -778,7 +804,10 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         if(deferSpells)camera.layers.disable(SPELL_IMPACT_LAYER);else camera.layers.enable(SPELL_IMPACT_LAYER);
         const deferNames=!!props.personalVision&&useComposite&&!!(sightFrame?.enabled||(sightFrame?.grade&&!sightFrame.grade.daylight));
         if(deferNames)camera.layers.disable(MINIATURE_NAME_LAYER);else camera.layers.enable(MINIATURE_NAME_LAYER);
+        if(gpuFloorActive)renderer.setClearColor(props.floorTerrain!.canvasBg,1);
+        else renderer.setClearColor(0,0);
         renderer.render(scene, camera);
+        if(gpuFloorActive)renderer.setClearColor(0,0);
         camera.layers.enable(SPELL_IMPACT_LAYER);
         camera.layers.enable(MINIATURE_NAME_LAYER);
         setHostData('colorDrawCalls',String(renderer.info.render.calls));
@@ -811,7 +840,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         // of it is visible already, so only heavy darkness needs the reach.
         const flashes=useComposite&&sightFrame?.enabled&&sightFrame.grade?.heavy?impactLights.filter(l=>l.revealsTerrain).map(l=>({source:l,
           polygon:battlefield?.lighting.wallPolygon(l.id)??FLASH_CIRCLE.map(v=>({x:l.x+v.x*spellLightReach(l),y:l.y+v.y*spellLightReach(l)}))})):NO_FLASHES;
-        visionComposite?.render(!!props.personalVision&&useComposite,sightFrame,camera,flashes,battlefield?.memoryTexture);
+        visionComposite?.render(!!props.personalVision&&useComposite,sightFrame,camera,flashes,memoryTex,gpuFloorActive);
         if(gpuCompositeActive&&visibleSharedIds.length){
           sharedCompositeMaterial.uniforms.grayscale.value=colorMemory?0:1;
           sharedCompositeMaterial.uniforms.opacity.value=colorMemory?1:.78;
@@ -925,7 +954,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     if (instance.mixer) instance.mixer.uncacheRoot(instance.mixer.getRoot());
     scene.remove(instance.root);
     if (battlefield) renderer.shadowMap.needsUpdate = true;
+    instance.mergedGeometries?.forEach((geometry) => geometry.dispose());
     instance.materials.forEach((material) => material.dispose());
+    instance.torchLighting.dispose();
     instance.lightning?.dispose();
     instance.badgeMesh.geometry.dispose();instance.badgeMesh.material.dispose();instance.badgeTexture.dispose();
     instance.hunterMark.material.map?.dispose();instance.hunterMark.material.dispose();
@@ -1170,7 +1201,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     if (disposed || failed) return;
     const nextPixelRatio = rollBackgroundBudget(Math.min(window.devicePixelRatio || 1, next.graphics?.pixelRatioCap??2),!!next.rollBackground,!!next.rollBackgroundPrepared).pixelRatio;
     const nextMapId = useStore.getState().snapshot?.map?.id;
-    if (!forceSceneSync && hasRendered && syncedScene && syncedScene.tokens === next.tokens && syncedScene.preloadDefinitions === next.preloadDefinitions && syncedScene.environmentPreview === next.environmentPreview && syncedScene.spellImpacts === next.spellImpacts && syncedScene.spellFog === next.spellFog && syncedScene.preparedSpellImpacts === next.preparedSpellImpacts && syncedScene.spellColorOverlay === next.spellColorOverlay && syncedScene.spellMist === next.spellMist && syncedScene.personalVision === next.personalVision && syncedScene.rollBackground === next.rollBackground && syncedScene.rollBackgroundPrepared === next.rollBackgroundPrepared && syncedScene.graphics === next.graphics && syncedScene.width === next.width && syncedScene.height === next.height && syncedScene.pixelRatio === nextPixelRatio && syncedScene.mapId === nextMapId) {
+    if (!forceSceneSync && hasRendered && syncedScene && syncedScene.tokens === next.tokens && syncedScene.preloadDefinitions === next.preloadDefinitions && syncedScene.environmentPreview === next.environmentPreview && syncedScene.floorTerrain === next.floorTerrain && syncedScene.spellImpacts === next.spellImpacts && syncedScene.spellFog === next.spellFog && syncedScene.preparedSpellImpacts === next.preparedSpellImpacts && syncedScene.spellColorOverlay === next.spellColorOverlay && syncedScene.spellMist === next.spellMist && syncedScene.personalVision === next.personalVision && syncedScene.rollBackground === next.rollBackground && syncedScene.rollBackgroundPrepared === next.rollBackgroundPrepared && syncedScene.graphics === next.graphics && syncedScene.width === next.width && syncedScene.height === next.height && syncedScene.pixelRatio === nextPixelRatio && syncedScene.mapId === nextMapId) {
       sourceProps = next;
       const targetIdsChanged = props.rayTargetIds !== next.rayTargetIds;
       const liveTilt = props.tiltDegrees, liveRotation = props.rotationDegrees;
@@ -1182,7 +1213,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       if (currentCameraKey() !== drawnCameraKey) { cancelBattlefieldFrame(frame); frame = 0; lastPaint = 0; if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; } draw(performance.now()); }
       return;
     }
-    syncedScene = { tokens: next.tokens, preloadDefinitions: next.preloadDefinitions, environmentPreview: next.environmentPreview, spellImpacts: next.spellImpacts, spellFog: next.spellFog, preparedSpellImpacts: next.preparedSpellImpacts, spellColorOverlay: next.spellColorOverlay, spellMist: next.spellMist, personalVision: next.personalVision, rollBackground: next.rollBackground, rollBackgroundPrepared: next.rollBackgroundPrepared, graphics: next.graphics, width: next.width, height: next.height, pixelRatio: nextPixelRatio, mapId: nextMapId };
+    syncedScene = { tokens: next.tokens, preloadDefinitions: next.preloadDefinitions, environmentPreview: next.environmentPreview, floorTerrain: next.floorTerrain, spellImpacts: next.spellImpacts, spellFog: next.spellFog, preparedSpellImpacts: next.preparedSpellImpacts, spellColorOverlay: next.spellColorOverlay, spellMist: next.spellMist, personalVision: next.personalVision, rollBackground: next.rollBackground, rollBackgroundPrepared: next.rollBackgroundPrepared, graphics: next.graphics, width: next.width, height: next.height, pixelRatio: nextPixelRatio, mapId: nextMapId };
     tokensDirty = true;
     if (disposed || failed) return;
     batches.restore();
@@ -1213,6 +1244,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       renderer.getDrawingBufferSize(outlineResolution.value);
       outlineMask.setSize(outlineResolution.value.x, outlineResolution.value.y);
     }
+    gpuMapFloor.update(next.floorTerrain, next.graphics?.maxMapTextureResolutionPx ?? 8192);
     if(next.environmentPreview){
       if(!battlefield)battlefield=createBattlefieldEnvironment(scene,renderer,key,next.environmentPreview,{texture:outlineMask.depthTexture!,resolution:outlineResolution.value},localShadows.uniforms,invalidate,ambient);
       else if(lastEnvironment!==next.environmentPreview)battlefield.update(next.environmentPreview);
@@ -1405,10 +1437,12 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
             if(!useDepthProxy&&(Array.isArray(node.material)?node.material:[node.material]).every(m=>!m.transparent))node.layers.enable(1);
           }
         });
+        const lightning = definition.id === 'vanec' ? createVanecLightning(model) : null;
         let depthProxyKey:string|undefined,depthBodyProxy:Mesh|undefined,depthWeaponProxy:Mesh|undefined;
+        let mergedGeometries:BufferGeometry[]|undefined;
         if(useDepthProxy){
-          model.position.set(...definition.baseCenter.map((value)=>-value) as [number,number,number]);
-          model.updateMatrix();
+          centered.position.set(...definition.baseCenter.map((value)=>-value) as [number,number,number]);
+          centered.updateMatrix();
           depthProxyKey=JSON.stringify([definition.url,definition.baseCenter]);
           let proxyEntry=depthProxyGeometries.get(depthProxyKey);
           if(!proxyEntry){proxyEntry={geometries:createMiniatureDepthProxyGeometries(centered),users:0};depthProxyGeometries.set(depthProxyKey,proxyEntry);}
@@ -1427,14 +1461,29 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
             depthWeaponProxy.raycast=()=>{};depthWeaponProxy.matrixAutoUpdate=false;depthWeaponProxy.updateMatrix();
             root.add(depthWeaponProxy);
           }
+          if(!definition.fxUrl){
+            ({mergedGeometries}=mergeStaticHeroMeshes(model));
+            model.updateMatrixWorld(true);
+          }
         }
-        const materials = [...cloned.values()];
+        const materials:Material[]=[];
+        const seenMaterials=new Set<Material>();
+        const collectLiveMaterials=(obj:Object3D)=>{
+          if(obj.userData.dynamicFx)return;
+          if(obj instanceof Mesh){
+            for(const m of Array.isArray(obj.material)?obj.material:[obj.material]){
+              if(!seenMaterials.has(m)){seenMaterials.add(m);materials.push(m);}
+            }
+          }
+          for(const child of obj.children)collectLiveMaterials(child);
+        };
+        collectLiveMaterials(model);
         const outlineBounds=centeredMiniatureOutlineBounds(model,definition.baseCenter);
         const instance: Instance = {
           modelId:definition.id,
           mirrors:createMirrorImages(centered,root,renderer,()=>scene.environment,definition.baseDiameter),
           baseDiameter:definition.baseDiameter,outlineBounds,lanternAnchor,torchLighting,
-          depthProxyKey,depthBodyProxy,depthWeaponProxy,
+          depthProxyKey,depthBodyProxy,depthWeaponProxy,mergedGeometries,
           root, updateTransform, turnRing, selectionRing, targetRing, targetInnerRing, targetOuterRing, targetOuterMaterial, conditionRings, hunterMark, combatBadge, badgeMesh, badgeTexture, url: definition.url, materials,
           originalColors: materials.map(m => m instanceof MeshStandardMaterial ? m.color.clone() : null),
           originalOpacity: materials.map((material) => material.opacity),
@@ -1445,7 +1494,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
             /\.(position|quaternion|scale|morphTargetInfluences)(\[|$)/.test(track.name))),
           measureBody,
           mistBody:props.environmentPreview?measureBody():undefined,
-          lightning: definition.id === 'vanec' ? createVanecLightning(model) : null,
+          lightning,
         };
         place(current, instance);
         // The same coarse planning silhouette serves both detail tiers. Never
@@ -1530,6 +1579,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     footprints.dispose();
     clearPreview();previewMaterial.dispose();depthProxyMaterial.dispose();
     names.dispose();props.onRenderedNames?.(new Set());
+    setGpuFloorActive(false);
+    if(host.parentElement){delete host.parentElement.dataset.gpuFloorActive;delete host.parentElement.dataset.gpuVisionFull;}
+    gpuMapFloor.dispose();
     sharedCanvas.remove();sharedDepth.dispose();sharedTarget.dispose();sharedQuadGeometry.dispose();sharedCompositeMaterial.dispose();visionLift?.dispose();visionComposite?.dispose();
     battlefield?.dispose();battlefield=null;
     localShadows.dispose();

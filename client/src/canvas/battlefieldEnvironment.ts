@@ -72,6 +72,7 @@ export type EnvironmentPreviewSettings = Partial<Pick<MapEnvironment,'lighting'|
   mistQuality?: 'auto' | 'high' | 'low' | 'off';
   particleScale?: number;
   mapShadowSize?: number;
+  maxMapTextureResolutionPx?: number;
   props?: EnvironmentSceneryProp[];
   mistPatches?: EnvironmentMistPatch[];
 };
@@ -171,7 +172,7 @@ export function createBattlefieldEnvironment(
   environment.add(scenery, contacts);
   const visibility = createEnvironmentVisibility();
   const lighting=createBattlefieldLighting(scene,keyLight,ambient,visibility.uniforms,depthBuffer,shadowUniforms);
-  const darkvisionTerrain=createDarkvisionTerrain(scene,visibility.uniforms,lighting.fieldUniforms,lighting.terrainGrade,depthBuffer,requestRender);
+  const darkvisionTerrain=createDarkvisionTerrain(scene,renderer,visibility.uniforms,lighting.fieldUniforms,lighting.terrainGrade,depthBuffer,requestRender);
   const mist = createBattlefieldMist(depthBuffer.texture, depthBuffer.resolution, visibility.uniforms,lighting.fieldUniforms);
   const weather=createBattlefieldWeather(scene,depthBuffer,visibility.uniforms);
   const particles=createBattlefieldParticles(scene,depthBuffer,visibility.uniforms);

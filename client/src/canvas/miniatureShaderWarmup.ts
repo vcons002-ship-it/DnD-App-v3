@@ -62,6 +62,6 @@ export function createMiniatureShaderWarmup(renderer:WebGLRenderer, torchLightin
         if(!disposed){lastKey='';console.warn('Miniature shader warmup unavailable',error);}
       });
     },
-    dispose(){disposed=true;root.traverse(node=>{if(node instanceof InstancedMesh){node.dispose();(node.material as MeshStandardMaterial).dispose();}});batchLighting.dispose();sharedLighting.dispose();materials.forEach(m=>m.dispose());geometry.dispose();texture.dispose();},
+    dispose(){disposed=true;root.traverse(node=>{if(node instanceof InstancedMesh){node.dispose();(node.material as MeshStandardMaterial).dispose();}});batchLighting.dispose();sharedLighting.dispose();torchLighting.dispose();materials.forEach(m=>m.dispose());geometry.dispose();texture.dispose();},
   };
 }
