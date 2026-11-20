@@ -28,7 +28,7 @@ export function createArchArtLayer(renderer:WebGLRenderer,bodyMask:Texture,host:
    context.clip('evenodd');
    for(const {source,image} of images)context.drawImage(image,source.x,source.y,source.w||image.naturalWidth,source.h||image.naturalHeight);
    const texture=new CanvasTexture(canvas);
-   const material=new ShaderMaterial({transparent:true,depthTest:false,depthWrite:false,toneMapped:false,side:DoubleSide,
+   const material=new ShaderMaterial({transparent:true,forceSinglePass:true,depthTest:false,depthWrite:false,toneMapped:false,side:DoubleSide,
     uniforms:{art:{value:texture},body:{value:bodyMask},screen:{value:new Vector2(1,1)},resolution:{value:new Vector2(1,1)},mapSize:{value:new Vector2(w,h)},mapOrigin:{value:new Vector2(x,y)},offset:{value:new Vector2()},scale:{value:1},sy:{value:1},angle:{value:0},slope:{value:0},fade:{value:0},torchField:{value:texture},torchBounds:{value:new Vector4(0,0,1,1)},stormFlash:{value:0},gradeColor:{value:new Color()},gradeOpacity:{value:0},sceneTint:{value:new Color(0xffffff)},sceneTintStrength:{value:0},heavy:{value:0},litGrade:{value:0}},
     vertexShader:`uniform vec2 screen,mapSize,mapOrigin,offset;uniform float scale,sy,angle,slope;varying vec2 artUV;
      void main(){artUV=uv;vec2 p=mapOrigin+vec2(uv.x,1.-uv.y)*mapSize;

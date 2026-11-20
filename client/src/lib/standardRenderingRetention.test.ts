@@ -51,24 +51,24 @@ describe('standard rendering retention',()=>{
   expect(renders).toBe(stationaryRenders+1);
   lighting.dispose();visibility.dispose();
  });
+const svgMockNode=()=>{const children:any[]=[];const el:any={id:'',attrs:new Map<string,string>(),children,set innerHTML(_v:string){},setAttribute(k:string,v:string){this.attrs.set(k,String(v));},getAttribute(k:string){return this.attrs.get(k)??null;},removeAttribute(k:string){this.attrs.delete(k);},append(...kids:any[]){children.push(...kids);},remove(){}};return el;};
  it('retains vision light SVG masks across stationary torch flicker and updates when a light moves',()=>{
-  let groupWrites=0;
-  const node=()=>({id:'',attrs:new Map<string,string>(),setAttribute(k:string,v:string){this.attrs.set(k,v);},getAttribute(k:string){return this.attrs.get(k)??null;},append(){},remove(){}});
-  const prevDoc=(globalThis as any).document;(globalThis as any).document={createElementNS:()=>node()};
+  const prevDoc=(globalThis as any).document;(globalThis as any).document={createElementNS:()=>svgMockNode()};
   try{
-   const group={set innerHTML(_v:string){groupWrites++;}} as unknown as SVGGElement;
-   const defs=node() as unknown as SVGGElement;
+   const group=svgMockNode() as unknown as SVGGElement;
+   const defs=svgMockNode() as unknown as SVGGElement;
    const mask=createVisionLightMask(group,defs,'lamp');
    const ellipse=createVisionLightProjector({x:0,y:0,scale:1},45,0,1000,800);
    const projection={key:'cam1',wallsKey:'[]',occluded:false,ellipse,circle:()=>'M0,0Z',clip:()=>'M0,0Z'};
    mask.sync([{id:'torch',x:200,y:300,height:50,radius:180,strength:.9,nominalRadius:200,nominalStrength:1} as any],projection);
-   expect(groupWrites).toBe(1);expect(mask.stats.geometryUpdates).toBe(1);
+   const initialWrites=mask.stats.domWrites;
+   expect(initialWrites).toBeGreaterThan(0);expect(mask.stats.geometryUpdates).toBe(1);
    for(const factor of [.85,1.05,1.22]){
     mask.sync([{id:'torch',x:200,y:300,height:50,radius:200*factor,strength:factor,nominalRadius:200,nominalStrength:1} as any],projection);
    }
-   expect(groupWrites).toBe(1);expect(mask.stats.geometryUpdates).toBe(1);
+   expect(mask.stats.domWrites).toBe(initialWrites);expect(mask.stats.geometryUpdates).toBe(1);
    mask.sync([{id:'torch',x:240,y:300,height:50,radius:200,strength:1,nominalRadius:200,nominalStrength:1} as any],projection);
-   expect(groupWrites).toBe(2);expect(mask.stats.geometryUpdates).toBe(2);
+   expect(mask.stats.domWrites).toBeGreaterThan(initialWrites);expect(mask.stats.geometryUpdates).toBe(2);
    mask.dispose();
   }finally{(globalThis as any).document=prevDoc;}
  });
@@ -114,23 +114,23 @@ describe('standard rendering retention',()=>{
   mesh.geometry.dispose();(mesh.material as MeshBasicMaterial).dispose();mesh.skeleton.dispose();target.dispose();
  });
  it('reuses world-space vision light SVG masks across flat camera transforms and rebuilds on tilt or light move',()=>{
-  let groupWrites=0;
-  const node=()=>({id:'',attrs:new Map<string,string>(),setAttribute(k:string,v:string){this.attrs.set(k,v);},getAttribute(k:string){return this.attrs.get(k)??null;},append(){},remove(){}});
-  const prevDoc=(globalThis as any).document;(globalThis as any).document={createElementNS:()=>node()};
+  const prevDoc=(globalThis as any).document;(globalThis as any).document={createElementNS:()=>svgMockNode()};
   try{
-   const group={set innerHTML(_v:string){groupWrites++;}} as unknown as SVGGElement;
-   const defs=node() as unknown as SVGGElement;
+   const group=svgMockNode() as unknown as SVGGElement;
+   const defs=svgMockNode() as unknown as SVGGElement;
    const mask=createVisionLightMask(group,defs,'world-lamp');
    const light={id:'torch',x:200,y:300,height:50,radius:200,strength:1} as any;
    const worldProj={key:'world',wallsKey:'[]',occluded:false,ellipse:(cx:number,cy:number,r:number)=>({cx,cy,rx:r,ry:r,rotation:0}),circle:()=>'M0,0Z',clip:()=>'M0,0Z'};
    mask.sync([light],worldProj);
+   const writesAfterMount=mask.stats.domWrites;
    mask.sync([light],worldProj);
-   expect(groupWrites).toBe(1);expect(mask.stats.geometryUpdates).toBe(1);
+   expect(mask.stats.domWrites).toBe(writesAfterMount);expect(mask.stats.geometryUpdates).toBe(1);
    const tiltedProj={key:'tilted:45',wallsKey:'[]',occluded:false,ellipse:createVisionLightProjector({x:10,y:20,scale:1.5},45,0,1000,800),circle:()=>'M0,0Z',clip:()=>'M0,0Z'};
    mask.sync([light],tiltedProj);
-   expect(groupWrites).toBe(2);expect(mask.stats.geometryUpdates).toBe(2);
+   expect(mask.stats.domWrites).toBeGreaterThan(writesAfterMount);expect(mask.stats.geometryUpdates).toBe(2);
+   const writesAfterTilt=mask.stats.domWrites;
    mask.sync([{...light,x:240}],worldProj);
-   expect(groupWrites).toBe(3);expect(mask.stats.geometryUpdates).toBe(3);
+   expect(mask.stats.domWrites).toBeGreaterThan(writesAfterTilt);expect(mask.stats.geometryUpdates).toBe(3);
    mask.dispose();
   }finally{(globalThis as any).document=prevDoc;}
  });

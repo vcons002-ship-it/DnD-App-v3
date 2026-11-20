@@ -13,7 +13,7 @@ export function createMiniatureVisibilityMaterial() {
     toneMapped: false,
   });
   material.onBeforeRender = (_renderer, _scene, _camera, _geometry, object) => {
-    material.uniforms.personal.value = object.layers.isEnabled(4) ? 0 : 1;
+    material.uniforms.personal.value = object.layers.isEnabled(4) || object.userData.sharedSightOnly ? 0 : 1;
     material.uniforms.outlineId.value = object.userData.outlineId ?? 0;
     material.uniforms.bodySlot.value = object.userData.bodySlot ?? 0;
     material.uniformsNeedUpdate = true;

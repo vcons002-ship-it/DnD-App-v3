@@ -27,6 +27,12 @@ export type PlayerVisionHandle={cover:()=>VisionCoverFrame|undefined;memoryCanva
  * Never disabled by effect quality. */
 type TerrainTile={url:string;x:number;y:number;w:number;h:number};
 type MemoryTerrain={environment?:MapEnvironment;explored?:ExploredTerrain;tiles:TerrainTile[];bounds:{x:number;y:number;w:number;h:number};grid?:{size:number;x:number;y:number}};
+let projCap=64,clipCap=128;
+let projX=new Float64Array(projCap),projY=new Float64Array(projCap),projW=new Float64Array(projCap);
+let clipX=new Float64Array(clipCap),clipY=new Float64Array(clipCap),clipW=new Float64Array(clipCap);
+const ensureProjScratch=(len:number)=>{if(len>projCap){projCap=Math.max(len,projCap*2);projX=new Float64Array(projCap);projY=new Float64Array(projCap);projW=new Float64Array(projCap);}};
+const ensureClipScratch=(len:number)=>{if(len>clipCap){clipCap=Math.max(len,clipCap*2);clipX=new Float64Array(clipCap);clipY=new Float64Array(clipCap);clipW=new Float64Array(clipCap);}};
+const r1=(n:number)=>Math.round(n*10)/10;
 export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:PlayerVision;serverGeometry?:LegacyGeometry|null;spellLighting?:boolean;mapFogOfWar?:boolean;keepRevealed?:boolean;terrain?:MemoryTerrain;presentation?:TokenPresentation}>(function PlayerVisionOverlay(props,ref){
  const shade=useRef<HTMLDivElement>(null);
  const nearShade=useRef<HTMLDivElement>(null),nearPaths=useRef<SVGGElement>(null);
@@ -65,13 +71,48 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
  const prepareProjection=useRef<Parameters<ReturnType<typeof createVisionLightMask>['prepare']>[1]>();
  const drawCount=useRef(0),baseDrawCount=useRef(0);
  const coverFrame=useRef<VisionCoverFrame>();
- const markup=useRef(new WeakMap<Element,string>());
- const setMarkup=(node:Element|null,value:string)=>{if(node&&markup.current.get(node)!==value){node.innerHTML=value;markup.current.set(node,value);}};
+ const domCache=useRef<{rot?:string;tilt?:string;shape?:boolean;filter?:string;nearDisplay?:string;nearFilter?:string}>({});
+ const SVG_NS='http://www.w3.org/2000/svg';
+ const syncPaths=(container:SVGElement|null,items:readonly {d:string;fill?:string;clipRule?:string}[])=>{
+  if(!container)return;
+  while(container.children.length>items.length)container.lastElementChild?.remove();
+  for(let i=0;i<items.length;i++){
+   const item=items[i];
+   let el=container.children[i] as SVGElement|undefined;
+   if(!el||el.tagName.toLowerCase()!=='path'){
+    const pathEl=document.createElementNS(SVG_NS,'path');
+    if(el)container.replaceChild(pathEl,el);else container.appendChild(pathEl);
+    el=pathEl;
+   }
+   if(el.getAttribute('d')!==item.d)el.setAttribute('d',item.d);
+   if(item.fill!==undefined){if(el.getAttribute('fill')!==item.fill)el.setAttribute('fill',item.fill);}
+   else if(el.hasAttribute('fill'))el.removeAttribute('fill');
+   if(item.clipRule!==undefined){if(el.getAttribute('clip-rule')!==item.clipRule)el.setAttribute('clip-rule',item.clipRule);}
+   else if(el.hasAttribute('clip-rule'))el.removeAttribute('clip-rule');
+  }
+ };
+ const syncCoverRect=(container:SVGElement|null,w:number,h:number)=>{
+  if(!container)return;
+  while(container.children.length>1)container.lastElementChild?.remove();
+  let rect=container.firstElementChild as SVGElement|null;
+  if(!rect||rect.tagName.toLowerCase()!=='rect'){
+   rect=document.createElementNS(SVG_NS,'rect');
+   if(container.firstElementChild)container.replaceChild(rect,container.firstElementChild);else container.appendChild(rect);
+  }
+  const sw=String(w),sh=String(h);
+  if(rect.getAttribute('width')!==sw)rect.setAttribute('width',sw);
+  if(rect.getAttribute('height')!==sh)rect.setAttribute('height',sh);
+  if(rect.getAttribute('fill')!=='white')rect.setAttribute('fill','white');
+ };
  const draw=()=>{
   const began=performance.now();
   if(!shade.current||!lightPaths.current||!originPaths.current||!sightPaths.current||!lightClips.current)return;
   const {vision,view,tilt,rotation,width,height}=state.current;
-  if(root.current){root.current.dataset.cameraRotation=String(rotation);root.current.dataset.cameraTilt=String(tilt);}
+  if(root.current){
+   const rStr=String(rotation),tStr=String(tilt);
+   if(domCache.current.rot!==rStr){root.current.dataset.cameraRotation=rStr;domCache.current.rot=rStr;}
+   if(domCache.current.tilt!==tStr){root.current.dataset.cameraTilt=tStr;domCache.current.tilt=tStr;}
+  }
   const sy=groundYScale(tilt),a=rotation*Math.PI/180,c=Math.cos(a),s=Math.sin(a),k=perspectiveSlope(width,height,tilt);
   const orthoUnrotated=k===0&&s===0&&c===1&&sy===1;
   const projectionKey=[view.x,view.y,view.scale,tilt,rotation,width,height].join(':');
@@ -93,39 +134,55 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
   const project=(vertices:WallPoint[])=>{
    const cached=projectedPolygons.current.get(vertices);
    if(cached?.camera===projectionKey)return cached.path;
+   const n=vertices.length;
+   if(!n){projectedPolygons.current.set(vertices,{camera:projectionKey,path:''});return '';}
    if(orthoUnrotated){
-    if(!vertices.length){projectedPolygons.current.set(vertices,{camera:projectionKey,path:''});return '';}
-    let result='M';
-    for(let i=0;i<vertices.length;i++){
+    let result='M'+r1(view.x+vertices[0].x*view.scale)+','+r1(view.y+vertices[0].y*view.scale);
+    for(let i=1;i<n;i++){
      const v=vertices[i];
-     if(i>0)result+='L';
-     result+=`${(view.x+v.x*view.scale).toFixed(2)},${(view.y+v.y*view.scale).toFixed(2)}`;
+     result+='L'+r1(view.x+v.x*view.scale)+','+r1(view.y+v.y*view.scale);
     }
     result+='Z';
     projectedPolygons.current.set(vertices,{camera:projectionKey,path:result});
     return result;
    }
-   let poly=vertices.map(vertex=>{
-    const dx=view.x+vertex.x*view.scale-width/2;
-    const dy=view.y+vertex.y*view.scale*sy-height/2;
-    const x=c*dx-s*dy/sy,y=s*dx*sy+c*dy;return {x,y,w:1-y*k};});
+   ensureProjScratch(n);ensureClipScratch(n*2);
+   const hw=width/2,hh=height/2,scaleY=view.scale*sy;
+   for(let i=0;i<n;i++){
+    const vertex=vertices[i];
+    const dx=view.x+vertex.x*view.scale-hw;
+    const dy=view.y+vertex.y*scaleY-hh;
+    const x=c*dx-s*dy/sy,y=s*dx*sy+c*dy;
+    projX[i]=x;projY[i]=y;projW[i]=1-y*k;
+   }
    // Clip behind-camera vertices before perspective division, including deep zoom.
-   const clipped:typeof poly=[];
-   for(let i=0;i<poly.length;i++){const p=poly[i],q=poly[(i+1)%poly.length],pin=p.w>=.01,qin=q.w>=.01;
-    if(pin)clipped.push(p);if(pin!==qin){const t=(.01-p.w)/(q.w-p.w);clipped.push({x:p.x+(q.x-p.x)*t,y:p.y+(q.y-p.y)*t,w:.01});}}
-   poly=clipped;
-   const result=poly.length?'M'+poly.map(p=>`${(width/2+p.x/p.w).toFixed(2)},${(height/2+p.y/p.w).toFixed(2)}`).join('L')+'Z':'';
+   let m=0;
+   for(let i=0;i<n;i++){
+    const j=(i+1)%n;
+    const px=projX[i],py=projY[i],pw=projW[i],qx=projX[j],qy=projY[j],qw=projW[j];
+    const pin=pw>=.01,qin=qw>=.01;
+    if(pin){clipX[m]=px;clipY[m]=py;clipW[m]=pw;m++;}
+    if(pin!==qin){
+     const t=(.01-pw)/(qw-pw);
+     clipX[m]=px+(qx-px)*t;clipY[m]=py+(qy-py)*t;clipW[m]=.01;m++;
+    }
+   }
+   let result='';
+   if(m){
+    result='M'+r1(hw+clipX[0]/clipW[0])+','+r1(hh+clipY[0]/clipW[0]);
+    for(let i=1;i<m;i++)result+='L'+r1(hw+clipX[i]/clipW[i])+','+r1(hh+clipY[i]/clipW[i]);
+    result+='Z';
+   }
    projectedPolygons.current.set(vertices,{camera:projectionKey,path:result});return result;
   };
   const worldProject=(vertices:WallPoint[])=>{
    const cached=worldPolygons.current.get(vertices);
    if(cached!==undefined)return cached;
    if(!vertices.length){worldPolygons.current.set(vertices,'');return '';}
-   let result='M';
-   for(let i=0;i<vertices.length;i++){
+   let result='M'+r1(vertices[0].x)+','+r1(vertices[0].y);
+   for(let i=1;i<vertices.length;i++){
     const v=vertices[i];
-    if(i>0)result+='L';
-    result+=`${v.x.toFixed(2)},${v.y.toFixed(2)}`;
+    result+='L'+r1(v.x)+','+r1(v.y);
    }
    result+='Z';
    worldPolygons.current.set(vertices,result);
@@ -166,10 +223,16 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
   setWorldTransform(lightPaths.current,orthoUnrotated);
   setWorldTransform(spellPaths.current,orthoUnrotated);
   const worldEllipse=(cx:number,cy:number,r:number)=>({cx,cy,rx:r,ry:r,rotation:0});
+  const projectPoint=(x:number,y:number):{x:number;y:number}|undefined=>{
+   if(orthoUnrotated)return {x,y};
+   const dx=view.x+x*view.scale-width/2,dy=view.y+y*view.scale*sy-height/2;
+   const px=c*dx-s*dy/sy,py=s*dx*sy+c*dy,w=1-py*k;
+   return w>=.01?{x:width/2+px/w,y:height/2+py/w}:undefined;
+  };
   const projection=orthoUnrotated
-   ?{key:'world',wallsKey,occluded:!!vision.walls?.length,ellipse:worldEllipse,
+   ?{key:'world',wallsKey,occluded:!!vision.walls?.length,ellipse:worldEllipse,point:projectPoint,
      circle:(l:VisionLight,r:number)=>worldPath(l,r,true),clip:(l:VisionLight)=>worldPath(l,SIGHT_EXTENT,true,true)}
-   :{key:projectionKey,wallsKey,occluded:!!vision.walls?.length,ellipse:lightEllipse,
+   :{key:projectionKey,wallsKey,occluded:!!vision.walls?.length,ellipse:lightEllipse,point:projectPoint,
      circle:(l:VisionLight,r:number)=>path(l,r,true),clip:(l:VisionLight)=>path(l,SIGHT_EXTENT,true,true)};
   prepareProjection.current=projection;
   const spellLights=sourceLights.filter(l=>l.transient&&state.current.spellLighting!==false);if(spellLights.length||(spellMask.current?.stats.lights??0)>0)spellMask.current?.sync(spellLights.map(positioned),projection);
@@ -177,7 +240,7 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    root.current.dataset.visionCpuMs=(performance.now()-began).toFixed(2);
    root.current.dataset.visionDrawCount=String(++drawCount.current);
    root.current.dataset.visionBaseDrawCount=String(baseDrawCount.current);
-   root.current.dataset.lightBandShape='ellipse';root.current.dataset.lightBandReuse='retained';
+   if(!domCache.current.shape){root.current.dataset.lightBandShape='ellipse';root.current.dataset.lightBandReuse='retained';domCache.current.shape=true;}
   }};
   if(!fullDraw.current){finish();return;}
   fullDraw.current=false;
@@ -207,31 +270,32 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
     }
     rings=cachedRings;
    }
-   setMarkup(memoryPaths.current,rings.map(p=>`<path clip-rule="evenodd" d="${p.map(r=>project(r)).join('')}"/>`).join(''));
+   syncPaths(memoryPaths.current,rings.map(p=>({d:p.map(r=>project(r)).join(''),clipRule:'evenodd'})));
    memoryProjection.current={geometry,camera};
    if(memoryPlane.current)memoryPlane.current.style.transform=groundPerspectiveCss(width,height,tilt,rotation);
    if(memoryMap.current)memoryMap.current.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.scale},${view.scale*sy})`;
   }
   const sightD=vision.origins.map(o=>path(o,SIGHT_EXTENT,false,wallFog));
-  setMarkup(sightPaths.current,sightD.map(d=>`<path d="${d}"/>`).join(''));
+  syncPaths(sightPaths.current,sightD.map(d=>({d})));
   setWorldTransform(originPaths.current,orthoUnrotated);
-  const circles=vision.origins.map((o,i)=>{
+  const circleItems=vision.origins.map((o,i)=>{
    const useSight=!vision.heavy&&(wallFog&&!!vision.walls?.length===wallFog);
    const d=orthoUnrotated
     ?(useSight?worldPath(o,SIGHT_EXTENT,false,wallFog):worldPath(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length))
     :(useSight?sightD[i]:path(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length));
-   return `<path fill="black" d="${d}"/>`;
-  }).join('');
+   return {d,fill:'black'};
+  });
   setWorldTransform(nearPaths.current,orthoUnrotated);
-  setMarkup(nearPaths.current,!vision.daylight&&!vision.heavy?vision.origins.map(o=>`<path d="${orthoUnrotated?worldPath(o,vision.radius,false,wallFog):path(o,vision.radius,false,wallFog)}"/>`).join(''):'');
+  syncPaths(nearPaths.current,!vision.daylight&&!vision.heavy?vision.origins.map(o=>({d:orthoUnrotated?worldPath(o,vision.radius,false,wallFog):path(o,vision.radius,false,wallFog)})):[]);
   // Ordinary lanterns keep steady nominal vision geometry while the 3D renderer
   // and cosmetic spell-light bands animate independently.
   ordinaryMask.current.sync(ordinaryLights,projection);
   // Keep the SVG mask in the DOM and share light geometry between both masks.
   // Encoding/decoding two large SVG image URLs per frame caused mobile stalls.
-  setMarkup(originPaths.current,circles);
+  syncPaths(originPaths.current,circleItems);
   setWorldTransform(retainedRange.current,orthoUnrotated&&vision.heavy);
-  setMarkup(retainedRange.current,vision.heavy?vision.origins.map(o=>`<path fill="white" d="${orthoUnrotated?worldPath(o,vision.radius):path(o,vision.radius)}"/>`).join(''):`<rect width="${width}" height="${height}" fill="white"/>`);
+  if(vision.heavy)syncPaths(retainedRange.current,vision.origins.map(o=>({d:orthoUnrotated?worldPath(o,vision.radius):path(o,vision.radius),fill:'white'})));
+  else syncCoverRect(retainedRange.current,width,height);
   const originPolygon=(o:{id:string;x:number;y:number},radius:number)=>{
    const p=livePoint(o);
    return wallFog?polygon({...p,id:o.id},radius):circleVertices.map(v=>({x:p.x+v.x*radius,y:p.y+v.y*radius}));
@@ -250,10 +314,13 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
   // never enter this cover or authorize/persist exploration. A flashing area
   // spell's reach joins the GPU cover alone, inside sight (see SpellFlash).
   const filter=vision.daylight?'none':vision.heavy?`grayscale(${HEAVY_DARKVISION_DESATURATION})`:'grayscale(.88) brightness(.78)';
-  shade.current.style.backdropFilter=filter;
-  shade.current.style.setProperty('-webkit-backdrop-filter',filter);
+  if(domCache.current.filter!==filter){shade.current.style.backdropFilter=filter;shade.current.style.setProperty('-webkit-backdrop-filter',filter);domCache.current.filter=filter;}
   const nearFilter=`grayscale(${REGULAR_DARKVISION_DESATURATION}) brightness(1.18)`;
-  if(nearShade.current){nearShade.current.style.display=vision.daylight||vision.heavy?'none':'';nearShade.current.style.backdropFilter=nearFilter;nearShade.current.style.setProperty('-webkit-backdrop-filter',nearFilter);}
+  const nearDisplay=vision.daylight||vision.heavy?'none':'';
+  if(nearShade.current){
+   if(domCache.current.nearDisplay!==nearDisplay){nearShade.current.style.display=nearDisplay;domCache.current.nearDisplay=nearDisplay;}
+   if(domCache.current.nearFilter!==nearFilter){nearShade.current.style.backdropFilter=nearFilter;nearShade.current.style.setProperty('-webkit-backdrop-filter',nearFilter);domCache.current.nearFilter=nearFilter;}
+  }
   finish();
  };
  // Movement, camera following and flickering lights can all update in one

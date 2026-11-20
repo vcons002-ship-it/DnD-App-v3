@@ -2,20 +2,20 @@ import Konva from 'konva';
 import type {SceneCanvas} from 'konva/lib/Canvas';
 import {dirtyRegions,overlaps,sameRect,type PaintRect} from '../../../shared/dirtyRegions';
 type Entry={node:Konva.Node;scene:PaintRect|null;hit:PaintRect|null;sceneDirty:boolean;hitDirty:boolean;force:boolean;art?:Konva.Node};
-type Retained={invalidate:(node:Konva.Node)=>void;dispose:()=>void};
+type Retained={invalidate:(node:Konva.Node,scheduleDraw?:boolean)=>void;dispose:()=>void};
 const installed=new WeakMap<Konva.Layer,Retained>();
 /** Decoration changes are explicit; transform/listening changes are observed.
  * Padded perspective canvases retain pixels before their CSS projection. Layers
  * with visible tools use Konva's full paint until those tools are dismissed. */
-export function invalidateRetainedToken(node:Konva.Node|null){
- const layer=node?.getLayer();if(layer&&node)installed.get(layer)?.invalidate(node);
+export function invalidateRetainedToken(node:Konva.Node|null,scheduleDraw=true){
+ const layer=node?.getLayer();if(layer&&node)installed.get(layer)?.invalidate(node,scheduleDraw);
 }
 export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:SceneCanvas){
  installed.get(layer)?.dispose();
  const originalScene=layer.drawScene,originalHit=layer.drawHit,entries=new Map<Konva.Node,Entry>();
  const stats={fullScene:0,partialScene:0,skippedScene:0,sceneNodes:0,scenePixels:0,fullHit:0,partialHit:0,skippedHit:0,hitNodes:0,toolFrames:0};
  layer.attrs.retainedStats=stats;
- let fullScene=true,fullHit=true,size='',wasDragging=false,sceneOrder:Konva.Node[]=[],hadTools=false;
+ let fullScene=true,fullHit=true,hasScenePixels=true,size='',wasDragging=false,sceneOrder:Konva.Node[]=[],hadTools=false;
  const origin=():{x:number;y:number}=>layer.getAttr('retainedCanvasOrigin')??{x:0,y:0};
  const hasTools=(children:Konva.Node[])=>children.some(node=>!node.hasName('token')&&!node.hasName('token-move-preview')&&node.isVisible());
  const removedScene:(PaintRect|null)[]=[],removedHit:(PaintRect|null)[]=[];
@@ -32,7 +32,7 @@ export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:S
    if(node instanceof Konva.Group){entry.art=node.findOne('.token-art');entry.art?.on('xChange.retainedToken yChange.retainedToken',()=>touch(entry,false));}
   }
   const canvas=layer.getCanvas(),offset=origin(),key=[canvas.width,canvas.height,canvas.pixelRatio,offset.x,offset.y].join(':');
-  if(key!==size){size=key;fullScene=fullHit=true;}
+  if(key!==size){size=key;fullScene=fullHit=true;hasScenePixels=true;}
   return children;
  };
  const rawBounds=(node:Konva.Node,hit:boolean):PaintRect|null=>{
@@ -45,30 +45,39 @@ export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:S
   const rect=node.getClientRect();return rect.width&&rect.height?rect:null;
  };
  const bounds=(node:Konva.Node,hit:boolean)=>{const rect=rawBounds(node,hit),offset=origin();return rect?{...rect,x:rect.x+offset.x,y:rect.y+offset.y}:null;};
- const invalidate=(node:Konva.Node)=>{
+ const invalidate=(node:Konva.Node,scheduleDraw=true)=>{
   while(node.getParent()&&node.getParent()!==layer)node=node.getParent()!;
   const entry=entries.get(node);if(entry)touch(entry,true);
-  layer.batchDraw();
+  if(scheduleDraw)layer.batchDraw();
  };
  layer.on('xChange.retainedToken yChange.retainedToken scaleXChange.retainedToken scaleYChange.retainedToken rotationChange.retainedToken opacityChange.retainedToken visibleChange.retainedToken',()=>{fullScene=fullHit=true;});
  layer.on('listeningChange.retainedToken',()=>{fullHit=true;});
  layer.drawScene=function(canvas,top,buffer){
   if(canvas&&canvas!==layer.getCanvas()||top)return originalScene.call(layer,canvas,top,buffer);
   const children=sync(),native=layer.getCanvas(),width=native.width/native.pixelRatio,height=native.height/native.pixelRatio;
-  if(hasTools(children)){hadTools=true;fullScene=fullHit=true;stats.toolFrames++;return originalScene.call(layer,canvas,top,buffer);}
-  if(hadTools){hadTools=false;fullScene=fullHit=true;}
+  if(hasTools(children)){hadTools=true;fullScene=fullHit=true;hasScenePixels=true;stats.toolFrames++;return originalScene.call(layer,canvas,top,buffer);}
+  if(hadTools){hadTools=false;fullScene=fullHit=true;hasScenePixels=true;}
   const changed=removedScene.splice(0);
-  for(const e of entries.values())if(fullScene||e.sceneDirty){
-   const next=bounds(e.node,false);if(e.force||!sameRect(e.scene,next))changed.push(e.scene,next);
-   e.scene=next;e.sceneDirty=false;e.force=false;
+  let anyLiveScene=false;
+  for(const e of entries.values()){
+   if(fullScene||e.sceneDirty){
+    const next=bounds(e.node,false);if(e.force||!sameRect(e.scene,next))changed.push(e.scene,next);
+    e.scene=next;e.sceneDirty=false;e.force=false;
+   }
+   if(e.scene)anyLiveScene=true;
   }
   // Reordering painted nodes changes occlusion even when their bounds are identical.
   const order:Konva.Node[]=children.filter(n=>entries.get(n)?.scene),oldLive=sceneOrder.filter(n=>order.includes(n)),oldSet=new Set(oldLive),common=order.filter(n=>oldSet.has(n));
   if(common.some((n,i)=>n!==oldLive[i]))for(const n of common)changed.push(entries.get(n)!.scene);
   sceneOrder=order;
-  let regions=dirtyRegions(changed,width,height);
-  if(fullScene||regions.length>48||regions.reduce((sum,r)=>sum+r.width*r.height,0)>width*height*.65){regions=[{x:0,y:0,width,height}];fullScene=false;stats.fullScene++;}
-  else if(regions.length)stats.partialScene++;else stats.skippedScene++;
+  let regions:PaintRect[];
+  if(!hasScenePixels&&!anyLiveScene&&!changed.some(Boolean)){
+   fullScene=false;regions=[];stats.skippedScene++;
+  }else{
+   regions=dirtyRegions(changed,width,height);
+   if(fullScene||regions.length>48||regions.reduce((sum,r)=>sum+r.width*r.height,0)>width*height*.65){regions=[{x:0,y:0,width,height}];fullScene=false;stats.fullScene++;}
+   else if(regions.length)stats.partialScene++;else stats.skippedScene++;
+  }
   layer.fire('beforeDraw',{node:layer});
   if(regions.length){
    const context=native.getContext(),offset=origin();context.save();context.translate(-offset.x,-offset.y);context.beginPath();
@@ -77,6 +86,12 @@ export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:S
    context.translate(offset.x,offset.y);
    for(const node of children){const rect=entries.get(node)?.scene;if(rect&&regions.some(r=>overlaps(rect,r))){node.drawScene(native,undefined,buffer??perspectiveBuffer??layer.getAttr('retainedPerspectiveBuffer'));stats.sceneNodes++;}}
    context.restore();
+   if(anyLiveScene)hasScenePixels=true;
+   else if((regions.length===1&&regions[0].x<=0&&regions[0].y<=0&&regions[0].width>=width&&regions[0].height>=height)||changed.every(r=>{
+    if(!r)return true;
+    const x0=Math.max(0,r.x),y0=Math.max(0,r.y),x1=Math.min(width,r.x+r.width),y1=Math.min(height,r.y+r.height);
+    return x1<=x0||y1<=y0||regions.some(c=>c.x<=x0&&c.y<=y0&&c.x+c.width>=x1&&c.y+c.height>=y1);
+   }))hasScenePixels=false;
   }
   layer.fire('draw',{node:layer});return layer;
  };

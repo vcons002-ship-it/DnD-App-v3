@@ -21,6 +21,9 @@ export function createMiniatureTorchLighting(shadowUniforms:ReturnType<typeof cr
   const point=new Vector3();
   const sight=createLightSightCache();
   let signature='';
+  let lastLights:readonly TorchLight[]|undefined,lastWalls:readonly MapWall[]|undefined;
+  let lastX=NaN,lastZ=NaN,lastMode:MiniatureLightMode|''='',lastDarkvision:boolean|undefined,lastGroundEnabled=-1;
+  let cachedChosen:{light:TorchLight;nx:number;ny:number}[]=[];
   return {uniforms,get signature(){return signature;},get cacheState(){return sight.state;},attach(material:Material){
     if(!(material instanceof MeshStandardMaterial))return;
     const previous=material.onBeforeCompile,cache=material.customProgramCacheKey();
@@ -79,29 +82,34 @@ export function createMiniatureTorchLighting(shadowUniforms:ReturnType<typeof cr
     uniforms.torchGroundField.value=field?.torchField.value??emptyGroundField;
     if(field)uniforms.torchGroundBounds.value.copy(field.torchBounds.value);else uniforms.torchGroundBounds.value.set(0,0,0,0);
     uniforms.torchGroundPoint.value.set(root.position.x,root.position.z);
-    const chosen:{light:TorchLight;score:number}[]=[];
-    // Balanced spells illuminate terrain only. Low bypasses per-figure source
-    // selection entirely, including its ray checks and eight-light shader loop.
-    if(mode!=='ground')for(const light of lights){
-      if(mode==='spells-ground'&&light.transient)continue;
-      const nearest=nearestLightPoint(light,root.position.x,root.position.z);
-      const d2=(nearest.x-root.position.x)**2+(nearest.y-root.position.z)**2;
-      if(d2>(light.radius*LIGHT_SPILL_MULTIPLIER)**2)continue;
-      if(!sight.visible(light.id,light,{x:root.position.x,y:root.position.z},walls))continue;
-      const score=light.strength*light.radius**2/Math.max(1,d2+light.height**2*.25);
-      let i=0;while(i<chosen.length&&chosen[i].score>=score)i++;
-      if(i<8){chosen.splice(i,0,{light,score});if(chosen.length>8)chosen.pop();}
+    const rx=root.position.x,rz=root.position.z,groundEnabled=uniforms.torchGroundEnabled.value;
+    if(lights!==lastLights||walls!==lastWalls||rx!==lastX||rz!==lastZ||mode!==lastMode||darkvision!==lastDarkvision||groundEnabled!==lastGroundEnabled){
+      lastLights=lights;lastWalls=walls;lastX=rx;lastZ=rz;lastMode=mode;lastDarkvision=darkvision;lastGroundEnabled=groundEnabled;
+      const chosen:{light:TorchLight;nx:number;ny:number;score:number}[]=[];
+      // Balanced spells illuminate terrain only. Low bypasses per-figure source
+      // selection entirely, including its ray checks and eight-light shader loop.
+      if(mode!=='ground')for(const light of lights){
+        if(mode==='spells-ground'&&light.transient)continue;
+        const nearest=nearestLightPoint(light,rx,rz);
+        const d2=(nearest.x-rx)**2+(nearest.y-rz)**2;
+        if(d2>(light.radius*LIGHT_SPILL_MULTIPLIER)**2)continue;
+        if(!sight.visible(light.id,light,{x:rx,y:rz},walls))continue;
+        const score=light.strength*light.radius**2/Math.max(1,d2+light.height**2*.25);
+        let i=0;while(i<chosen.length&&chosen[i].score>=score)i++;
+        if(i<8){chosen.splice(i,0,{light,nx:nearest.x,ny:nearest.y,score});if(chosen.length>8)chosen.pop();}
+      }
+      chosen.sort((a,b)=>a.light.id.localeCompare(b.light.id));
+      cachedChosen=chosen;
+      uniforms.torchCount.value=chosen.length;
+      signature=JSON.stringify([mode,groundEnabled,darkvision,chosen.map(c=>c.light.id)]);
     }
-    uniforms.torchCount.value=chosen.length;
-    chosen.sort((a,b)=>a.light.id.localeCompare(b.light.id));
-    signature=JSON.stringify([mode,uniforms.torchGroundEnabled.value,darkvision,chosen.map(c=>c.light.id)]);
-    chosen.forEach(({light},i)=>{
-      const nearest=nearestLightPoint(light,root.position.x,root.position.z);
-      point.set(nearest.x,light.height,nearest.y).applyMatrix4(camera.matrixWorldInverse);
+    for(let i=0;i<cachedChosen.length;i++){
+      const {light,nx,ny}=cachedChosen[i];
+      point.set(nx,light.height,ny).applyMatrix4(camera.matrixWorldInverse);
       uniforms.torchPositions.value[i].set(point.x,point.y,point.z,light.radius);
       uniforms.torchColors.value[i].copy(light.color).multiplyScalar(light.strength);
       uniforms.torchShadowSlots.value[i]=light.transient?-2:light.shadowSlot??-1;
-    });
+    }
   }};
 }
 
