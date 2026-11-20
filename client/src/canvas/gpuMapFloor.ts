@@ -1,15 +1,23 @@
 import { acquireAnimatedMap } from './animatedMapMedia';
 import { acquireMapTileTexture } from './mapTileTextures';
+import type { GpuGroundTokenSprite } from './gpuGroundTokens';
 import {
+  CanvasTexture,
   Color,
+  DataTexture,
   Group,
   Mesh,
+  MeshBasicMaterial,
+  NearestFilter,
   PlaneGeometry,
+  RGBAFormat,
   Scene,
   ShaderMaterial,
   SRGBColorSpace,
+  UnsignedByteType,
   Vector2,
   Vector3,
+  Vector4,
   VideoTexture,
   WebGLRenderTarget,
   type Camera,
@@ -26,12 +34,23 @@ export type GpuMapFloorTile = {
   h: number;
 };
 
+export type GpuManualFogConfig = {
+  grid: number;
+  colMin: number;
+  colMax: number;
+  rowMin: number;
+  rowMax: number;
+  mapFog?: { revealed: readonly string[]; color: string; opacity: number };
+  tokenFog?: { revealed: readonly string[]; color: string; opacity: number };
+};
+
 export type GpuMapFloorConfig = {
   tiles: readonly GpuMapFloorTile[];
   bounds: { x: number; y: number; w: number; h: number };
   grid?: { size: number; x: number; y: number; hot?: boolean };
   canvasBg: string;
   exploredBrightness: number;
+  manualFog?: GpuManualFogConfig;
 };
 
 type FloorEntry = {
@@ -43,6 +62,12 @@ type FloorEntry = {
   releaseTile: () => void;
   releaseVideo: () => void;
   videoTexture?: VideoTexture;
+};
+
+type SpriteEntry = {
+  mesh: Mesh<PlaneGeometry, MeshBasicMaterial>;
+  texture: CanvasTexture;
+  version: string;
 };
 
 function cssColorToSrgbVec3(color: string): Vector3 {
@@ -59,14 +84,19 @@ void main() {
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.);
 }`;
 
-const FRAGMENT_SHADER = `uniform sampler2D art;
+const FRAGMENT_SHADER = `uniform sampler2D art, manualFogTex;
 uniform float hasArt, gridSize, gridAlpha, gridMinStep, gridMaxStep, memoryPass, keepRevealed, memoryBrightness;
-uniform vec2 gridOffset;
-uniform vec3 fillColor, canvasBg;
+uniform float manualFogAlpha, tokenFogAlpha;
+uniform vec2 gridOffset, manualFogEnabled;
+uniform vec3 fillColor, canvasBg, manualFogColor, tokenFogColor;
+uniform vec4 manualFogBounds;
 varying vec2 artUv;
 varying vec3 world;
 void main() {
   vec4 source = hasArt > .5 ? texture2D(art, artUv) : vec4(fillColor, 1.);
+  vec2 fogUv = (world.xz - manualFogBounds.xy) / max(manualFogBounds.zw, vec2(.001));
+  bool inFog = all(greaterThanEqual(fogUv, vec2(0.))) && all(lessThan(fogUv, vec2(1.)));
+  vec2 mf = inFog ? texture2D(manualFogTex, fogUv).rg : vec2(1.);
   float grid = 0.;
   if (gridSize > 0.) {
     vec2 cell = (world.xz - gridOffset) / gridSize;
@@ -74,6 +104,10 @@ void main() {
     grid = 1. - smoothstep(gridMinStep, gridMaxStep, min(d.x, d.y));
   }
   if (memoryPass > .5) {
+    if (manualFogEnabled.x > .5 && manualFogAlpha > .99 && inFog && mf.r < .5) {
+      gl_FragColor = vec4(0.);
+      return;
+    }
     vec3 remembered = mix(source.rgb, vec3(1.), grid * (80. / 255.));
     if (keepRevealed < .5) {
       remembered = vec3(dot(remembered, vec3(.2126, .7152, .0722)) * memoryBrightness);
@@ -83,26 +117,127 @@ void main() {
   }
   vec3 base = hasArt > .5 ? mix(canvasBg, source.rgb, source.a) : source.rgb;
   vec3 rgb = mix(base, vec3(1.), grid * gridAlpha);
+  if (manualFogEnabled.x > .5 && inFog) {
+    rgb = mix(rgb, manualFogColor, (1. - step(.5, mf.r)) * manualFogAlpha);
+  }
+  if (manualFogEnabled.y > .5 && inFog) {
+    rgb = mix(rgb, tokenFogColor, (1. - step(.5, mf.g)) * tokenFogAlpha);
+  }
   gl_FragColor = vec4(rgb, 1.);
 }`;
 
-/** Render the static/animated 2D battlemap tiles and grid inside the WebGL scene
- * so 3D camera gestures skip Konva 6152x4358 redraws and DOM SVG masks. */
+/** Render the static/animated 2D battlemap tiles, grid, manual fog, and 2D
+ * ground tokens inside WebGL so 3D camera gestures skip Konva & SVG redraws. */
 export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalidate: () => void) {
   const root = new Group();
   root.name = 'gpu-map-floor';
   root.visible = false;
   scene.add(root);
 
+  const spritesRoot = new Group();
+  spritesRoot.name = 'gpu-ground-sprites';
+  root.add(spritesRoot);
+
   const memoryScene = new Scene();
   const savedClearColor = new Color();
   const entries: FloorEntry[] = [];
+  const spriteEntries = new Map<string, SpriteEntry>();
+  const spriteGeom = new PlaneGeometry(1, 1);
+
+  const manualFogTex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, RGBAFormat, UnsignedByteType);
+  manualFogTex.minFilter = manualFogTex.magFilter = NearestFilter;
+  manualFogTex.generateMipmaps = false;
+  manualFogTex.needsUpdate = true;
+
+  const manualFogUniforms = {
+    manualFogTex: { value: manualFogTex },
+    manualFogBounds: { value: new Vector4(0, 0, 1, 1) },
+    manualFogEnabled: { value: new Vector2(0, 0) },
+    manualFogColor: { value: new Vector3() },
+    tokenFogColor: { value: new Vector3() },
+    manualFogAlpha: { value: 1 },
+    tokenFogAlpha: { value: 0.35 },
+  };
+
   let memoryTarget: WebGLRenderTarget | undefined;
   let lastStructuralKey = '';
   let lastConfig: GpuMapFloorConfig | undefined;
   let generation = 0;
   let memoryKey = '';
   let maxTexDim = 8192;
+  let manualFogSupported = true;
+  let manualFogRevision = 0;
+  let lastFogScalarKey = '';
+  let lastMapRevealedRef: readonly string[] | undefined;
+  let lastTokenRevealedRef: readonly string[] | undefined;
+
+  const updateManualFog = (fog: GpuManualFogConfig | undefined) => {
+    const mapFog = fog?.mapFog;
+    const tokenFog = fog?.tokenFog;
+    const scalarKey = fog
+      ? `${maxTexDim}:${fog.grid}:${fog.colMin}:${fog.colMax}:${fog.rowMin}:${fog.rowMax}:${mapFog?.color ?? ''}:${mapFog?.opacity ?? ''}:${tokenFog?.color ?? ''}:${tokenFog?.opacity ?? ''}`
+      : 'none';
+    if (
+      scalarKey === lastFogScalarKey &&
+      mapFog?.revealed === lastMapRevealedRef &&
+      tokenFog?.revealed === lastTokenRevealedRef
+    ) {
+      return;
+    }
+    lastFogScalarKey = scalarKey;
+    lastMapRevealedRef = mapFog?.revealed;
+    lastTokenRevealedRef = tokenFog?.revealed;
+    manualFogRevision++;
+    memoryKey = '';
+
+    if (!fog || (!mapFog && !tokenFog)) {
+      manualFogSupported = true;
+      manualFogUniforms.manualFogEnabled.value.set(0, 0);
+      manualFogUniforms.manualFogBounds.value.set(0, 0, 1, 1);
+      return;
+    }
+
+    const cols = Math.max(1, fog.colMax - fog.colMin);
+    const rows = Math.max(1, fog.rowMax - fog.rowMin);
+    if (cols > maxTexDim || rows > maxTexDim) {
+      manualFogSupported = false;
+      manualFogUniforms.manualFogEnabled.value.set(0, 0);
+      return;
+    }
+
+    manualFogSupported = true;
+    const data = new Uint8Array(cols * rows * 4);
+    if (mapFog) {
+      for (const cell of mapFog.revealed) {
+        const comma = cell.indexOf(',');
+        const cx = Number(cell.slice(0, comma)) - fog.colMin;
+        const cy = Number(cell.slice(comma + 1)) - fog.rowMin;
+        if (Number.isInteger(cx) && Number.isInteger(cy) && cx >= 0 && cx < cols && cy >= 0 && cy < rows) {
+          data[(cy * cols + cx) * 4] = 255;
+        }
+      }
+      manualFogUniforms.manualFogColor.value.copy(cssColorToSrgbVec3(mapFog.color));
+      manualFogUniforms.manualFogAlpha.value = mapFog.opacity;
+    }
+    if (tokenFog) {
+      for (const cell of tokenFog.revealed) {
+        const comma = cell.indexOf(',');
+        const cx = Number(cell.slice(0, comma)) - fog.colMin;
+        const cy = Number(cell.slice(comma + 1)) - fog.rowMin;
+        if (Number.isInteger(cx) && Number.isInteger(cy) && cx >= 0 && cx < cols && cy >= 0 && cy < rows) {
+          data[(cy * cols + cx) * 4 + 1] = 255;
+        }
+      }
+      manualFogUniforms.tokenFogColor.value.copy(cssColorToSrgbVec3(tokenFog.color));
+      manualFogUniforms.tokenFogAlpha.value = tokenFog.opacity;
+    }
+
+    manualFogTex.dispose();
+    manualFogTex.image = { data, width: cols, height: rows };
+    manualFogTex.needsUpdate = true;
+    manualFogUniforms.manualFogEnabled.value.set(mapFog ? 1 : 0, tokenFog ? 1 : 0);
+    manualFogUniforms.manualFogBounds.value.set(fog.colMin * fog.grid, fog.rowMin * fog.grid, cols * fog.grid, rows * fog.grid);
+  };
 
   const clear = () => {
     generation++;
@@ -120,6 +255,15 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
     entries.length = 0;
   };
 
+  const clearSprites = () => {
+    for (const entry of spriteEntries.values()) {
+      spritesRoot.remove(entry.mesh);
+      entry.mesh.material.dispose();
+      entry.texture.dispose();
+    }
+    spriteEntries.clear();
+  };
+
   const makeMaterial = (params: {
     hasArt: number;
     art: Texture | null;
@@ -135,6 +279,7 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
       depthWrite: false,
       toneMapped: false,
       uniforms: {
+        ...manualFogUniforms,
         hasArt: { value: params.hasArt },
         art: { value: params.art },
         fillColor: { value: params.fillColor },
@@ -154,7 +299,7 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
 
   return {
     get ready(): boolean {
-      return !!lastConfig && entries.length > 0 && entries.every((entry) => entry.ready());
+      return !!lastConfig && manualFogSupported && entries.length > 0 && entries.every((entry) => entry.ready());
     },
 
     update(config: GpuMapFloorConfig | undefined, requestedMaxTexDim = 8192) {
@@ -162,12 +307,15 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
       const clampedLimit = Math.max(256, Math.min(renderer.capabilities?.maxTextureSize || 4096, Math.floor(requestedMaxTexDim || 8192)));
       maxTexDim = clampedLimit;
       if (!config) {
+        updateManualFog(undefined);
+        clearSprites();
         if (lastStructuralKey !== '') {
           lastStructuralKey = '';
           clear();
         }
         return;
       }
+      updateManualFog(config.manualFog);
       const gridSize = config.grid?.size ?? 0;
       const gridX = config.grid?.x ?? 0;
       const gridY = config.grid?.y ?? 0;
@@ -211,7 +359,7 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
       root.add(backdropMesh);
 
       const backdropMemMat = backdropMat.clone();
-      backdropMemMat.uniforms = { ...backdropMat.uniforms, memoryPass: { value: 1 } };
+      backdropMemMat.uniforms = { ...backdropMat.uniforms, ...manualFogUniforms, memoryPass: { value: 1 } };
       backdropMemMat.transparent = true;
       const backdropMem = new Mesh(backdropGeom, backdropMemMat);
       backdropMem.copy(backdropMesh, false);
@@ -249,7 +397,7 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
         root.add(mesh);
 
         const memoryMaterial = material.clone();
-        memoryMaterial.uniforms = { ...material.uniforms, memoryPass: { value: 1 } };
+        memoryMaterial.uniforms = { ...material.uniforms, ...manualFogUniforms, memoryPass: { value: 1 } };
         memoryMaterial.transparent = true;
         const memory = new Mesh(geom, memoryMaterial);
         memory.copy(mesh, false);
@@ -308,6 +456,46 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
       }
     },
 
+    syncGroundSprites(sprites: readonly GpuGroundTokenSprite[]) {
+      const live = new Set<string>();
+      for (const sprite of sprites) {
+        live.add(sprite.id);
+        let entry = spriteEntries.get(sprite.id);
+        if (!entry) {
+          const texture = new CanvasTexture(sprite.canvas);
+          texture.colorSpace = SRGBColorSpace;
+          const material = new MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+            toneMapped: false,
+          });
+          const mesh = new Mesh(spriteGeom, material);
+          mesh.rotation.x = -Math.PI / 2;
+          mesh.renderOrder = -9;
+          mesh.frustumCulled = false;
+          spritesRoot.add(mesh);
+          entry = { mesh, texture, version: sprite.version };
+          spriteEntries.set(sprite.id, entry);
+        } else if (entry.version !== sprite.version) {
+          entry.texture.image = sprite.canvas;
+          entry.texture.needsUpdate = true;
+          entry.version = sprite.version;
+        }
+        entry.mesh.position.set(sprite.x + sprite.bx + sprite.w / 2, -0.052, sprite.y + sprite.by + sprite.h / 2);
+        entry.mesh.scale.set(sprite.w, sprite.h, 1);
+        entry.mesh.material.opacity = sprite.opacity;
+      }
+      for (const [id, entry] of spriteEntries) {
+        if (live.has(id)) continue;
+        spritesRoot.remove(entry.mesh);
+        entry.mesh.material.dispose();
+        entry.texture.dispose();
+        spriteEntries.delete(id);
+      }
+    },
+
     setVisible(visible: boolean) {
       root.visible = visible;
     },
@@ -317,6 +505,7 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
       const w = renderer.domElement.width, h = renderer.domElement.height;
       const next = JSON.stringify([
         lastStructuralKey,
+        manualFogRevision,
         lastConfig.grid,
         w,
         h,
@@ -361,6 +550,9 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
 
     dispose() {
       clear();
+      clearSprites();
+      spriteGeom.dispose();
+      manualFogTex.dispose();
       scene.remove(root);
       memoryTarget?.dispose();
       memoryTarget = undefined;

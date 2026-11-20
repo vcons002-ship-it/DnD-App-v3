@@ -589,6 +589,7 @@ function TokenShapeInner({
       retainedRadius={radius*1.4+4}
       miniatureReady={miniatureReady}
       miniaturePending={miniaturePending}
+      tokenBodyVersion={`${token.kind}|${display.name}|${display.disposition ?? ''}|${display.dead ? 1 : 0}|${display.icon}|${conditionAppearanceKey}|${shape}|${radius}|${selected ? 1 : 0}|${isDead ? 1 : 0}|${activeTurn ? 1 : 0}|${hideAffinity ? 1 : 0}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${sharedDarkvision ? 1 : 0}|${token.invisible ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}|${iconImg ? 1 : 0}|${serverBody ? serverSprite?.body.key ?? '1' : '0'}`}
       tokenLabelVersion={`${display.name}|${token.kind}|${isDead ? 1 : 0}|${radius}|${nameY}|${nameWidth}|${tagWidth}|${labelY}|${labelFontSize}|${hpBarWidth}|${hpBarHeight}|${token.revealTag ?? ''}|${hpFrac ?? ''}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${showHpNumbers ? 1 : 0}|${display.tempHp ?? ''}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`}
       x={presentation?.position(token.id)?.x??token.x}
       y={presentation?.position(token.id)?.y??token.y}

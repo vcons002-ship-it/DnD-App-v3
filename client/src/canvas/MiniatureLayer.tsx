@@ -27,6 +27,7 @@ import {NEUTRAL_MINIATURE_LIGHTING} from './miniatureLightingDefaults';
 import {COMBAT_ROLE_ICON} from '../../../shared/combatRole';
 import type {CombatRole} from '../../../shared/types';
 import { createGpuMapFloor, type GpuMapFloorConfig } from './gpuMapFloor';
+import type { GpuGroundTokenSprite } from './gpuGroundTokens';
 import { mergeStaticHeroMeshes } from './miniatureStaticMerge';
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import {
@@ -129,6 +130,7 @@ type Props = {
   /** Shared renderer settings for figure illumination. */
   environmentPreview?: EnvironmentPreviewSettings;
   floorTerrain?: GpuMapFloorConfig;
+  groundTokenSprites?: () => GpuGroundTokenSprite[];
   onGpuFloorChange?: (active: boolean) => void;
 };
 export type MiniatureLayerHandle = {
@@ -728,6 +730,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const colorMemory=useStore.getState().snapshot?.map?.explorationMode!=='off'&&!environment?.darkvisionTerrain;
         const gpuFloorActive=!!props.floorTerrain&&gpuMapFloor.ready;
         gpuMapFloor.setVisible(gpuFloorActive);
+        gpuMapFloor.syncGroundSprites(gpuFloorActive ? (props.groundTokenSprites?.() ?? []) : []);
         setGpuFloorActive(gpuFloorActive);
         const hasExplored=!!sightFrame?.explored.length;
         const needsGpuMemory=hasExplored&&!!(props.environmentPreview?.heavyDarkness||props.environmentPreview?.darkvisionTerrain);
