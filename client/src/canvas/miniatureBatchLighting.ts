@@ -1,4 +1,4 @@
-import {DataTexture,FloatType,RGBAFormat,type Material,type Vector2,type Vector3,type Vector4,type Texture} from 'three';
+import {DataTexture,FloatType,NearestFilter,RGBAFormat,type Material,type Vector2,type Vector3,type Vector4,type Texture} from 'three';
 
 export type MiniatureLightUniforms={torchCount:{value:number};darkvisionDetail:{value:number};torchShadowSlots:{value:number[]};torchPositions:{value:Vector4[]};torchColors:{value:Vector3[]};torchGroundEnabled?:{value:number};torchGroundField?:{value:Texture};torchGroundBounds?:{value:Vector4};torchGroundPoint?:{value:Vector2};[key:string]:{value:unknown}|undefined};
 const WIDTH=19;
@@ -8,8 +8,9 @@ const WIDTH=19;
  * Shared shadow maps stay ordinary uniforms; only source selection is packed. */
 export function createMiniatureBatchLighting(capacity:number){
   const data=new Float32Array(WIDTH*capacity*4),texture=new DataTexture(data,WIDTH,capacity,RGBAFormat,FloatType);
+  texture.minFilter=texture.magFilter=NearestFilter;
   texture.needsUpdate=true;
-  const uniforms={batchTorches:{value:texture},batchTorchRows:{value:capacity}};
+  const uniforms={torchData:{value:texture},torchDataRows:{value:capacity}};
   let dirty=false;
   const write=(offset:number,value:number)=>{const f=Math.fround(value);if(data[offset]!==f){data[offset]=f;dirty=true;}};
   return {texture,
@@ -30,43 +31,46 @@ export function createMiniatureBatchLighting(capacity:number){
         shader.vertexShader='attribute float instanceTorchRow; varying float batchTorchRow;\n'+shader.vertexShader;
         shader.vertexShader=shader.vertexShader.replace('#include <project_vertex>','#include <project_vertex>\nbatchTorchRow=instanceTorchRow;');
         // Basic base materials have no torch hook; their shader is left intact.
-        if(shader.fragmentShader.includes('uniform float torchShadowSlots[8];')){
-          shader.fragmentShader=shader.fragmentShader.replace('uniform float torchShadowSlots[8]; uniform float darkvisionDetail; uniform int torchCount; uniform vec4 torchPositions[8]; uniform vec3 torchColors[8];',`uniform sampler2D batchTorches; uniform float batchTorchRows; varying float batchTorchRow;
-            vec4 batchTorchTexel(float column){return texture2D(batchTorches,vec2((column+.5)/${WIDTH}.,(batchTorchRow+.5)/batchTorchRows));}
-            vec4 batchTorchPosition(int i){return batchTorchTexel(1.+float(i));}
-            vec4 batchTorchColor(int i){return batchTorchTexel(9.+float(i));}`);
-          shader.fragmentShader=shader.fragmentShader.replaceAll('torchPositions[torchIndex]','batchTorchPosition(torchIndex)')
-            .replaceAll('torchColors[torchIndex]','batchTorchColor(torchIndex).rgb')
-            .replaceAll('torchShadowSlots[torchIndex]','batchTorchColor(torchIndex).a')
-            .replaceAll('torchCount','int(batchTorchTexel(0.).x)').replaceAll('darkvisionDetail','batchTorchTexel(0.).y');
+        if(shader.fragmentShader.includes('uniform float torchDataRow;')){
+          shader.fragmentShader=shader.fragmentShader
+            .replace('uniform float torchDataRow;','varying float batchTorchRow;')
+            .replace('(torchDataRow+.5)','(batchTorchRow+.5)');
         }
       };
-      material.customProgramCacheKey=()=>cache+'-batched-light-rows-v1';
+      material.customProgramCacheKey=()=>cache+'-batched-light-rows-v2-world';
     },
     dispose(){texture.dispose();},
   };
 }
 
-/** Balanced/Low keep source selection uniform within a draw. This avoids the
- * extra per-fragment texture fetches on bandwidth-limited integrated graphics. */
+/** Balanced/Low keep source selection uniform within a draw, packed into a single
+ * 19x1 DataTexture to avoid per-material uniform array uploads across frames. */
 export function createMiniatureSharedLighting(source:MiniatureLightUniforms){
-  const uniforms={torchCount:{value:0},darkvisionDetail:{value:0},torchShadowSlots:{value:Array(8).fill(-1)},
-    torchPositions:{value:source.torchPositions.value.map(v=>v.clone())},torchColors:{value:source.torchColors.value.map(v=>v.clone())},
+  const data=new Float32Array(WIDTH*4),texture=new DataTexture(data,WIDTH,1,RGBAFormat,FloatType);
+  texture.minFilter=texture.magFilter=NearestFilter;
+  texture.needsUpdate=true;
+  let dirty=false;
+  const writeVal=(offset:number,value:number)=>{const f=Math.fround(value);if(data[offset]!==f){data[offset]=f;dirty=true;}};
+  const uniforms={torchData:{value:texture},torchDataRow:{value:0},torchDataRows:{value:1},
     ...(source.torchGroundEnabled?{torchGroundEnabled:{value:source.torchGroundEnabled.value},torchGroundField:{value:source.torchGroundField!.value},torchGroundBounds:{value:source.torchGroundBounds!.value}}:{})};
   return {
     write(row:number,next:MiniatureLightUniforms){
       if(row!==0)return;
-      uniforms.torchCount.value=next.torchCount.value;uniforms.darkvisionDetail.value=next.darkvisionDetail.value;
+      writeVal(0,next.torchCount.value);writeVal(1,next.darkvisionDetail.value);
+      for(let i=0;i<8;i++){
+        const p=next.torchPositions.value[i],c=next.torchColors.value[i],pos=(1+i)*4,col=(9+i)*4;
+        writeVal(pos,p.x);writeVal(pos+1,p.y);writeVal(pos+2,p.z);writeVal(pos+3,p.w);
+        writeVal(col,c.x);writeVal(col+1,c.y);writeVal(col+2,c.z);writeVal(col+3,next.torchShadowSlots.value[i]);
+      }
       if(uniforms.torchGroundEnabled&&next.torchGroundEnabled){uniforms.torchGroundEnabled.value=next.torchGroundEnabled.value;uniforms.torchGroundField!.value=next.torchGroundField!.value;uniforms.torchGroundBounds!.value=next.torchGroundBounds!.value;}
-      for(let i=0;i<8;i++){uniforms.torchPositions.value[i].copy(next.torchPositions.value[i]);uniforms.torchColors.value[i].copy(next.torchColors.value[i]);uniforms.torchShadowSlots.value[i]=next.torchShadowSlots.value[i];}
-    },flush(){},dispose(){},
+    },flush(){if(dirty){texture.needsUpdate=true;dirty=false;}},dispose(){texture.dispose();},
     attach(material:Material){
       const hook=material.onBeforeCompile,cache=material.customProgramCacheKey();
       material.onBeforeCompile=function(shader,renderer){hook.call(this,shader,renderer);Object.assign(shader.uniforms,uniforms);
         shader.vertexShader='attribute vec2 instanceGroundPoint;\n'+shader.vertexShader;
         shader.vertexShader=shader.vertexShader.replace('vec2 groundPoint=torchGroundPoint;','vec2 groundPoint=instanceGroundPoint;');
       };
-      material.customProgramCacheKey=()=>cache+'-batched-shared-lights-v2-ground';
+      material.customProgramCacheKey=()=>cache+'-batched-shared-lights-v3-tex';
     },
   };
 }

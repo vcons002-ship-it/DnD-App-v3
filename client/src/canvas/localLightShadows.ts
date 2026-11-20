@@ -1,4 +1,4 @@
-import {PointLight,Vector4,Scene,Mesh,PlaneGeometry,MeshBasicMaterial,OrthographicCamera,WebGLRenderTarget,WebGLCubeRenderTarget,CubeDepthTexture,LinearFilter,LessEqualCompare,type Group,type Camera,type Texture,type DepthTexture,type WebGLRenderer} from 'three';
+import {DataTexture,FloatType,NearestFilter,PointLight,RGBAFormat,Vector4,Scene,Mesh,PlaneGeometry,MeshBasicMaterial,OrthographicCamera,WebGLRenderTarget,WebGLCubeRenderTarget,CubeDepthTexture,LinearFilter,LessEqualCompare,type Group,type Camera,type Texture,type DepthTexture,type WebGLRenderer} from 'three';
 import type {MapWall} from '../../../shared/mapWalls';
 import {LIGHT_SPILL_MULTIPLIER} from '../../../shared/lightFalloff';
 import {selectShadowLights,castsLocalShadow,localShadowContactBias,localShadowDepthGlsl,type ShadowCaster} from '../../../shared/localLightShadows';
@@ -11,11 +11,11 @@ import {createEnvironmentalLocalShadows,environmentalLocalShadowGlsl} from './en
 import {createShadowProxies} from './shadowProxies';
 
 export const localShadowGlsl=`
- uniform vec4 localShadowOrigins[4];
- uniform vec4 localShadowParams[4];
  ${localShadowDepthGlsl}
  ${environmentalLocalShadowGlsl}
  ${Array.from({length:4},(_,i)=>`uniform samplerCubeShadow localShadowMap${i};`).join('\n')}
+ uniform sampler2D localShadowData;
+ vec4 localShadowTexel(float col){return texture2D(localShadowData,vec2((col+.5)/12.,.5));}
  float sampleLocalShadow(samplerCubeShadow depthMap,vec3 delta,vec4 params,float strength){
    float z=max(max(abs(delta.x),abs(delta.y)),abs(delta.z));
    if(z<=params.x||z>=params.y)return 1.;
@@ -28,8 +28,9 @@ export const localShadowGlsl=`
    return 1.-(1.-visibility)*strength;
  }
  float localLightVisibility(float slot,vec3 point,float strength){
-   ${Array.from({length:4},(_,i)=>`if(slot>${i-.5}&&slot<${i+.5}&&localShadowOrigins[${i}].w>.5){if(localShadowOrigins[${i}].w>1.5)return samplePlanarShadow(localPlanarMap${i},localPlanarBounds[${i}],point,strength);return sampleLocalShadow(localShadowMap${i},point-localShadowOrigins[${i}].xyz,localShadowParams[${i}],strength);}`).join('\n')}
-   return 1.;
+   float vis=1.;
+   ${Array.from({length:4},(_,i)=>`${i>0?'else ':''}if(slot>${i-.5}&&slot<${i+.5}){vec4 orig=localShadowTexel(${i}.);if(orig.w>.5){vis=orig.w>1.5?samplePlanarShadow(vec2(${i&1?'.5':'0.'},${i>>1?'.5':'0.'}),localShadowTexel(${8+i}.),point,strength):sampleLocalShadow(localShadowMap${i},point-orig.xyz,localShadowTexel(${4+i}.),strength);}}`).join('\n')}
+   return vis;
  }
 `;
 function depthCube(size:number){
@@ -55,7 +56,22 @@ export function createLocalLightShadows(renderer:WebGLRenderer,invalidate:()=>vo
  const marker=new Mesh(new PlaneGeometry(2,2),new MeshBasicMaterial());marker.position.z=-1;pass.add(marker);
  const origins=Array.from({length:4},()=>new Vector4()),params=Array.from({length:4},()=>new Vector4());
  const maps=Array.from({length:4},()=>({value:empty.depthTexture as Texture}));
- const uniforms={...planar.uniforms,localShadowOrigins:{value:origins},localShadowParams:{value:params},...Object.fromEntries(maps.map((uniform,i)=>['localShadowMap'+i,uniform]))};
+ const shadowDataArray=new Float32Array(12*4);
+ const shadowDataTexture=new DataTexture(shadowDataArray,12,1,RGBAFormat,FloatType);
+ shadowDataTexture.minFilter=shadowDataTexture.magFilter=NearestFilter;
+ shadowDataTexture.needsUpdate=true;
+ const syncShadowData=()=>{
+  let changed=false;
+  const writeVec4=(col:number,v:Vector4)=>{
+   const o=col*4,fx=Math.fround(v.x),fy=Math.fround(v.y),fz=Math.fround(v.z),fw=Math.fround(v.w);
+   if(shadowDataArray[o]!==fx||shadowDataArray[o+1]!==fy||shadowDataArray[o+2]!==fz||shadowDataArray[o+3]!==fw){
+    shadowDataArray[o]=fx;shadowDataArray[o+1]=fy;shadowDataArray[o+2]=fz;shadowDataArray[o+3]=fw;changed=true;
+   }
+  };
+  for(let i=0;i<4;i++){writeVec4(i,origins[i]);writeVec4(4+i,params[i]);writeVec4(8+i,planar.bounds[i]);}
+  if(changed)shadowDataTexture.needsUpdate=true;
+ };
+ const uniforms={...planar.uniforms,localShadowData:{value:shadowDataTexture},...Object.fromEntries(maps.map((uniform,i)=>['localShadowMap'+i,uniform]))};
  const pool=Array.from({length:4},()=>{
    const light=new PointLight(0xffffff,0);light.castShadow=true;light.shadow.autoUpdate=false;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.5;
    return {light,id:'',key:'',structural:'',last:-Infinity,casterIds:[] as string[]};
@@ -85,7 +101,7 @@ export function createLocalLightShadows(renderer:WebGLRenderer,invalidate:()=>vo
    const byId=new Map(lights.map(l=>[l.id,l])),selected=selectedIds.map(id=>byId.get(id)!).filter(Boolean);
    for(const entry of pool)if(!selected.some(l=>l.id===entry.id)){if(entry.id||entry.casterIds.length)castersDirty=true;entry.id='';entry.key='';entry.structural='';entry.casterIds=[];}
    origins.forEach(o=>o.w=0);
-   if(!selected.length)return;
+   if(!selected.length){syncShadowData();return;}
    if(!worldMatricesCurrent)scene.updateMatrixWorld(true);
    const active=new Set(casters.map(c=>c.id));for(const id of roots.keys())if(!active.has(id))roots.delete(id);
    proxies.release(casters.map(c=>c.root));
@@ -142,12 +158,13 @@ export function createLocalLightShadows(renderer:WebGLRenderer,invalidate:()=>vo
      }
      entry.key=key;entry.structural=structural;entry.last=now;updates++;if(!force)routineUpdates++;
    }
+   syncShadowData();
   },
   get pending(){return pending;},
   get revision(){return updates;},
   get state(){return {localShadowMethod:method,localShadowSize:shadowSize,localShadowLights:pool.filter(e=>e.id).length,localShadowUpdates:updates,
     shadowSelectionUpdates:selectionUpdates,localShadowSourceIds:pool.filter(e=>e.id).map(e=>e.id).join(','),localShadowCasters:getCastersJson(),
     shadowOriginalTriangles:originalTriangles,shadowProxyTriangles:proxyTriangles,...proxies.state,...planar.state};},
-  dispose(){planar.dispose();proxies.dispose();empty.dispose();passTarget.dispose();marker.geometry.dispose();(marker.material as MeshBasicMaterial).dispose();for(const entry of pool){entry.light.shadow.map?.dispose();entry.light.shadow.mapPass?.dispose();}},
+  dispose(){shadowDataTexture.dispose();planar.dispose();proxies.dispose();empty.dispose();passTarget.dispose();marker.geometry.dispose();(marker.material as MeshBasicMaterial).dispose();for(const entry of pool){entry.light.shadow.map?.dispose();entry.light.shadow.mapPass?.dispose();}},
  };
 }

@@ -67,6 +67,7 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
  const renderedLights=useRef<VisionLight[]|null>(null);
  const pendingDraw=useRef(0),fullDraw=useRef(true),lastBaseLightDraw=useRef(0);
  const lastBaseDraw=useRef<{key:string;geometry:ExploredTerrain|undefined;memory:HTMLCanvasElement|null}|null>(null),lastWorldDraw=useRef<{key:string;geometry:ExploredTerrain|undefined;memory:HTMLCanvasElement|null}|null>(null);
+ const svgSyncedKey=useRef(''),svgSyncedWorldKey=useRef('');
  const ordinaryMask=useRef<ReturnType<typeof createVisionLightMask>>(),spellMask=useRef<ReturnType<typeof createVisionLightMask>>();
  const prepareProjection=useRef<Parameters<ReturnType<typeof createVisionLightMask>['prepare']>[1]>();
  const drawCount=useRef(0),baseDrawCount=useRef(0);
@@ -235,7 +236,9 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    :{key:projectionKey,wallsKey,occluded:!!vision.walls?.length,ellipse:lightEllipse,point:projectPoint,
      circle:(l:VisionLight,r:number)=>path(l,r,true),clip:(l:VisionLight)=>path(l,SIGHT_EXTENT,true,true)};
   prepareProjection.current=projection;
-  const spellLights=sourceLights.filter(l=>l.transient&&state.current.spellLighting!==false);if(spellLights.length||(spellMask.current?.stats.lights??0)>0)spellMask.current?.sync(spellLights.map(positioned),projection);
+  const gpuFull=root.current?.parentElement?.dataset.gpuVisionFull==='true';
+  const spellLights=sourceLights.filter(l=>l.transient&&state.current.spellLighting!==false);
+  if(!gpuFull&&(spellLights.length||(spellMask.current?.stats.lights??0)>0))spellMask.current?.sync(spellLights.map(positioned),projection);
   const finish=()=>{if(root.current){
    root.current.dataset.visionCpuMs=(performance.now()-began).toFixed(2);
    root.current.dataset.visionDrawCount=String(++drawCount.current);
@@ -253,11 +256,34 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    vision.origins.map(o=>{const p=livePoint(o);return `${o.id}:${p.x},${p.y}`;}).join('|'),
    ordinaryLights.map(l=>`${l.id}:${l.x},${l.y},${l.radius},${l.height},${l.strength},${l.beam?`${l.beam.ax},${l.beam.ay},${l.beam.bx},${l.beam.by}`:''}`).join('|'),
   ].join('~'),baseKey=`${projectionKey}~${worldKey}`;
-  if(coverFrame.current&&lastBaseDraw.current?.key===baseKey&&lastBaseDraw.current.geometry===geometry&&lastBaseDraw.current.memory===memoryCanvas.current){
+  if(coverFrame.current&&lastBaseDraw.current?.key===baseKey&&lastBaseDraw.current.geometry===geometry&&lastBaseDraw.current.memory===memoryCanvas.current&&(gpuFull||svgSyncedKey.current===baseKey)){
    finish();return;
   }
   lastBaseDraw.current={key:baseKey,geometry,memory:memoryCanvas.current};
   lastBaseLightDraw.current=began;baseDrawCount.current++;
+  const originPolygon=(o:{id:string;x:number;y:number},radius:number)=>{
+   const p=livePoint(o);
+   return wallFog?polygon({...p,id:o.id},radius):circleVertices.map(v=>({x:p.x+v.x*radius,y:p.y+v.y*radius}));
+  };
+  if(gpuFull){
+   if(!coverFrame.current||lastWorldDraw.current?.key!==worldKey||lastWorldDraw.current.geometry!==geometry||lastWorldDraw.current.memory!==memoryCanvas.current){
+    lastWorldDraw.current={key:worldKey,geometry,memory:memoryCanvas.current};
+    coverFrame.current={enabled:wallFog||vision.heavy,
+     grade:{heavy:vision.heavy,daylight:!!vision.daylight,near:!vision.daylight&&!vision.heavy?vision.origins.map(o=>originPolygon(o,vision.radius)):[]},
+     explored:geometry??[],memory:memoryCanvas.current,keepRevealed:!!state.current.keepRevealed,
+     memoryRange:undefined,
+     origins:vision.origins.map(o=>originPolygon(o,vision.heavy?vision.radius:SIGHT_EXTENT)),
+     sight:vision.origins.map(o=>originPolygon(o,SIGHT_EXTENT)),
+     lights:ordinaryLights.map(source=>({source,polygon:polygon(source,SIGHT_EXTENT)}))};
+    for(const slot of polygonCache.current.keys())if(!activeKeys.has(slot))polygonCache.current.delete(slot);
+   }
+   if(svgSyncedWorldKey.current!==worldKey){
+    svgSyncedWorldKey.current=worldKey;
+    if(originPaths.current.hasAttribute('transform'))originPaths.current.removeAttribute('transform');
+    syncPaths(originPaths.current,vision.origins.map(o=>({d:worldPath(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length),fill:'black'})));
+   }
+   finish();return;
+  }
   // Reproject remembered terrain only when history or camera changes, never for
   // every light flicker. It contains map images/grid only, not a live scene copy.
   if(memoryPaths.current&&(memoryProjection.current?.geometry!==geometry||memoryProjection.current?.camera!==camera)){
@@ -296,10 +322,8 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
   setWorldTransform(retainedRange.current,orthoUnrotated&&vision.heavy);
   if(vision.heavy)syncPaths(retainedRange.current,vision.origins.map(o=>({d:orthoUnrotated?worldPath(o,vision.radius):path(o,vision.radius),fill:'white'})));
   else syncCoverRect(retainedRange.current,width,height);
-  const originPolygon=(o:{id:string;x:number;y:number},radius:number)=>{
-   const p=livePoint(o);
-   return wallFog?polygon({...p,id:o.id},radius):circleVertices.map(v=>({x:p.x+v.x*radius,y:p.y+v.y*radius}));
-  };
+  if(svgSyncedWorldKey.current!==worldKey)svgSyncedWorldKey.current=worldKey;
+  svgSyncedKey.current=baseKey;
   if(!coverFrame.current||lastWorldDraw.current?.key!==worldKey||lastWorldDraw.current.geometry!==geometry||lastWorldDraw.current.memory!==memoryCanvas.current){lastWorldDraw.current={key:worldKey,geometry,memory:memoryCanvas.current};coverFrame.current={enabled:wallFog||vision.heavy,
    grade:{heavy:vision.heavy,daylight:!!vision.daylight,near:!vision.daylight&&!vision.heavy?vision.origins.map(o=>originPolygon(o,vision.radius)):[]},
    explored:geometry??[],memory:memoryCanvas.current,keepRevealed:!!state.current.keepRevealed,

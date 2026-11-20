@@ -7,14 +7,35 @@ import { unprojectGround } from './miniatureProjection';
  */
 export function installPerspectiveInput(stage: Konva.Stage, width: number, height: number, tilt: number, rotation = 0, current?: () => {tilt:number;rotation:number}) {
   const original = stage.setPointersPositions;
-  stage.setPointersPositions = function (event) {
-    const content = stage.getContent();
+  const content = stage.getContent();
+  let cachedRect: { left: number; top: number; sx: number; sy: number } | null = null;
+  const refreshRect = () => {
     const rect = content.getBoundingClientRect();
-    const sx = rect.width / content.clientWidth || 1, sy = rect.height / content.clientHeight || 1;
+    cachedRect = {
+      left: rect.left,
+      top: rect.top,
+      sx: rect.width / content.clientWidth || 1,
+      sy: rect.height / content.clientHeight || 1,
+    };
+    return cachedRect;
+  };
+  const invalidateRect = () => { cachedRect = null; };
+  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(invalidateRect) : null;
+  ro?.observe(content);
+  window.addEventListener('resize', invalidateRect);
+  window.addEventListener('scroll', invalidateRect, true);
+
+  stage.setPointersPositions = function (event) {
+    const evt = event as Event | undefined;
+    const type = evt?.type;
+    const rect = (type === 'mousedown' || type === 'pointerdown' || type === 'touchstart' || type === 'wheel' || !cachedRect)
+      ? refreshRect()
+      : cachedRect;
+    const { left, top, sx, sy } = rect;
     const point = (p: { clientX: number; clientY: number; identifier?: number }) => {
       const projection=current?.() ?? {tilt,rotation};
-      const v = unprojectGround((p.clientX - rect.left) / sx, (p.clientY - rect.top) / sy, width, height, projection.tilt, projection.rotation);
-      return { clientX: rect.left + v.x * sx, clientY: rect.top + v.y * sy, identifier: p.identifier };
+      const v = unprojectGround((p.clientX - left) / sx, (p.clientY - top) / sy, width, height, projection.tilt, projection.rotation);
+      return { clientX: left + v.x * sx, clientY: top + v.y * sy, identifier: p.identifier };
     };
     const adjusted = new Proxy(event, { get(target, key) {
       if (key === 'clientX' || key === 'clientY') return point(target)[key];
@@ -23,5 +44,10 @@ export function installPerspectiveInput(stage: Konva.Stage, width: number, heigh
     } });
     original.call(stage, adjusted);
   };
-  return () => { stage.setPointersPositions = original; };
+  return () => {
+    stage.setPointersPositions = original;
+    ro?.disconnect();
+    window.removeEventListener('resize', invalidateRect);
+    window.removeEventListener('scroll', invalidateRect, true);
+  };
 }

@@ -112,11 +112,11 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
   const inside=(p:WallPoint,polygon:WallPoint[])=>{let yes=false;for(let i=0,j=polygon.length-1;i<polygon.length;j=i++){
     const a=polygon[i],b=polygon[j];if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)yes=!yes;
   }return yes;};
-  const composite = new ShaderMaterial({uniforms:{frame:{value:null as Texture|null},cover:{value:cover.texture},body:{value:body},bodyDepth:{value:bodyDepth??body},hasBodyDepth:{value:bodyDepth?1:0},bodyCenters:{value:bodyCenters},memory:{value:body},hasMemory:{value:0},fogEnabled:{value:0},gradeMode:{value:0},retained:{value:0},bodyGrades:{value:bodyGrades},groundLight:{value:body},hasGroundLight:{value:0},lightBounds:{value:new Vector4()},cameraWorld:{value:new Matrix4()},projectionInverse:{value:new Matrix4()},viewProjection:{value:new Matrix4()}},
+  const composite = new ShaderMaterial({uniforms:{frame:{value:null as Texture|null},cover:{value:cover.texture},body:{value:body},bodyDepth:{value:bodyDepth??body},hasBodyDepth:{value:bodyDepth?1:0},bodyCenters:{value:bodyCenters},memory:{value:body},hasMemory:{value:0},fogEnabled:{value:0},gradeMode:{value:0},retained:{value:0},fullFloor:{value:0},bodyGrades:{value:bodyGrades},groundLight:{value:body},hasGroundLight:{value:0},lightBounds:{value:new Vector4()},cameraWorld:{value:new Matrix4()},projectionInverse:{value:new Matrix4()},viewProjection:{value:new Matrix4()}},
     depthTest:false,depthWrite:false,toneMapped:false,blending:NoBlending,
     vertexShader:'varying vec2 uvScreen;void main(){uvScreen=uv;gl_Position=vec4(position.xy,0.,1.);}',
     // The finished framebuffer already has output color conversion and premultiplied alpha.
-    fragmentShader:`${lightFalloffGlsl}uniform sampler2D frame,cover,body,bodyDepth,bodyCenters,memory,bodyGrades,groundLight;uniform float hasBodyDepth,hasMemory,fogEnabled,gradeMode,retained,hasGroundLight;uniform mat4 cameraWorld,projectionInverse,viewProjection;uniform vec4 lightBounds;varying vec2 uvScreen;
+    fragmentShader:`${lightFalloffGlsl}uniform sampler2D frame,cover,body,bodyDepth,bodyCenters,memory,bodyGrades,groundLight;uniform float hasBodyDepth,hasMemory,fogEnabled,gradeMode,retained,fullFloor,hasGroundLight;uniform mat4 cameraWorld,projectionInverse,viewProjection;uniform vec4 lightBounds;varying vec2 uvScreen;
       float lightCoverage(){
         vec4 n=cameraWorld*projectionInverse*vec4(uvScreen*2.-1.,-1.,1.),f=cameraWorld*projectionInverse*vec4(uvScreen*2.-1.,1.,1.);
         vec3 a=n.xyz/n.w,b=f.xyz/f.w,d=b-a;
@@ -172,17 +172,23 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
           vec3 terrain=grade(c.rgb,(1.-lit)*(1.-retained*sight.g),sight.b);
           c.rgb=mix(terrain,grade(c.rgb,token.r,token.g),bodyCoverage);
         }
-        vec3 memColor=texture2D(memory,uvScreen).rgb;
-        vec3 fog=mix(vec3(5.,6.,8.)/255.,memColor,max(sight.g,sight.r)*hasMemory);
-        float heavyMemA=(fogEnabled>.5&&gradeMode>1.5&&hasMemory>.5)?f*sight.g:0.;
-        float outA=c.a+heavyMemA*(1.-c.a);
-        vec3 outRgb=hasMemory>.5
-          ?c.rgb*v+fog*f*c.a+memColor*heavyMemA*(1.-c.a)
-          :c.rgb*v;
-        // Project raised miniature pixels down to their ground footprint so walls
-        // or fog behind a figure never slice off its upper half, while unrevealed
-        // portions of a partially-visible figure remain masked.
-        gl_FragColor=hasMemory>.5?vec4(outRgb,outA):vec4(c.rgb*v,c.a*v);
+        vec4 memSample=texture2D(memory,uvScreen);
+        vec3 memColor=memSample.rgb;
+        if(fullFloor>.5){
+          vec3 bgFog=mix(vec3(5.,6.,8.)/255.,memColor,sight.g*hasMemory*memSample.a);
+          gl_FragColor=vec4(mix(bgFog,c.rgb,v),1.);
+        }else{
+          vec3 fog=mix(vec3(5.,6.,8.)/255.,memColor,max(sight.g,sight.r)*hasMemory);
+          float heavyMemA=(fogEnabled>.5&&gradeMode>1.5&&hasMemory>.5)?f*sight.g:0.;
+          float outA=c.a+heavyMemA*(1.-c.a);
+          vec3 outRgb=hasMemory>.5
+            ?c.rgb*v+fog*f*c.a+memColor*heavyMemA*(1.-c.a)
+            :c.rgb*v;
+          // Project raised miniature pixels down to their ground footprint so walls
+          // or fog behind a figure never slice off its upper half, while unrevealed
+          // portions of a partially-visible figure remain masked.
+          gl_FragColor=hasMemory>.5?vec4(outRgb,outA):vec4(c.rgb*v,c.a*v);
+        }
       }`,
   });
   const quadGeometry=new PlaneGeometry(2,2);quadScene.add(new Mesh(quadGeometry,composite));
@@ -216,7 +222,7 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
     for(const [id,entry] of entries)if(!live.has(id)){coverScene.remove(entry.mesh);entry.mesh.geometry.dispose();if(id.startsWith('light:'))(entry.mesh.material as ShaderMaterial).dispose();entries.delete(id);}
   };
   const originalZ=host.style.zIndex;
-  let lastZ=originalZ,lastCompositeAttr='',lastGradingAttr='',lastCoverUpdates=-1,lastSpellFlashes=-1;
+  let lastZ=originalZ,lastCompositeAttr='',lastGradingAttr='',lastFullAttr='',lastCoverUpdates=-1,lastSpellFlashes=-1;
   let lastGradeCover:VisionCoverFrame|undefined,lastBodiesKey='',lastGradeFlashes=false;
   return {
     gradeBodies(next:VisionCoverFrame|undefined,bodies:readonly {slot:number;x:number;y:number;radius?:number}[],field?:{torchField:{value:Texture};torchBounds:{value:Vector4}},flashes:readonly VisionLight[]=[],walls:import('../../../shared/mapWalls').MapWall[]=[]){
@@ -249,7 +255,7 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
     },
     /** This frame's screen-space visibility (red = in sight), for clipping spell art. */
     get cover(){return {texture:cover.texture,width:cover.width,height:cover.height};},
-    render(enabled:boolean,next:VisionCoverFrame|undefined,camera:Camera,flashes:readonly SpellFlash[]=[],memoryTexture?:Texture|null){
+    render(enabled:boolean,next:VisionCoverFrame|undefined,camera:Camera,flashes:readonly SpellFlash[]=[],memoryTexture?:Texture|null,fullFloor=false){
       const grading=enabled&&!!next?.grade&&!next.grade.daylight;
       const fog=enabled&&!!next?.enabled;
       enabled=fog||grading;
@@ -258,7 +264,11 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
       const nextComposite=enabled?'gpu':'off';
       if(lastCompositeAttr!==nextComposite){host.dataset.visionComposite=nextComposite;lastCompositeAttr=nextComposite;}
       composite.uniforms.fogEnabled.value=fog?1:0;
-      if(host.parentElement){const nextGrading=String(grading);if(lastGradingAttr!==nextGrading){host.parentElement.dataset.gpuVisionGrade=nextGrading;lastGradingAttr=nextGrading;}}
+      composite.uniforms.fullFloor.value=fullFloor?1:0;
+      if(host.parentElement){
+        const nextGrading=String(grading);if(lastGradingAttr!==nextGrading){host.parentElement.dataset.gpuVisionGrade=nextGrading;lastGradingAttr=nextGrading;}
+        const nextFull=String(enabled&&fullFloor);if(lastFullAttr!==nextFull){host.parentElement.dataset.gpuVisionFull=nextFull;lastFullAttr=nextFull;}
+      }
       composite.uniforms.gradeMode.value=grading?(next!.grade!.heavy?2:1):0;
       composite.uniforms.retained.value=next?.keepRevealed?1:0;
       composite.uniforms.cameraWorld.value.copy(camera.matrixWorld);
@@ -278,8 +288,14 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
       }
       if(lastCoverUpdates!==updates){host.dataset.visionCoverUpdates=String(updates);lastCoverUpdates=updates;}
       if(lastSpellFlashes!==flashCount){host.dataset.visionSpellFlashes=String(flashCount);lastSpellFlashes=flashCount;}
-      if(next.memory&&next.memory.dataset.ready==='true'){
-        if(memoryTexture){composite.uniforms.memory.value=memoryTexture;}else{if(memoryCanvas!==next.memory){memory?.dispose();memoryCanvas=next.memory;memory=new CanvasTexture(memoryCanvas);composite.uniforms.memory.value=memory;memoryVersion='';}const version=next.memory.dataset.version??'ready';if(memoryVersion!==version){memory!.needsUpdate=true;memoryVersion=version;}}composite.uniforms.hasMemory.value=1;}else composite.uniforms.hasMemory.value=0;
+      if(memoryTexture){
+        composite.uniforms.memory.value=memoryTexture;
+        composite.uniforms.hasMemory.value=1;
+      }else if(next.memory&&next.memory.dataset.ready==='true'){
+        if(memoryCanvas!==next.memory){memory?.dispose();memoryCanvas=next.memory;memory=new CanvasTexture(memoryCanvas);composite.uniforms.memory.value=memory;memoryVersion='';}
+        const version=next.memory.dataset.version??'ready';if(memoryVersion!==version){memory!.needsUpdate=true;memoryVersion=version;}
+        composite.uniforms.hasMemory.value=1;
+      }else composite.uniforms.hasMemory.value=0;
 
       // A reused framebuffer texture may already be bound to unit 0 while a
       // mask/grade sampler is the active unit. bindTexture's cache can then
@@ -292,6 +308,6 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
       try{renderer.autoClear=false;renderer.render(quadScene,quadCamera);}
       finally{renderer.autoClear=autoClear;}
     },
-    dispose(){host.style.zIndex=originalZ;if(host.parentElement)delete host.parentElement.dataset.gpuVisionGrade;for(const [id,e] of entries){e.mesh.geometry.dispose();if(id.startsWith('light:'))(e.mesh.material as ShaderMaterial).dispose();}entries.clear();white.dispose();near.dispose();remembered.dispose();rangedMemory.dispose();rangeStencil.dispose();stencil.dispose();lamp.dispose();flashLamp.dispose();for(const e of flashEntries){e.mesh.geometry.dispose();e.mesh.material.dispose();}flashEntries.length=0;cover.dispose();frame?.dispose();memory?.dispose();bodyGrades.dispose();bodyCenters.dispose();composite.dispose();quadGeometry.dispose();},
+    dispose(){host.style.zIndex=originalZ;if(host.parentElement){delete host.parentElement.dataset.gpuVisionGrade;delete host.parentElement.dataset.gpuVisionFull;}for(const [id,e] of entries){e.mesh.geometry.dispose();if(id.startsWith('light:'))(e.mesh.material as ShaderMaterial).dispose();}entries.clear();white.dispose();near.dispose();remembered.dispose();rangedMemory.dispose();rangeStencil.dispose();stencil.dispose();lamp.dispose();flashLamp.dispose();for(const e of flashEntries){e.mesh.geometry.dispose();e.mesh.material.dispose();}flashEntries.length=0;cover.dispose();frame?.dispose();memory?.dispose();bodyGrades.dispose();bodyCenters.dispose();composite.dispose();quadGeometry.dispose();},
   };
 }

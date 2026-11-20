@@ -188,6 +188,20 @@ textarea:hover:not(:disabled) {
 [data-gpu-vision-grade="true"] > [data-testid="player-vision-shade"],
 [data-gpu-vision-grade="true"] > [data-testid="dim-light-darkvision"] { z-index: 2 !important; }
 [data-gpu-vision-grade="true"] [data-testid="darkvision-memory-terrain"] { display: none !important; }
+/* When WebGL renders the full map floor, fog, memory, and darkvision grading,
+   bypass Chromium's duplicate DOM SVG <mask> and backdrop-filter rasterization.
+   Keep automatic-map-fog mounted/transparent so visibility selectors stay valid. */
+[data-gpu-vision-full="true"] > [data-testid="player-vision"] > svg,
+[data-gpu-vision-full="true"] > [data-testid="player-vision"] [data-testid="explored-terrain"],
+[data-gpu-vision-full="true"] > [data-testid="player-vision-shade"],
+[data-gpu-vision-full="true"] > [data-testid="dim-light-darkvision"] {
+  display: none !important;
+}
+[data-gpu-vision-full="true"] > [data-testid="player-vision"] > [data-testid="automatic-map-fog"] {
+  background: transparent !important;
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
 
 /* ---- Mobile / touch responsive mode ---- */
 @media (max-width: 820px) {

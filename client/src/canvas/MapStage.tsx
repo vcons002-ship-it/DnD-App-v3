@@ -51,6 +51,8 @@ import type { FogLayer, Measurement, StateSnapshot, Token } from '../../../share
 import { useImage } from './useImage';
 import { TokenShape, DISPOSITION_HEX } from './TokenShape';
 import type { MiniatureLayerHandle, MiniatureToken } from './MiniatureLayer';
+import type { GpuMapFloorConfig } from './gpuMapFloor';
+import { exploredTerrainBrightness } from '../../../shared/terrainLighting';
 import { createMiniatureNameReader, setMiniatureNamesRendered } from './miniatureNameLabels';
 import { MiniatureFallback } from './MiniatureFallback';
 import { BATTLEFIELD_TILT_DEGREES, groundYScale, screenToMap, perspectiveSlope, unprojectGround, mapToScreen, projectGround } from './miniatureProjection';
@@ -548,9 +550,9 @@ function MapStageInner({
     return {...settings,dmVisibility:isDm&&!dmSceneLighting,...(snapshot.playerVision&&!snapshot.playerVision.daylight?{darkvisionTerrain:[...(map.imagePath&&baseW&&baseH?[{url:map.imagePath,videoPath:animateMap?map.videoPath:undefined,x:0,y:0,w:baseW,h:baseH}]:[]),...tiles.map(t=>({url:t.imagePath,videoPath:animateMap?t.videoPath:undefined,x:t.x,y:t.y,w:t.w,h:t.h}))],darkvisionGrid:{size:map.gridHidden?0:grid,x:map.gridOffsetX??0,y:map.gridOffsetY??0}}:{}),carriedLanterns,overlay:true,mapUrl:'',mapX:extX0,mapY:extY0,mapWidth:imgW,mapHeight:imgH,
       walls:map.walls,lights:[...settings.lights,...(snapshot.playerVision?.lights??[]).filter(l=>!settings.lights.some(s=>s.id===l.id)&&!carriedLanterns.some(c=>c.id===l.id)).map(l=>({id:l.id,x:l.x,y:l.y,radiusFt:l.radius/pxPerFoot,heightFt:l.height/pxPerFoot,intensity:l.strength,color:'warm' as const,flicker:false,visibleTorch:false}))],
       ...(environmentQuality==='off'?{mist:false,weather:'none' as const,particles:'none' as const,lightning:false,groundWetness:0,shadows:false}:{}),
-      scenery:false,pixelsPerFoot:pxPerFoot,mistCoverage:'map',mistHeight:settings.mistHeightFt*pxPerFoot,mistQuality:graphics.mistQuality,particleScale:graphics.particleScale,mapShadowSize:graphics.mapShadowSize,
+      scenery:false,pixelsPerFoot:pxPerFoot,mistCoverage:'map',mistHeight:settings.mistHeightFt*pxPerFoot,mistQuality:graphics.mistQuality,particleScale:graphics.particleScale,mapShadowSize:graphics.mapShadowSize,maxMapTextureResolutionPx:graphics.maxMapTextureResolutionPx,
       fog:!isDm&&mapFogEnabled?{grid,revealed:map.mapFogRevealed}:undefined};
-  },[legacy,snapshot.map?.environment,animateMap,map?.videoPath,map?.walls,map?.environment,map?.imagePath,map?.gridHidden,map?.gridOffsetX,map?.gridOffsetY,baseW,baseH,tiles,map?.slidesUrl,snapshot.playerVision,snapshot.tokens,environmentQuality,graphics.resolved,extX0,extY0,imgW,imgH,pxPerFoot,isDm,dmSceneLighting,mapFogEnabled,grid,map?.mapFogRevealed]);
+  },[legacy,snapshot.map?.environment,animateMap,map?.videoPath,map?.walls,map?.environment,map?.imagePath,map?.gridHidden,map?.gridOffsetX,map?.gridOffsetY,baseW,baseH,tiles,map?.slidesUrl,snapshot.playerVision,snapshot.tokens,environmentQuality,graphics.resolved,graphics.maxMapTextureResolutionPx,extX0,extY0,imgW,imgH,pxPerFoot,isDm,dmSceneLighting,mapFogEnabled,grid,map?.mapFogRevealed]);
 
 
   // ---- Measuring tools: a "Measure" dropdown with standard + custom shapes ----
@@ -1049,6 +1051,39 @@ function MapStageInner({
     }
   },[]);
 
+  const baseLayerDirtyRef = useRef(false);
+  const handleGpuFloorChange = useCallback((active: boolean) => {
+    if (!active) {
+      if (baseLayerDirtyRef.current) {
+        baseLayerDirtyRef.current = false;
+        layerRef.current?.drawScene();
+      }
+      visionRef.current?.frame();
+    }
+  }, []);
+  const gpuFloorEligible = useMemo(() => {
+    if (legacy || miniaturesUnavailable || !map || map.slidesUrl || tilesMode || mapFogEnabled || (tokenFogEnabled && isDm)) return false;
+    if (map.imagePath && !(baseW > 0 && baseH > 0)) return false;
+    if (snapshot.annotations.some((a) => a.kind === 'image' && !!a.url)) return false;
+    const has2dGroundTokens = snapshot.tokens.some(
+      (t) => !t.sharedSightOnly && !doorTokenIds.has(t.id) && !hiddenGhosts.has(t.id) && !(readyMiniatures.has(t.id) && miniatureIds.has(t.id)),
+    );
+    return !has2dGroundTokens;
+  }, [legacy, miniaturesUnavailable, map, tilesMode, mapFogEnabled, tokenFogEnabled, isDm, baseW, baseH, snapshot.annotations, snapshot.tokens, doors, hiddenGhosts, readyMiniatures, miniatureIds]);
+  const floorTerrain = useMemo<GpuMapFloorConfig | undefined>(() => {
+    if (!gpuFloorEligible || !map) return undefined;
+    return {
+      tiles: [
+        ...(map.imagePath && baseW && baseH ? [{ url: map.imagePath, videoPath: animateMap ? map.videoPath : undefined, x: 0, y: 0, w: baseW, h: baseH }] : []),
+        ...tiles.map((t) => ({ url: t.imagePath, videoPath: animateMap ? t.videoPath : undefined, x: t.x, y: t.y, w: t.w, h: t.h })),
+      ],
+      bounds: { x: extX0, y: extY0, w: imgW, h: imgH },
+      grid: map.gridHidden ? undefined : { size: grid, x: map.gridOffsetX ?? 0, y: map.gridOffsetY ?? 0, hot: gridHot },
+      canvasBg: CANVAS_BG,
+      exploredBrightness: exploredTerrainBrightness(map.environment, !!activeVision?.heavy),
+    };
+  }, [gpuFloorEligible, map?.id, map?.imagePath, map?.videoPath, map?.gridHidden, map?.gridOffsetX, map?.gridOffsetY, map?.environment, animateMap, baseW, baseH, tiles, extX0, extY0, imgW, imgH, grid, gridHot, activeVision?.heavy]);
+
   const viewRef = useRef(view), prevViewProp = useRef(view), pendingViewRef = useRef<View | null>(null);
   if (prevViewProp.current !== view) { prevViewProp.current = view; if (!pendingViewRef.current || (pendingViewRef.current.x === view.x && pendingViewRef.current.y === view.y && pendingViewRef.current.scale === view.scale)) { pendingViewRef.current = null; viewRef.current = view; } }
   const drawnViewRef = useRef({ x: view.x, y: view.y, scale: view.scale, sy: groundScaleY });
@@ -1202,6 +1237,10 @@ function MapStageInner({
     clearTimeout(zoomSettleTimerRef.current);
     zoomSettleTimerRef.current = undefined;
     zoomFrames.flush();
+    if (baseLayerDirtyRef.current) {
+      baseLayerDirtyRef.current = false;
+      layerRef.current?.drawScene();
+    }
     if (hitDirtyRef.current) refreshCameraHitLayers();
     setView(viewRef.current);
   });
@@ -1273,10 +1312,21 @@ function MapStageInner({
     const retainedLayers=retained?[groundTokenLayerRef.current,sharedTokenLayerRef.current,...(legacy?[]:[tokenLayerRef.current])].filter((l):l is Konva.Layer=>!!l).map(layer=>installRetainedTokenLayer(layer,canvases[perspectiveLayers.indexOf(layer)]?.buffer)):[];
     const baseLayer = layerRef.current;
     const origBaseDrawHit = baseLayer?.drawHit;
+    const origBaseDrawScene = baseLayer?.drawScene;
     if (baseLayer && origBaseDrawHit) {
       baseLayer.drawHit = function(canvas, top) {
         if (Konva.isDragging()) return this;
         return origBaseDrawHit.call(this, canvas, top);
+      };
+    }
+    if (baseLayer && origBaseDrawScene) {
+      baseLayer.drawScene = function(canvas, top) {
+        if (!canvas && !top && ((Konva.isDragging() && activePanLayerRef.current !== null) || zoomSettleTimerRef.current !== undefined) && containerRef.current?.dataset.gpuFloorActive === 'true') {
+          baseLayerDirtyRef.current = true;
+          return this;
+        }
+        baseLayerDirtyRef.current = false;
+        return origBaseDrawScene.call(this, canvas, top);
       };
     }
     const panDedupLayers = [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current].filter((l): l is Konva.Layer => !!l);
@@ -1296,6 +1346,8 @@ function MapStageInner({
       spellOverlay?.off('.spellPixels');
       panDedupLayers.forEach(l => l.off('.panDedup'));
       if (baseLayer && origBaseDrawHit) baseLayer.drawHit = origBaseDrawHit;
+      if (baseLayer && origBaseDrawScene) baseLayer.drawScene = origBaseDrawScene;
+      baseLayerDirtyRef.current = false;
       lastPanDrawnRef.current = null;
       retainedLayers.forEach(dispose=>dispose());input?.();canvases.forEach(dispose=>dispose());projectionCanvases.current=[];
     };
@@ -1886,6 +1938,10 @@ function MapStageInner({
     activePanLayerRef.current = null;
     lastPanDrawnRef.current = null;
     panFrames.push({x:e.target.x(),y:e.target.y()});panFrames.flush();
+    if (baseLayerDirtyRef.current) {
+      baseLayerDirtyRef.current = false;
+      layerRef.current?.drawScene();
+    }
     // Pan synchronizes several layers, while Konva's release paint refreshes
     // only the directly dragged layer. Retained hit maps skipped paints during
     // the drag, so refresh every synchronized layer before the next pointer
@@ -2443,7 +2499,7 @@ function MapStageInner({
           </Stage>
           {!legacy&&(miniatureTokens.length > 0 || preloadMiniatures.length > 0 || environment || spellImpacts.length > 0) && <MiniatureFallback onUnavailable={handleMiniatureUnavailable}><Suspense fallback={null}>
             <MiniatureLayer preparedSpellImpacts={preparedSpellImpacts} spellColorOverlay={spellColorOverlay} spellMist={spellMist} key={map?.id} ref={miniatureRef} rollBackground={rollBackground} rollBackgroundPrepared={rollBackgroundPrepared} personalVision={renderPlayerVision&&(usesMapVision(map)||!!snapshot.playerVision?.heavy)} tokens={miniatureTokens} rayTargetIds={rayCast?rayTargets:undefined} preloadDefinitions={preloadMiniatures} onFailed={setFailedMiniatures} onUnavailable={handleMiniatureUnavailable} view={view} isVisibleAt={tokenVisibleAtPosition}
-              environmentPreview={environment} footprints={readFootprints} spellImpacts={spellImpacts} spellFog={spellFog} visualPosition={presentation.position} memoryTerrainCanvas={memoryTerrainCanvas} visionCoverFrame={visionCoverFrame}
+              environmentPreview={environment} floorTerrain={floorTerrain} onGpuFloorChange={handleGpuFloorChange} footprints={readFootprints} spellImpacts={spellImpacts} spellFog={spellFog} visualPosition={presentation.position} memoryTerrainCanvas={memoryTerrainCanvas} visionCoverFrame={visionCoverFrame}
               tiltDegrees={tiltDegrees} rotationDegrees={rotationDegrees} width={size.w} height={size.h} onReady={handleMiniatureReady}
               nameLabels={miniatureNameLabels} onRenderedNames={handleRenderedNames} onVisionLights={renderPlayerVision?handleVisionLights:undefined} onPrepareVisionLights={renderPlayerVision?handlePrepareVisionLights:undefined} />
           </Suspense></MiniatureFallback>}
