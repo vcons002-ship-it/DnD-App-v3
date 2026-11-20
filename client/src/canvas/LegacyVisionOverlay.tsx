@@ -1,4 +1,4 @@
-import {forwardRef,memo,useId,useImperativeHandle,useLayoutEffect,useMemo,useRef} from 'react';
+import {forwardRef,memo,useEffect,useId,useImperativeHandle,useLayoutEffect,useMemo,useRef} from 'react';
 import type {PlayerVisionHandle} from './PlayerVisionOverlay';
 import type {PlayerVision} from '../../../shared/playerVision';
 import type {ExploredTerrain} from '../../../shared/exploration';
@@ -13,6 +13,7 @@ import type {LegacyPlayback} from '../../../shared/legacyMotion';
 import {legacyMotionIndex} from '../../../shared/legacyMotion';
 import {LegacyRasterPlane,type RasterPlaneHandle} from './LegacyRasterPlane';
 import type {TokenPresentation} from './tokenPresentation';
+import {requestBattlefieldFrame,cancelBattlefieldFrame} from './battlefieldFrame';
 
 type Props={terrain?:{tiles:{url:string;x:number;y:number;w:number;h:number}[];grid?:{size:number;x:number;y:number}};vision:PlayerVision;presentation?:TokenPresentation;raster?:RasterAsset|null;tiles?:RasterTiles;terrainRaster?:RasterAsset;motion?:LegacyPlayback;geometry?:LegacyGeometry|null;view:BattlefieldView;width:number;height:number;mapFogOfWar:boolean;explored?:ExploredTerrain;keepRevealed?:boolean};
 const MaskTile=memo(function MaskTile({asset}:{asset:RasterAsset}){
@@ -46,6 +47,9 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
  const atlasMask=useRef<RasterPlaneHandle>(null),atlasTerrain=useRef<RasterPlaneHandle>(null),baseTerrain=useRef<RasterPlaneHandle>(null),motion=useRef(props.motion);motion.current=props.motion;
  const gradeBaseCanvas=useRef<HTMLCanvasElement>(null),gradeColorCanvas=useRef<HTMLCanvasElement>(null),tileImgs=useRef<(HTMLImageElement|null)[]>([]);
  const svg=useRef<SVGSVGElement>(null),maskRoot=useRef<HTMLDivElement>(null),tileWorld=useRef<HTMLDivElement>(null),edges=useRef<(HTMLDivElement|null)[]>([]),paintCamera=useRef<(view:BattlefieldView)=>void>(()=>{}),paintTerrain=useRef<(view?:BattlefieldView)=>void>(()=>{});
+ const terrainFrame=useRef(0);
+ const terrainPath2D=useRef<{sightStr:string;lightsStr:string;sight:Path2D|null;lights:Path2D|null}>({sightStr:'',lightsStr:'',sight:null,lights:null});
+ useEffect(()=>()=>{if(terrainFrame.current){cancelBattlefieldFrame(terrainFrame.current);terrainFrame.current=0;}},[]);
  const latest=useRef(props),previousView=useRef(props.view),imperativeView=useRef<BattlefieldView|null>(null);
  const placedView=useRef(props.view);
  // Publish server mask and token positions in the same React commit; only the
@@ -113,15 +117,26 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
     ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,w,h);
     const {sight:sightD,lights:lightsD}=activeTerrainPaths.current;
     if(lightsD&&(!frame.mapFogOfWar||sightD)){
-     ctx.save();
-     ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y);
-     if(frame.mapFogOfWar&&sightD)ctx.clip(new Path2D(sightD),'nonzero');
-     ctx.clip(new Path2D(lightsD),'nonzero');
-     for(let i=0;i<tiles.length;i++){
-      const img=tileImgs.current[i];
-      if(img&&img.complete&&img.naturalWidth>0)ctx.drawImage(img,tiles[i].x,tiles[i].y,tiles[i].w,tiles[i].h);
+     if(terrainPath2D.current.sightStr!==sightD){
+      terrainPath2D.current.sightStr=sightD;
+      terrainPath2D.current.sight=sightD&&typeof Path2D!=='undefined'?new Path2D(sightD):null;
      }
-     ctx.restore();
+     if(terrainPath2D.current.lightsStr!==lightsD){
+      terrainPath2D.current.lightsStr=lightsD;
+      terrainPath2D.current.lights=lightsD&&typeof Path2D!=='undefined'?new Path2D(lightsD):null;
+     }
+     const sightPath=terrainPath2D.current.sight,lightsPath=terrainPath2D.current.lights;
+     if(lightsPath&&(!frame.mapFogOfWar||!sightD||sightPath)){
+      ctx.save();
+      ctx.setTransform(view.scale,0,0,view.scale,view.x,view.y);
+      if(frame.mapFogOfWar&&sightPath)ctx.clip(sightPath,'nonzero');
+      ctx.clip(lightsPath,'nonzero');
+      for(let i=0;i<tiles.length;i++){
+       const img=tileImgs.current[i];
+       if(img&&img.complete&&img.naturalWidth>0)ctx.drawImage(img,tiles[i].x,tiles[i].y,tiles[i].w,tiles[i].h);
+      }
+      ctx.restore();
+     }
     }
    }
   }
@@ -145,6 +160,7 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
     const html=pathHtml(key,values[key]);
     if(markup.current.get(node)!==html){node.innerHTML=html;markup.current.set(node,html);}
    }
+   if(terrainFrame.current){cancelBattlefieldFrame(terrainFrame.current);terrainFrame.current=0;}
    paintTerrain.current();
    return;
   }
@@ -166,9 +182,10 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
    const html=pathHtml(key,values[key]);
    if(markup.current.get(node)!==html){node.innerHTML=html;markup.current.set(node,html);}
   }
+  if(terrainFrame.current){cancelBattlefieldFrame(terrainFrame.current);terrainFrame.current=0;}
   paintTerrain.current();
  };
- useLayoutEffect(()=>{drawn.current=undefined;drawnServer.current=undefined;paintLocal.current();paintTerrain.current(latest.current.view);},[suppliedGeometry,localGrading,frame.mapFogOfWar,frame.vision,frame.explored,frame.presentation,props.motion,clipBounds,frame.width,frame.height]);
+ useLayoutEffect(()=>{drawn.current=undefined;drawnServer.current=undefined;paintLocal.current();if(terrainFrame.current){cancelBattlefieldFrame(terrainFrame.current);terrainFrame.current=0;}paintTerrain.current(latest.current.view);},[suppliedGeometry,localGrading,frame.mapFogOfWar,frame.vision,frame.explored,frame.presentation,props.motion,clipBounds,frame.width,frame.height]);
  const id=useId().replace(/:/g,''),sight=`legacy-sight-${id}`,cover=`legacy-cover-${id}`;
  const transform=`translate(${frame.view.x} ${frame.view.y}) scale(${frame.view.scale})`;
  // Local and server-motion groups are owned by paintLocal when presentation is active.
@@ -191,7 +208,7 @@ export const LegacyVisionOverlay=forwardRef<PlayerVisionHandle,Props>(function L
   const transform=`translate(${view.x} ${view.y}) scale(${view.scale})`;
   svg.current?.querySelectorAll('[data-legacy-world]').forEach(g=>g.setAttribute('transform',transform));
   for(const plane of [atlasMask.current,atlasTerrain.current,baseTerrain.current])plane?.camera(view);
-  paintTerrain.current(view);
+  if(localGrading&&!terrainFrame.current)terrainFrame.current=requestBattlefieldFrame(()=>{terrainFrame.current=0;paintTerrain.current(latest.current.view);},'render');
   if(tileWorld.current)tileWorld.current.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.scale})`;
   if(bounds)rasterCover(bounds,view,frame.width,frame.height).forEach((rect,i)=>{const edge=edges.current[i];if(edge)for(const [key,value] of Object.entries(rect))edge.style.setProperty(key,`${value}px`);});
  };

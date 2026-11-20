@@ -17,7 +17,7 @@ export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:S
  layer.attrs.retainedStats=stats;
  let fullScene=true,fullHit=true,size='',wasDragging=false,sceneOrder:Konva.Node[]=[],hadTools=false;
  const origin=():{x:number;y:number}=>layer.getAttr('retainedCanvasOrigin')??{x:0,y:0};
- const hasTools=(children:Konva.Node[])=>children.some(node=>!node.hasName('token')&&node.isVisible());
+ const hasTools=(children:Konva.Node[])=>children.some(node=>!node.hasName('token')&&!node.hasName('token-move-preview')&&node.isVisible());
  const removedScene:(PaintRect|null)[]=[],removedHit:(PaintRect|null)[]=[];
  const touch=(entry:Entry,force:boolean)=>{entry.sceneDirty=true;entry.hitDirty=true;entry.force ||= force;};
  const sync=()=>{

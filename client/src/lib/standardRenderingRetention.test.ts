@@ -1,4 +1,6 @@
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
+import type Konva from 'konva';
+vi.mock('konva',()=>({default:{isDragging:()=>false,Group:class{}}}));
 import {Scene,DirectionalLight,HemisphereLight,Texture,DepthTexture,Vector2,Vector3,type BufferAttribute,Mesh,BoxGeometry,MeshBasicMaterial,InstancedMesh,Matrix4,OrthographicCamera,WebGLRenderTarget,Bone,Skeleton,SkinnedMesh} from 'three';
 import {createBattlefieldLighting} from '../canvas/battlefieldLighting.js';
 import {createEnvironmentVisibility} from '../canvas/environmentVisibility.js';
@@ -7,6 +9,7 @@ import {createMiniatureMaskCache} from '../canvas/miniatureMaskCache.js';
 import {miniatureAppearanceKey} from '../canvas/miniatureAppearance.js';
 import {createVisionLightMask} from '../canvas/visionLightMask.js';
 import {createVisionLightProjector} from '../canvas/visionLightEllipse.js';
+import {installRetainedTokenLayer,invalidateRetainedToken} from '../canvas/retainedTokenLayer.js';
 import {DEFAULT_MAP_ENVIRONMENT} from '../../../shared/mapEnvironment.js';
 
 describe('standard rendering retention',()=>{
@@ -109,5 +112,64 @@ describe('standard rendering retention',()=>{
   mesh.morphTargetInfluences=[.5];expect(cache.needsRender(target,scene,camera)).toBe(true);expect(cache.needsRender(target,scene,camera)).toBe(false);
   mesh.geometry.getAttribute('position').needsUpdate=true;expect(cache.needsRender(target,scene,camera)).toBe(true);
   mesh.geometry.dispose();(mesh.material as MeshBasicMaterial).dispose();mesh.skeleton.dispose();target.dispose();
+ });
+ it('reuses world-space vision light SVG masks across flat camera transforms and rebuilds on tilt or light move',()=>{
+  let groupWrites=0;
+  const node=()=>({id:'',attrs:new Map<string,string>(),setAttribute(k:string,v:string){this.attrs.set(k,v);},getAttribute(k:string){return this.attrs.get(k)??null;},append(){},remove(){}});
+  const prevDoc=(globalThis as any).document;(globalThis as any).document={createElementNS:()=>node()};
+  try{
+   const group={set innerHTML(_v:string){groupWrites++;}} as unknown as SVGGElement;
+   const defs=node() as unknown as SVGGElement;
+   const mask=createVisionLightMask(group,defs,'world-lamp');
+   const light={id:'torch',x:200,y:300,height:50,radius:200,strength:1} as any;
+   const worldProj={key:'world',wallsKey:'[]',occluded:false,ellipse:(cx:number,cy:number,r:number)=>({cx,cy,rx:r,ry:r,rotation:0}),circle:()=>'M0,0Z',clip:()=>'M0,0Z'};
+   mask.sync([light],worldProj);
+   mask.sync([light],worldProj);
+   expect(groupWrites).toBe(1);expect(mask.stats.geometryUpdates).toBe(1);
+   const tiltedProj={key:'tilted:45',wallsKey:'[]',occluded:false,ellipse:createVisionLightProjector({x:10,y:20,scale:1.5},45,0,1000,800),circle:()=>'M0,0Z',clip:()=>'M0,0Z'};
+   mask.sync([light],tiltedProj);
+   expect(groupWrites).toBe(2);expect(mask.stats.geometryUpdates).toBe(2);
+   mask.sync([{...light,x:240}],worldProj);
+   expect(groupWrites).toBe(3);expect(mask.stats.geometryUpdates).toBe(3);
+   mask.dispose();
+  }finally{(globalThis as any).document=prevDoc;}
+ });
+ it('treats token-move-preview as partial dirty redraw rather than full toolFrames while real tools keep toolFrames',()=>{
+  const noop=()=>undefined;
+  const ctx={save:noop,translate:noop,beginPath:noop,clearRect:noop,rect:noop,clip:noop,restore:noop};
+  const canvas={width:800,height:600,pixelRatio:1,getContext:()=>ctx};
+  const mkNode=(nodeName:string,rect:{x:number;y:number;width:number;height:number},parentLayer:any)=>{
+   const handlers=new Map<string,Set<()=>void>>();let vis=true;
+   return {
+    drawCalls:0,
+    hasName:(n:string)=>n===nodeName,isVisible:()=>vis,visible:(v?:boolean)=>{if(v!==undefined)vis=v;return vis;},
+    getAbsoluteOpacity:()=>1,isListening:()=>nodeName==='token',getAttr:()=>0,
+    getClientRect:()=>rect,findOne:()=>undefined,getParent:()=>parentLayer,getLayer:()=>parentLayer,
+    drawScene(){this.drawCalls++;},drawHit:noop,
+    on(evs:string,fn:()=>void){for(const ev of evs.split(' ')){if(!handlers.has(ev))handlers.set(ev,new Set());handlers.get(ev)!.add(fn);}},
+    off(){},
+   };
+  };
+  const children:any[]=[];
+  const layer:any={
+   attrs:{},on:noop,off:noop,fire:noop,batchDraw:noop,drawScene:noop,drawHit:noop,
+   getChildren:()=>children,getCanvas:()=>canvas,getHitCanvas:()=>canvas,getAttr:(k:string)=>layer.attrs[k],
+  };
+  const dispose=installRetainedTokenLayer(layer as unknown as Konva.Layer);
+  const tok=mkNode('token',{x:50,y:50,width:40,height:40},layer);
+  const preview=mkNode('token-move-preview',{x:70,y:70,width:60,height:60},layer);
+  children.push(tok,preview);
+  layer.drawScene();
+  expect(layer.attrs.retainedStats.toolFrames).toBe(0);
+  expect(layer.attrs.retainedStats.fullScene).toBe(1);
+  invalidateRetainedToken(preview as unknown as Konva.Node);
+  layer.drawScene();
+  expect(layer.attrs.retainedStats.toolFrames).toBe(0);
+  expect(layer.attrs.retainedStats.partialScene).toBe(1);
+  const ruler=mkNode('measure-ruler',{x:100,y:100,width:120,height:20},layer);
+  children.push(ruler);
+  layer.drawScene();
+  expect(layer.attrs.retainedStats.toolFrames).toBe(1);
+  dispose();
  });
 });

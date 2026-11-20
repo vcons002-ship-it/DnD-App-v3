@@ -63,7 +63,7 @@ export function createMiniatureNameReader() {
         const canvas=group.toCanvas({...bounds,pixelRatio:density});
         group.destroy();entry={key,poseKey:'',points:[],node,hud,canvas,bounds};cache.set(id,entry);
       }
-      const poseKey=[layer.scaleX(),layer.scaleY(),node.x(),node.y(),hud.x(),hud.y(),hud.rotation()].join(':');
+      const poseKey=[node.x(),node.y(),hud.x(),hud.y(),hud.rotation()].join(':');
       if(entry!.poseKey!==poseKey){const b=entry!.bounds,matrix=inverse.copy().multiply(hud.getAbsoluteTransform());entry!.points=[{x:b.x,y:b.y},{x:b.x+b.width,y:b.y},{x:b.x,y:b.y+b.height},{x:b.x+b.width,y:b.y+b.height}].map(p=>matrix.point(p));entry!.poseKey=poseKey;}const points=entry!.points;
       result.push({id,canvas:entry!.canvas,points,opacity:node.getAbsoluteOpacity(),emphasized:emphasized(id)});
     }
