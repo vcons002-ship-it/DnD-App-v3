@@ -62,7 +62,8 @@ export function createLocalLightShadows(renderer:WebGLRenderer,invalidate:()=>vo
  });
  const roots=new Map<string,{key:string;movingUntil:number}>(),nodes=new WeakMap<Group,Mesh[]>(),sight=createLightSightCache();
  let updates=0,shadowSize=512,method:'cube'|'floor'='cube',wallsRef:readonly MapWall[]|undefined,wallKey='',wallVersion=0,pending=false,originalTriangles=0,proxyTriangles=0;
- let selectionKey='',selectedIds:string[]=[],selectionUpdates=0;
+ let selectionKey='',selectedIds:string[]=[],selectionUpdates=0,castersDirty=false,castersJson='{}';
+ const getCastersJson=()=>{if(castersDirty){castersJson=JSON.stringify(Object.fromEntries(pool.filter(e=>e.id).map(e=>[e.id,e.casterIds])));castersDirty=false;}return castersJson;};
  return {uniforms,
   render(renderer:WebGLRenderer,scene:Scene,camera:Camera,lights:TorchLight[],casters:readonly Caster[],walls:readonly MapWall[],enabled:boolean,_environmentalLength:number,budget=graphicsBudget('high'),worldMatricesCurrent=false){
    const now=performance.now();pending=false;
@@ -82,7 +83,7 @@ export function createLocalLightShadows(renderer:WebGLRenderer,invalidate:()=>vo
    // Resolve this frame's sources: flicker updates radiance while preserving
    // nominal source selection, and must never leave an old light object active.
    const byId=new Map(lights.map(l=>[l.id,l])),selected=selectedIds.map(id=>byId.get(id)!).filter(Boolean);
-   for(const entry of pool)if(!selected.some(l=>l.id===entry.id)){entry.id='';entry.key='';entry.structural='';}
+   for(const entry of pool)if(!selected.some(l=>l.id===entry.id)){if(entry.id||entry.casterIds.length)castersDirty=true;entry.id='';entry.key='';entry.structural='';entry.casterIds=[];}
    origins.forEach(o=>o.w=0);
    if(!selected.length)return;
    if(!worldMatricesCurrent)scene.updateMatrixWorld(true);
@@ -114,7 +115,7 @@ export function createLocalLightShadows(renderer:WebGLRenderer,invalidate:()=>vo
    const ordered=selected.slice().sort((a,b)=>(pool.find(e=>e.id===a.id)?.last??-Infinity)-(pool.find(e=>e.id===b.id)?.last??-Infinity));
    let routineUpdates=0;
    for(const source of ordered){
-     const entry=pool.find(e=>e.id===source.id)??pool.find(e=>!e.id)!;entry.id=source.id;
+     const entry=pool.find(e=>e.id===source.id)??pool.find(e=>!e.id)!;if(entry.id!==source.id){entry.id=source.id;castersDirty=true;}
      const slot=pool.indexOf(entry),far=Math.max(entry.key?entry.light.distance:0,Math.ceil((source.nominalRadius??source.radius)*LIGHT_SPILL_MULTIPLIER/100+1)*100);
      const allowed=prepared.filter(p=>castsLocalShadow(source,p.caster)&&Math.hypot(p.caster.x-source.x,p.caster.y-source.y)<far&&sight.visible(`${source.id}:${p.caster.id}`,source,p.caster,walls));
      const structural=[method,wallVersion,budget.localShadowFloorSize,source.carried,source.height,far,...allowed.map(p=>p.structural)].join('|');
@@ -127,7 +128,7 @@ export function createLocalLightShadows(renderer:WebGLRenderer,invalidate:()=>vo
      entry.light.position.set(source.x,source.height,source.y);entry.light.distance=far;entry.light.updateMatrixWorld();entry.light.shadow.camera.far=far;entry.light.shadow.camera.updateProjectionMatrix();
      origins[slot].set(source.x,source.height,source.y,method==='floor'?2:1);params[slot].set(.5,far,2/shadowSize,localShadowContactBias(source.height));
      if(!due)continue;
-     entry.casterIds=allowed.map(p=>p.caster.id);
+     const nextCasters=allowed.map(p=>p.caster.id);if(nextCasters.length!==entry.casterIds.length||nextCasters.some((c,i)=>c!==entry.casterIds[i])){entry.casterIds=nextCasters;castersDirty=true;}
      if(method==='floor'){
        const fixed=allowed.filter(p=>!source.carried&&!p.dynamic),moving=allowed.filter(p=>source.carried||p.dynamic);
        planar.render(renderer,slot,source,fixed.flatMap(p=>p.meshes),moving.flatMap(p=>p.meshes),sourceKey+':'+structural+':'+fixed.map(p=>p.key).join('|'),far,budget.localShadowFloorSize);
@@ -145,7 +146,7 @@ export function createLocalLightShadows(renderer:WebGLRenderer,invalidate:()=>vo
   get pending(){return pending;},
   get revision(){return updates;},
   get state(){return {localShadowMethod:method,localShadowSize:shadowSize,localShadowLights:pool.filter(e=>e.id).length,localShadowUpdates:updates,
-    shadowSelectionUpdates:selectionUpdates,localShadowSourceIds:pool.filter(e=>e.id).map(e=>e.id).join(','),localShadowCasters:JSON.stringify(Object.fromEntries(pool.filter(e=>e.id).map(e=>[e.id,e.casterIds]))),
+    shadowSelectionUpdates:selectionUpdates,localShadowSourceIds:pool.filter(e=>e.id).map(e=>e.id).join(','),localShadowCasters:getCastersJson(),
     shadowOriginalTriangles:originalTriangles,shadowProxyTriangles:proxyTriangles,...proxies.state,...planar.state};},
   dispose(){planar.dispose();proxies.dispose();empty.dispose();passTarget.dispose();marker.geometry.dispose();(marker.material as MeshBasicMaterial).dispose();for(const entry of pool){entry.light.shadow.map?.dispose();entry.light.shadow.mapPass?.dispose();}},
  };

@@ -1,4 +1,4 @@
-import {Box3, Color, DataTexture, Mesh, NearestFilter, OrthographicCamera, PlaneGeometry, RGBAFormat, Scene, ShaderMaterial, Vector2, Vector3, Vector4, type Matrix4, type Object3D, type Texture, type WebGLRenderer} from 'three';
+import {Box3, BufferGeometry, Color, DataTexture, DynamicDrawUsage, Float32BufferAttribute, Mesh, NearestFilter, OrthographicCamera, RGBAFormat, Scene, ShaderMaterial, Vector2, Vector3, type Matrix4, type Object3D, type Texture, type WebGLRenderer} from 'three';
 export type OutlineRect={x:number;y:number;width:number;height:number};
 /** Match the placement group's one base offset without changing source poses. */
 export function centeredMiniatureOutlineBounds(model:Object3D,baseCenter:readonly number[]):Box3 {
@@ -78,8 +78,46 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
       }`,
     transparent: true, depthTest: false, depthWrite: false, toneMapped: false,
   });
-  const scene = new Scene(), camera = new OrthographicCamera(-1,1,1,-1,0,1), geometry = new PlaneGeometry(2,2);
-  scene.add(new Mesh(geometry, material));
+  const scene = new Scene(), camera = new OrthographicCamera(-1,1,1,-1,0,1);
+  let capacity = 32;
+  let positions = new Float32Array(capacity * 6 * 3), uvs = new Float32Array(capacity * 6 * 2);
+  let geometry = new BufferGeometry();
+  let posAttr = new Float32BufferAttribute(positions, 3).setUsage(DynamicDrawUsage);
+  let uvAttr = new Float32BufferAttribute(uvs, 2).setUsage(DynamicDrawUsage);
+  geometry.setAttribute('position', posAttr);
+  geometry.setAttribute('uv', uvAttr);
+  geometry.setDrawRange(0, 0);
+  const mesh = new Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+  const ensureCapacity = (rects: number) => {
+    if (rects <= capacity) return;
+    capacity = 2 ** Math.ceil(Math.log2(rects));
+    geometry.dispose();
+    positions = new Float32Array(capacity * 6 * 3);
+    uvs = new Float32Array(capacity * 6 * 2);
+    geometry = new BufferGeometry();
+    posAttr = new Float32BufferAttribute(positions, 3).setUsage(DynamicDrawUsage);
+    uvAttr = new Float32BufferAttribute(uvs, 2).setUsage(DynamicDrawUsage);
+    geometry.setAttribute('position', posAttr);
+    geometry.setAttribute('uv', uvAttr);
+    mesh.geometry = geometry;
+  };
+  const writeQuad = (index: number, x0: number, y0: number, x1: number, y1: number, u0: number, v0: number, u1: number, v1: number) => {
+    const p = index * 18, t = index * 12;
+    positions[p] = x0; positions[p+1] = y0; positions[p+2] = 0;
+    positions[p+3] = x1; positions[p+4] = y0; positions[p+5] = 0;
+    positions[p+6] = x1; positions[p+7] = y1; positions[p+8] = 0;
+    positions[p+9] = x0; positions[p+10] = y0; positions[p+11] = 0;
+    positions[p+12] = x1; positions[p+13] = y1; positions[p+14] = 0;
+    positions[p+15] = x0; positions[p+16] = y1; positions[p+17] = 0;
+    uvs[t] = u0; uvs[t+1] = v0;
+    uvs[t+2] = u1; uvs[t+3] = v0;
+    uvs[t+4] = u1; uvs[t+5] = v1;
+    uvs[t+6] = u0; uvs[t+7] = v0;
+    uvs[t+8] = u1; uvs[t+9] = v1;
+    uvs[t+10] = u0; uvs[t+11] = v1;
+  };
   return {
     slot(color: string | undefined, opacity = 1) {
       if (!color) return 0;
@@ -94,13 +132,34 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
     },
     render(renderer: WebGLRenderer,rectangles?:readonly OutlineRect[]) {
       material.uniforms.resolution.value.set(renderer.domElement.width,renderer.domElement.height);
-      material.uniforms.pixelRatio.value=renderer.getPixelRatio();
-      const autoClear=renderer.autoClear,scissorTest=renderer.getScissorTest(),scissor=renderer.getScissor(new Vector4());
+      const pixelRatio=renderer.getPixelRatio();
+      material.uniforms.pixelRatio.value=pixelRatio;
+      let count = 0;
+      if (rectangles) {
+        const merged = mergeOutlineRects(rectangles);
+        if (!merged.length) return;
+        count = merged.length;
+        ensureCapacity(count);
+        const cssW = Math.max(1, renderer.domElement.width / pixelRatio);
+        const cssH = Math.max(1, renderer.domElement.height / pixelRatio);
+        for (let i = 0; i < count; i++) {
+          const r = merged[i];
+          const u0 = r.x / cssW, u1 = (r.x + r.width) / cssW;
+          const v0 = r.y / cssH, v1 = (r.y + r.height) / cssH;
+          writeQuad(i, u0 * 2 - 1, v0 * 2 - 1, u1 * 2 - 1, v1 * 2 - 1, u0, v0, u1, v1);
+        }
+      } else {
+        count = 1;
+        ensureCapacity(1);
+        writeQuad(0, -1, -1, 1, 1, 0, 0, 1, 1);
+      }
+      posAttr.needsUpdate = true;
+      uvAttr.needsUpdate = true;
+      geometry.setDrawRange(0, count * 6);
+      const autoClear=renderer.autoClear;
       renderer.autoClear=false;
-      try {
-        if(rectangles){renderer.setScissorTest(true);for(const r of mergeOutlineRects(rectangles)){renderer.setScissor(r.x,r.y,r.width,r.height);renderer.render(scene,camera);}}
-        else renderer.render(scene,camera);
-      } finally {renderer.autoClear=autoClear;renderer.setScissor(scissor);renderer.setScissorTest(scissorTest);}
+      try { renderer.render(scene,camera); }
+      finally { renderer.autoClear=autoClear; }
     },
     dispose(){geometry.dispose();material.dispose();palette.dispose();},
   };

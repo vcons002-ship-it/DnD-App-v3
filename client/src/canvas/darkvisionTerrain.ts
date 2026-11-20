@@ -87,11 +87,11 @@ export function createDarkvisionTerrain(scene:Scene,visibility:ReturnType<typeof
  },renderMemory(renderer:WebGLRenderer,camera:Camera,canvas:HTMLCanvasElement|null,gpuComposite=false){
   if(!canvas||!entries.length||entries.some(e=>!e.memory.visible))return;
   const w=renderer.domElement.width,h=renderer.domElement.height;
-  const mode=canvas.dataset.mode==='retained'?3:canvas.dataset.mode==='regular'?2:1,copy2d=mode===1||!gpuComposite;
+  const mode=canvas.dataset.mode==='retained'?3:canvas.dataset.mode==='regular'?2:1,copy2d=!gpuComposite;
   const next=JSON.stringify([key,w,h,mode,copy2d,memoryBrightness.value,camera.projectionMatrix.elements,camera.matrixWorld.elements,grade.gradeColor.value.toArray(),grade.gradeOpacity.value,grade.sceneTint.value.toArray(),grade.sceneTintStrength.value]);
   if(canvas===lastCanvas&&next===memoryKey)return;
   lastCanvas=canvas;memoryKey=next;
-  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+  if(copy2d&&(canvas.width!==w||canvas.height!==h)){canvas.width=w;canvas.height=h;}
   for(const entry of entries)entry.memoryMaterial.uniforms.memoryPass.value=mode;
   renderer.render(memoryScene,camera);
   if(!memoryTexture||memoryTexture.image.width!==w||memoryTexture.image.height!==h){memoryTexture?.dispose();memoryTexture=new FramebufferTexture(w,h);}

@@ -40,14 +40,14 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
   const coverScene = new Scene();
   // Pack current sight in R and remembered terrain in G. Per-channel union
   // preserves the other channel while combining overlapping soft lights.
-  const blend={transparent:true,blending:CustomBlending,blendSrc:OneFactor,blendDst:OneMinusSrcColorFactor,blendSrcAlpha:OneFactor,blendDstAlpha:OneMinusSrcAlphaFactor};
+  const blend={transparent:true,forceSinglePass:true,blending:CustomBlending,blendSrc:OneFactor,blendDst:OneMinusSrcColorFactor,blendSrcAlpha:OneFactor,blendDstAlpha:OneMinusSrcAlphaFactor};
   const white = new MeshBasicMaterial({...blend,opacity:0,color:0xff0000,side:DoubleSide,depthTest:false,depthWrite:false,toneMapped:false});
   const remembered=new MeshBasicMaterial({...blend,opacity:0,color:0x00ff00,side:DoubleSide,depthTest:false,depthWrite:false,toneMapped:false});
   const near=white.clone();near.color.set(0x0000ff);
   const stencil = new MeshBasicMaterial({colorWrite:false,side:DoubleSide,depthTest:false,depthWrite:false,
     stencilWrite:true,stencilRef:1,stencilFunc:AlwaysStencilFunc,
     stencilFail:KeepStencilOp,stencilZFail:KeepStencilOp,stencilZPass:ReplaceStencilOp});
-  const rangeStencil=stencil.clone();rangeStencil.stencilRef=2;rangeStencil.transparent=true;
+  const rangeStencil=stencil.clone();rangeStencil.stencilRef=2;rangeStencil.transparent=true;rangeStencil.forceSinglePass=true;
   const rangedMemory=remembered.clone();Object.assign(rangedMemory,{stencilWrite:true,stencilRef:2,stencilFunc:EqualStencilFunc,
     stencilFail:KeepStencilOp,stencilZFail:KeepStencilOp,stencilZPass:KeepStencilOp});
   const lamp = new ShaderMaterial({...blend,side:DoubleSide,depthTest:false,depthWrite:false,toneMapped:false,
@@ -172,11 +172,17 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
           vec3 terrain=grade(c.rgb,(1.-lit)*(1.-retained*sight.g),sight.b);
           c.rgb=mix(terrain,grade(c.rgb,token.r,token.g),bodyCoverage);
         }
-        vec3 fog=mix(vec3(5.,6.,8.)/255.,texture2D(memory,uvScreen).rgb,max(sight.g,sight.r)*hasMemory);
+        vec3 memColor=texture2D(memory,uvScreen).rgb;
+        vec3 fog=mix(vec3(5.,6.,8.)/255.,memColor,max(sight.g,sight.r)*hasMemory);
+        float heavyMemA=(fogEnabled>.5&&gradeMode>1.5&&hasMemory>.5)?f*sight.g:0.;
+        float outA=c.a+heavyMemA*(1.-c.a);
+        vec3 outRgb=hasMemory>.5
+          ?c.rgb*v+fog*f*c.a+memColor*heavyMemA*(1.-c.a)
+          :c.rgb*v;
         // Project raised miniature pixels down to their ground footprint so walls
         // or fog behind a figure never slice off its upper half, while unrevealed
         // portions of a partially-visible figure remain masked.
-        gl_FragColor=hasMemory>.5?vec4(c.rgb*v+fog*f*c.a,c.a):vec4(c.rgb*v,c.a*v);
+        gl_FragColor=hasMemory>.5?vec4(outRgb,outA):vec4(c.rgb*v,c.a*v);
       }`,
   });
   const quadGeometry=new PlaneGeometry(2,2);quadScene.add(new Mesh(quadGeometry,composite));
@@ -210,6 +216,7 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
     for(const [id,entry] of entries)if(!live.has(id)){coverScene.remove(entry.mesh);entry.mesh.geometry.dispose();if(id.startsWith('light:'))(entry.mesh.material as ShaderMaterial).dispose();entries.delete(id);}
   };
   const originalZ=host.style.zIndex;
+  let lastZ=originalZ,lastCompositeAttr='',lastGradingAttr='',lastCoverUpdates=-1,lastSpellFlashes=-1;
   let lastGradeCover:VisionCoverFrame|undefined,lastBodiesKey='',lastGradeFlashes=false;
   return {
     gradeBodies(next:VisionCoverFrame|undefined,bodies:readonly {slot:number;x:number;y:number;radius?:number}[],field?:{torchField:{value:Texture};torchBounds:{value:Vector4}},flashes:readonly VisionLight[]=[],walls:import('../../../shared/mapWalls').MapWall[]=[]){
@@ -246,10 +253,12 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
       const grading=enabled&&!!next?.grade&&!next.grade.daylight;
       const fog=enabled&&!!next?.enabled;
       enabled=fog||grading;
-      host.style.zIndex=enabled?'3':originalZ;
-      host.dataset.visionComposite=enabled?'gpu':'off';
+      const nextZ=enabled?'3':originalZ;
+      if(lastZ!==nextZ){host.style.zIndex=nextZ;lastZ=nextZ;}
+      const nextComposite=enabled?'gpu':'off';
+      if(lastCompositeAttr!==nextComposite){host.dataset.visionComposite=nextComposite;lastCompositeAttr=nextComposite;}
       composite.uniforms.fogEnabled.value=fog?1:0;
-      if(host.parentElement)host.parentElement.dataset.gpuVisionGrade=String(grading);
+      if(host.parentElement){const nextGrading=String(grading);if(lastGradingAttr!==nextGrading){host.parentElement.dataset.gpuVisionGrade=nextGrading;lastGradingAttr=nextGrading;}}
       composite.uniforms.gradeMode.value=grading?(next!.grade!.heavy?2:1):0;
       composite.uniforms.retained.value=next?.keepRevealed?1:0;
       composite.uniforms.cameraWorld.value.copy(camera.matrixWorld);
@@ -267,7 +276,8 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
         finally{renderer.setRenderTarget(target);renderer.shadowMap.needsUpdate=pending;}
         previous=next;cameraKey=key;updates++;
       }
-      host.dataset.visionCoverUpdates=String(updates);host.dataset.visionSpellFlashes=String(flashCount);
+      if(lastCoverUpdates!==updates){host.dataset.visionCoverUpdates=String(updates);lastCoverUpdates=updates;}
+      if(lastSpellFlashes!==flashCount){host.dataset.visionSpellFlashes=String(flashCount);lastSpellFlashes=flashCount;}
       if(next.memory&&next.memory.dataset.ready==='true'){
         if(memoryTexture){composite.uniforms.memory.value=memoryTexture;}else{if(memoryCanvas!==next.memory){memory?.dispose();memoryCanvas=next.memory;memory=new CanvasTexture(memoryCanvas);composite.uniforms.memory.value=memory;memoryVersion='';}const version=next.memory.dataset.version??'ready';if(memoryVersion!==version){memory!.needsUpdate=true;memoryVersion=version;}}composite.uniforms.hasMemory.value=1;}else composite.uniforms.hasMemory.value=0;
 

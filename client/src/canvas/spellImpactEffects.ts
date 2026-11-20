@@ -68,7 +68,7 @@ export function createSpellImpactEffects(scene:Scene){
     const body=new MeshBasicMaterial({color:style.color,transparent:true,depthWrite:false,toneMapped:false});
     const bright=body.clone();bright.blending=AdditiveBlending;
     const white=bright.clone();white.color.set('#ffffff');
-    const haloMaterial=new MeshBasicMaterial({color:style.color,map:glow,transparent:true,blending:AdditiveBlending,side:DoubleSide,depthWrite:false,toneMapped:false});
+    const haloMaterial=new MeshBasicMaterial({color:style.color,map:glow,transparent:true,forceSinglePass:true,blending:AdditiveBlending,side:DoubleSide,depthWrite:false,toneMapped:false});
     const halo=new Mesh(plane,haloMaterial);halo.rotation.x=-Math.PI/2;halo.position.y=.08;halo.visible=!['ice-storm','flame-cone','frost-cone','thunder-cube','shatter-area','flame-column','ice-splash','meteor-area'].includes(style.kind);root.add(halo);
     const shape=shapes.build(style,body,bright,white);root.add(shape.root);
     const arrows:Group[]=[],vines:Mesh[]=[],sparks:Mesh[]=[];

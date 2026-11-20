@@ -23,7 +23,7 @@ export function createMiniatureNameLayer(scene:Scene,depth:DepthTexture,resoluti
         let entry=labels.get(label.id);
         if(!entry){
           const texture=new CanvasTexture(label.canvas);texture.colorSpace=SRGBColorSpace;
-          const material=new MeshBasicMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false,toneMapped:false,side:DoubleSide});
+          const material=new MeshBasicMaterial({map:texture,transparent:true,forceSinglePass:true,depthTest:false,depthWrite:false,toneMapped:false,side:DoubleSide});
           const covered={value:.22};
           material.onBeforeCompile=shader=>{
             shader.uniforms.nameDepth={value:depth};shader.uniforms.nameResolution=resolution;shader.uniforms.nameCoveredOpacity=covered;

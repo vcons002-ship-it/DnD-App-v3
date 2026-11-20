@@ -1054,6 +1054,20 @@ function MapStageInner({
   const drawnViewRef = useRef({ x: view.x, y: view.y, scale: view.scale, sy: groundScaleY });
   const suppressGroundHudSyncRef = useRef(false);
   const hitDirtyRef = useRef(false);
+  const spellAreaHasPixelsRef = useRef(true);
+  const spellAreaHasContent = useStableCallback(() => {
+    const overlay = spellAreaLayerRef.current;
+    if (!overlay) return false;
+    if (overlay.getChildren().some((c) => c.isVisible() && c.getAbsoluteOpacity() > 0)) return true;
+    const ground = groundTokenLayerRef.current;
+    if (!renderVisionLayer || !ground) return false;
+    for (const child of ground.getChildren()) {
+      if (!(child instanceof Konva.Group) || !child.hasName('token') || !child.isVisible() || child.getAbsoluteOpacity() <= 0) continue;
+      const hud = child.findOne<Konva.Group>('.token-upright-hud');
+      if (hud && hud.isVisible() && hud.getChildren().some((c) => c.isVisible())) return true;
+    }
+    return false;
+  });
   const zoomSettleTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const activePanLayerRef = useRef<Konva.Layer | null>(null);
   const lastPanDrawnRef = useRef<{ layer: Konva.Layer; x: number; y: number; sx: number; sy: number } | null>(null);
@@ -1118,6 +1132,8 @@ function MapStageInner({
     drawnViewRef.current = { x: position.x, y: position.y, scale: nextView.scale, sy: groundScaleY };
     visionRef.current?.camera({ view: nextView });
     suppressGroundHudSyncRef.current = true;
+    const prevAutoDraw = Konva.autoDrawEnabled;
+    Konva.autoDrawEnabled = false;
     try {
       for (const layer of [layerRef.current, legacyFootstepsLayerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
         if (!layer) continue;
@@ -1127,9 +1143,17 @@ function MapStageInner({
           continue;
         }
         layer.position(position);
+        if (layer === spellAreaLayerRef.current) {
+          const hasContent = spellAreaHasContent();
+          if (!hasContent && !spellAreaHasPixelsRef.current) continue;
+          layer.drawScene();
+          spellAreaHasPixelsRef.current = hasContent;
+          continue;
+        }
         layer.drawScene();
       }
     } finally {
+      Konva.autoDrawEnabled = prevAutoDraw;
       suppressGroundHudSyncRef.current = false;
       lastPanDrawnRef.current = null;
     }
@@ -1143,11 +1167,20 @@ function MapStageInner({
     if (prev.x !== nextView.x || prev.y !== nextView.y || prev.scale !== nextView.scale || prev.sy !== groundScaleY) {
       drawnViewRef.current = { x: nextView.x, y: nextView.y, scale: nextView.scale, sy: groundScaleY };
       suppressGroundHudSyncRef.current = true;
+      const prevAutoDraw = Konva.autoDrawEnabled;
+      Konva.autoDrawEnabled = false;
       try {
         for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
           if (!layer) continue;
           layer.position({ x: nextView.x, y: nextView.y });
           layer.scale({ x: nextView.scale, y: nextView.scale * groundScaleY });
+          if (layer === spellAreaLayerRef.current) {
+            const hasContent = spellAreaHasContent();
+            if (!hasContent && !spellAreaHasPixelsRef.current) continue;
+            layer.drawScene();
+            spellAreaHasPixelsRef.current = hasContent;
+            continue;
+          }
           layer.drawScene();
         }
         if (legacyFootstepsLayerRef.current) {
@@ -1156,6 +1189,7 @@ function MapStageInner({
           legacyFootstepsLayerRef.current.drawScene();
         }
       } finally {
+        Konva.autoDrawEnabled = prevAutoDraw;
         suppressGroundHudSyncRef.current = false;
       }
       hitDirtyRef.current = true;
@@ -1208,13 +1242,13 @@ function MapStageInner({
       for (const child of groundLayer.getChildren()) {
         if (!(child instanceof Konva.Group) || !child.hasName('token') || !child.isVisible() || child.getAbsoluteOpacity() <= 0) continue;
         const hud = child.findOne<Konva.Group>('.token-upright-hud');
-        if (hud && hud.isVisible()) {
+        if (hud && hud.isVisible() && hud.getChildren().some((c) => c.isVisible())) {
           (hud as unknown as { _clearSelfAndDescendantCache?: (attr: string) => void })._clearSelfAndDescendantCache?.('absoluteTransform');
           hud.drawScene(canvas, undefined, buffer);
         }
       }
     };
-    const syncOverlay = () => { if (!suppressGroundHudSyncRef.current) overlayLayer.batchDraw(); };
+    const syncOverlay = () => { if (!suppressGroundHudSyncRef.current && !Konva.isDragging()) overlayLayer.batchDraw(); };
     overlayLayer.on('draw.groundVisionHud', paintVisionHud);
     groundLayer.on('draw.groundVisionHud', syncOverlay);
     overlayLayer.batchDraw();
@@ -1253,10 +1287,13 @@ function MapStageInner({
         }
       });
     }
+    const spellOverlay = spellAreaLayerRef.current;
+    spellOverlay?.on('draw.spellPixels', () => { spellAreaHasPixelsRef.current = spellAreaHasContent(); });
     for (const layer of stage.getLayers()) layer.draw();
     // Dispose wrappers in reverse order: the retained paint delegates to the
     // perspective buffer, whose padding must remain valid until it is removed.
     return () => {
+      spellOverlay?.off('.spellPixels');
       panDedupLayers.forEach(l => l.off('.panDedup'));
       if (baseLayer && origBaseDrawHit) baseLayer.drawHit = origBaseDrawHit;
       lastPanDrawnRef.current = null;
@@ -1876,21 +1913,40 @@ function MapStageInner({
     if(previous.tilt!==tilt){viewRef.current=nextView;drawnViewRef.current={x:nextView.x,y:nextView.y,scale:nextView.scale,sy:groundYScale(tilt)};}
     projectionState.current={tilt,rotation};
     for(const canvas of projectionCanvases.current)canvas.update(tilt,rotation);
-    for(const layer of [layerRef.current,legacyFootstepsLayerRef.current,groundTokenLayerRef.current,tokenLayerRef.current,sharedTokenLayerRef.current,spellAreaLayerRef.current]){
-      if(!layer)continue;
-      if(previous.tilt!==tilt){layer.position({x:nextView.x,y:nextView.y});layer.scale({x:nextView.scale,y:nextView.scale*groundYScale(tilt)});}
-      const labels=layer.find('.token-upright-hud');
-      for(const label of labels){label.rotation(-rotation);invalidateRetainedToken(label);}
-      const pills=layer.find('.ray-mid-pill');
-      const invSy=1/Math.max(0.25,groundYScale(tilt));
-      for(const pill of pills){pill.rotation(-rotation);pill.scaleY(invSy);}
-      if(previous.tilt!==tilt || labels.length || pills.length)layer.draw();
+    suppressGroundHudSyncRef.current = true;
+    const prevAutoDraw = Konva.autoDrawEnabled;
+    Konva.autoDrawEnabled = false;
+    try {
+      for(const layer of [layerRef.current,legacyFootstepsLayerRef.current,groundTokenLayerRef.current,tokenLayerRef.current,sharedTokenLayerRef.current,spellAreaLayerRef.current]){
+        if(!layer)continue;
+        if(previous.tilt!==tilt){layer.position({x:nextView.x,y:nextView.y});layer.scale({x:nextView.scale,y:nextView.scale*groundYScale(tilt)});}
+        const labels=layer.find('.token-upright-hud');
+        for(const label of labels){label.rotation(-rotation);invalidateRetainedToken(label,false);}
+        const pills=layer.find('.ray-mid-pill');
+        const invSy=1/Math.max(0.25,groundYScale(tilt));
+        for(const pill of pills){pill.rotation(-rotation);pill.scaleY(invSy);}
+        if(previous.tilt!==tilt || labels.length || pills.length){
+          if(layer===spellAreaLayerRef.current){
+            const hasContent=spellAreaHasContent();
+            if(!hasContent && !spellAreaHasPixelsRef.current)continue;
+            layer.drawScene();
+            spellAreaHasPixelsRef.current=hasContent;
+            continue;
+          }
+          layer.drawScene();
+        }
+      }
+    } finally {
+      Konva.autoDrawEnabled = prevAutoDraw;
+      suppressGroundHudSyncRef.current = false;
     }
+    hitDirtyRef.current = true;
     miniatureRef.current?.setProjection(tilt,rotation,nextView);
     visionRef.current?.camera({tilt,rotation,view:nextView});
     if(rotationLabel.current)rotationLabel.current.hidden=Math.abs(rotation%360)<.01;
   };
   const commitProjection=(tilt:number,rotation:number,nextView:View)=>{
+    if(hitDirtyRef.current)refreshCameraHitLayers();
     setTiltDegrees(tilt);setRotationDegrees(rotation);setView(nextView);
     safeSetItem(rotationKey,String(rotation%360));
   };

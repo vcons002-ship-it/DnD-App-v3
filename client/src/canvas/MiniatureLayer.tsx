@@ -8,6 +8,7 @@ import {
   updateLoadingTaskStage,
 } from '../lib/loadingProgress';
 import {centeredMiniatureOutlineBounds,createMiniatureSilhouetteOutline,isMiniatureWeaponPart,type OutlineRect} from './miniatureSilhouetteOutline';
+import { createMiniatureDepthProxyGeometries, type DepthProxyGeometries } from './miniatureDepthProxy';
 import {miniatureLodForPixels,miniatureLodPair,miniatureLodShouldPrepare,type MiniatureLod} from '../../../shared/miniatureLod';
 import {warmMiniatureGpuBuffers} from './miniatureGpuWarmup';
 import {prepareMiniatureLighting} from './miniatureLightingPreparation';
@@ -28,9 +29,9 @@ import type {CombatRole} from '../../../shared/types';
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import {
   Vector2, Color, AnimationMixer, ACESFilmicToneMapping, DirectionalLight, Group, HemisphereLight,
-  Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, OrthographicCamera, PMREMGenerator, RingGeometry,
-  Box3, Sprite, SpriteMaterial, CanvasTexture, PlaneGeometry, Scene, Texture, DepthTexture, Matrix4, Vector3, WebGLRenderer, PerspectiveCamera, WebGLRenderTarget,
-  DataTexture, NearestFilter, RGBAFormat,
+  Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PMREMGenerator, RingGeometry,
+  Box3, Sprite, SpriteMaterial, CanvasTexture, PlaneGeometry, Scene, SkinnedMesh, Texture, DepthTexture, Matrix4, Vector3, WebGLRenderer, PerspectiveCamera, WebGLRenderTarget,
+  DataTexture, NearestFilter, RGBAFormat, ShaderMaterial, HalfFloatType,
 } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -152,6 +153,9 @@ type Instance = {
   root: Group;
   movePreviewGeometry?:ReturnType<typeof createMiniatureMovePreviewGeometry>;
   movePreviewKey?:string;
+  depthProxyKey?:string;
+  depthBodyProxy?:Mesh;
+  depthWeaponProxy?:Mesh;
   updateTransform:()=>boolean;
   turnRing: Mesh<RingGeometry, MeshBasicMaterial>;
   selectionRing: Mesh<RingGeometry, MeshBasicMaterial>;
@@ -220,6 +224,15 @@ function applyFx(instance: Instance, seconds: number) {
 
 /** One renderer for all visible miniatures. Konva remains the sole input owner. */
 function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string[], status: string) => void): Engine {
+  const hostDataCache:Record<string,string>=Object.create(null);
+  const setHostData=(key:string,value:string)=>{if(hostDataCache[key]===value)return;hostDataCache[key]=value;host.dataset[key]=value;};
+  let sharedTokenIdsCache='';
+  let instancesVersion=0;
+  let lastLoadedUrlsVersion=-1,cachedLoadedUrls='[]';
+  let lastPreparedUrlsVersion=-1,cachedPreparedUrls='[]',cachedPreparedInScene='0',cachedActiveUrls='[]';
+  let lastMistBodiesVersion=-1,lastMistBodiesBattlefield=false,cachedMistBodies='[]';
+  let lastSpellPositionsKey='',cachedSpellPositions='[]';
+  let lastEnvBoundsKey='',cachedEnvBounds='[]';
   const renderer = new WebGLRenderer({ alpha: true, antialias: true, stencil: true, powerPreference: 'high-performance' });
   renderer.setClearColor(0, 0);
   renderer.toneMapping = ACESFilmicToneMapping;
@@ -258,6 +271,28 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   host.parentElement?.appendChild(sharedCanvas);
   const sharedContext=sharedCanvas.getContext('2d')!;
   const sharedDepth=new MeshBasicMaterial({colorWrite:false});
+  const sharedTarget=new WebGLRenderTarget(1,1,{type:HalfFloatType,depthBuffer:true});
+  const sharedClearColor=new Color();
+  const sharedQuadScene=new Scene(),sharedQuadCamera=new OrthographicCamera(-1,1,1,-1,0,1);
+  const sharedQuadGeometry=new PlaneGeometry(2,2);
+  const sharedCompositeMaterial=new ShaderMaterial({
+    transparent:true,depthTest:false,depthWrite:false,toneMapped:true,
+    uniforms:{tex:{value:sharedTarget.texture},grayscale:{value:0},opacity:{value:1}},
+    vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
+    fragmentShader:`uniform sampler2D tex;uniform float grayscale,opacity;varying vec2 vUv;
+      void main(){
+        vec4 c=texture2D(tex,vUv);
+        if(c.a<=.001)discard;
+        c.rgb/=c.a;
+        gl_FragColor=c;
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        float g=dot(gl_FragColor.rgb,vec3(.2126,.7152,.0722));
+        gl_FragColor.rgb=mix(gl_FragColor.rgb,vec3(g),grayscale);
+        gl_FragColor.a*=opacity;
+      }`,
+  });
+  sharedQuadScene.add(new Mesh(sharedQuadGeometry,sharedCompositeMaterial));
   let sharedFrameKey='';
   const labelVersions=new WeakMap<HTMLCanvasElement,number>();let nextLabelVersion=0;
 
@@ -266,8 +301,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const key = new DirectionalLight(0xffeddb, NEUTRAL_MINIATURE_LIGHTING.key);
   key.position.set(-3, 8, 5);
   scene.add(key);
-  ambient.layers.enable(4);key.layers.enable(4);
-  ambient.layers.enable(SPELL_IMPACT_LAYER);key.layers.enable(SPELL_IMPACT_LAYER);
+  for(const layer of [1,4,5,6,SPELL_IMPACT_LAYER,MINIATURE_NAME_LAYER]){ambient.layers.enable(layer);key.layers.enable(layer);}
   // A small neutral environment keeps metal readable without per-token lights/shadows.
   let pmrem: PMREMGenerator | null = null;
   let room: RoomEnvironment | null = null;
@@ -280,7 +314,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     scene.environmentIntensity = NEUTRAL_MINIATURE_LIGHTING.reflection;
   } catch (error) {
     spellImpacts.dispose();spellColor.dispose();localShadows.dispose();
-    sharedCanvas.remove();sharedDepth.dispose();names.dispose();visionLift?.dispose();visionComposite?.dispose();
+    sharedCanvas.remove();sharedDepth.dispose();sharedTarget.dispose();sharedQuadGeometry.dispose();sharedCompositeMaterial.dispose();names.dispose();visionLift?.dispose();visionComposite?.dispose();
     silhouette.dispose();outlineMask.dispose(); maskMaterial.dispose();
     environment?.dispose();
     renderer.dispose();
@@ -298,6 +332,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const manifests = new Map<string, Promise<FxManifest | null>>();
   const instances = new Map<string, Instance>();
   const movePreviewGeometries=new Map<string,{geometry:ReturnType<typeof createMiniatureMovePreviewGeometry>;users:number}>();
+  const depthProxyGeometries=new Map<string,{geometries:DepthProxyGeometries;users:number}>();
+  const depthProxyMaterial=new MeshBasicMaterial({colorWrite:false});
   const opacityFades=new Map<string,{start:number;from:number;to:number;value:number}>();
   const repaintAfterWarmup = () => { if (disposed || failed || document.hidden || !hasRendered) return; cancelBattlefieldFrame(frame); frame = 0; lastPaint = 0; if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; } draw(performance.now()); };
   const shaderWarmup=createMiniatureShaderWarmup(renderer,createMiniatureTorchLighting(localShadows.uniforms),repaintAfterWarmup);
@@ -310,6 +346,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const clearPreview = () => {
     if(preview)scene.remove(preview.root);
     preview=null;tokensDirty=true;delete host.dataset.previewTokenId;delete host.dataset.previewDrawCalls;
+    delete hostDataCache.previewTokenId;delete hostDataCache.previewDrawCalls;
   };
   const abort = new AbortController();
   let props = initial,sourceProps=initial;
@@ -359,7 +396,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       const promise=assets.get(url)!;assets.delete(url);measurements.delete(url);warmedAssets.delete(url);backgroundAssetUrls.delete(url);
       void promise.then(asset=>{if(asset)disposeAsset(asset);});
     }
-    host.dataset.cachedModelAssets=String(assets.size);
+    setHostData('cachedModelAssets',String(assets.size));
   }
   let view = initial.view;
   let committedView = initial.view;
@@ -417,13 +454,19 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     camera.lookAt(center.x, 0, center.z);
     camera.updateProjectionMatrix();camera.updateMatrixWorld();
     outlineProjectionInverse.value.copy(camera.projectionMatrixInverse);
-    host.dataset.cameraRotation=String(props.rotationDegrees??0);host.dataset.cameraTilt=String(props.tiltDegrees);
+    setHostData('cameraRotation',String(props.rotationDegrees??0));setHostData('cameraTilt',String(props.tiltDegrees));
   };
   const publish = () => {
-    host.dataset.preparedModelUrls=JSON.stringify([...preparedInstances.values()].map(i=>i.url));
-    host.dataset.preparedModelsInScene=String([...preparedInstances.values()].filter(i=>i.root.parent===scene).length);
-    host.dataset.activeModelUrls=JSON.stringify([...instances.values()].map(i=>i.url));
-    host.dataset.deathSkullCount=String(props.tokens.filter(t=>t.definition.id===DEATH_SKULL.id&&instances.get(t.id)?.url===DEATH_SKULL.url).length);
+    if(lastPreparedUrlsVersion!==instancesVersion){
+      lastPreparedUrlsVersion=instancesVersion;
+      cachedPreparedUrls=JSON.stringify([...preparedInstances.values()].map(i=>i.url));
+      cachedPreparedInScene=String([...preparedInstances.values()].filter(i=>i.root.parent===scene).length);
+      cachedActiveUrls=JSON.stringify([...instances.values()].map(i=>i.url));
+    }
+    setHostData('preparedModelUrls',cachedPreparedUrls);
+    setHostData('preparedModelsInScene',cachedPreparedInScene);
+    setHostData('activeModelUrls',cachedActiveUrls);
+    setHostData('deathSkullCount',String(props.tokens.filter(t=>t.definition.id===DEATH_SKULL.id&&instances.get(t.id)?.url===DEATH_SKULL.url).length));
     const failedIds = props.tokens.filter(t => failedAssets.has(t.definition.url)&&!instances.has(t.id)).map(t => t.id).sort();
     if (failedIds.join("|") !== lastFailedIds) {
       lastFailedIds = failedIds.join("|");
@@ -500,23 +543,23 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     const environment=props.environmentPreview;
     const atmosphereAnimated = !!environment?.enabled && !reducedMotion.matches &&
       ((environment.particles&&environment.particles!=='none'&&(environment.particleIntensity??.5)>0&&(environment.particleScale??1)>0) || (environment.groundWetness??0)>0 || environment.lightning || (environment.mist&&environment.mistQuality!=='off') || (!!environment.weather && environment.weather!=='none' && (environment.weatherIntensity??.5)>0) || !!environment.lights?.some(light=>light.flicker));
-    const animated = !reducedMotion.matches && [...instances.entries()].some(([id, instance]) => instance.mixer || instance.fx || instance.turnRing.visible || instance.selectionRing.visible || isTokenTargeted(id));
+    const animated = !reducedMotion.matches && [...instances.entries()].some(([id, instance]) => instance.mixer || instance.fx || instance.lightning || instance.turnRing.visible || instance.selectionRing.visible || isTokenTargeted(id));
     const settling = moves.size > 0;
     const casting = [...instances.entries()].filter(([, instance]) => instance.lightning?.active(now / 1000));
     const fading=[...opacityFades.values()].some(f=>now-f.start<850);
     const fastAnimation=settling||casting.length>0||spellImpacts.active||fading||localShadows.pending;
-    host.dataset.castingTokenIds = casting.map(([id]) => id).join(',');
+    setHostData('castingTokenIds',casting.map(([id]) => id).join(','));
     // Paint the preference change even inside the frame cap: this may be the
     // last frame once animation stops, so no flash or moving effect may linger.
     // Camera/input invalidation bypasses this cap. Only motion, active casts
     // and spells need 60 Hz; stationary cosmetic animation follows the budget.
     const fps=props.rollBackground?12:fastAnimation?60:props.graphics?.idleSceneFps??24;
-    host.dataset.idleSceneFps=String(props.graphics?.idleSceneFps??24);
+    setHostData('idleSceneFps',String(props.graphics?.idleSceneFps??24));
     if (paintedReducedMotion !== reducedMotion.matches || now - lastPaint >= 1000/fps-1) {
       paintedReducedMotion = reducedMotion.matches;
       lastPaint = now;drawnCameraKey = currentCameraKey();
       const seconds = (now - started) / 1000;
-      host.dataset.mirrorImageCount=String(props.tokens.reduce((n,t)=>n+(instances.has(t.id)?t.mirrorImages??0:0),0));
+      setHostData('mirrorImageCount',String(props.tokens.reduce((n,t)=>n+(instances.has(t.id)?t.mirrorImages??0:0),0)));
       if(moves.size>0)tokensDirty=true;
       for(const [id,move] of moves)if(move.until<now)moves.delete(id);
       for (const token of props.tokens) {
@@ -564,21 +607,23 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         if(!props.spellColorOverlay){battlefield?.lighting.prepareTransient(preparedLights,renderer);props.onPrepareVisionLights?.(preparedLights);}
       }else if(!staged.length&&!spellImpacts.active){battlefield?.lighting.prepareTransient([]);props.onPrepareVisionLights?.([]);}
       if(spellImpacts.preparation.pending)spellImpacts.warm(renderer,camera);
-      host.dataset.spellPreparedCount=String(spellImpacts.preparation.pending);
-      host.dataset.spellGeometryBuilt=String(spellImpacts.preparation.built);
-      host.dataset.spellPreparedPromoted=String(spellImpacts.preparation.promoted);
-      host.dataset.spellGpuWarmCount=String(spellImpacts.preparation.gpuWarmCount);
+      setHostData('spellPreparedCount',String(spellImpacts.preparation.pending));
+      setHostData('spellGeometryBuilt',String(spellImpacts.preparation.built));
+      setHostData('spellPreparedPromoted',String(spellImpacts.preparation.promoted));
+      setHostData('spellGpuWarmCount',String(spellImpacts.preparation.gpuWarmCount));
       const impactLights=spellImpacts.tick(now,props.environmentPreview?.pixelsPerFoot??12.8,reducedMotion.matches,id=>{
         const impact=props.spellImpacts?.find(e=>e.tokenId===id);if(!impact)return;
         const instance=instances.get(id),point=impact.fixed?impact:props.visualPosition?.(id)??impact;
         return {...point,visible:props.isVisibleAt?.(id,point.x,point.y)??true,
           height:instance?.mistBody?instance.mistBody.height*instance.root.scale.x:undefined};
       });
-      host.dataset.spellImpactCount=String(spellImpacts.kinds.length);
-      host.dataset.spellTransientCount=String(spellImpacts.transientCount);
-      host.dataset.spellImpactKinds=spellImpacts.kinds.join(',');
-      host.dataset.spellLightStrength=String(impactLights.reduce((sum,l)=>sum+l.strength,0));
-      host.dataset.spellLightPositions=JSON.stringify(impactLights.map(l=>[l.x,l.height,l.y]));
+      setHostData('spellImpactCount',String(spellImpacts.kinds.length));
+      setHostData('spellTransientCount',String(spellImpacts.transientCount));
+      setHostData('spellImpactKinds',spellImpacts.kinds.join(','));
+      setHostData('spellLightStrength',String(impactLights.reduce((sum,l)=>sum+l.strength,0)));
+      const spellPosKey=impactLights.length?impactLights.map(l=>`${l.x},${l.height},${l.y}`).join('|'):'';
+      if(spellPosKey!==lastSpellPositionsKey){lastSpellPositionsKey=spellPosKey;cachedSpellPositions=impactLights.length?JSON.stringify(impactLights.map(l=>[l.x,l.height,l.y])):'[]';}
+      setHostData('spellLightPositions',cachedSpellPositions);
       // Full illumination remains the default; the overlay is a diagnostic comparison.
       battlefield?.lighting.setTransient(props.spellColorOverlay?[]:impactLights);
       spellColor.draw(props.spellColorOverlay?impactLights:[],view,props.tiltDegrees,props.rotationDegrees??0,props.width,props.height);
@@ -621,14 +666,14 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         timing?.begin();
         localShadows.render(renderer,scene,camera,battlefield?.lighting.lights.filter(l=>!l.transient)??[],[...instances].map(([id,i])=>({id,root:i.root,diameter:i.baseDiameter*i.root.scale.x,x:i.root.position.x,y:i.root.position.z,visible:i.root.visible&&!tokenById.get(id)?.sharedSightOnly,animated:animated&&i.shadowAnimated})),props.environmentPreview?.walls??EMPTY_WALLS,!!environment?.enabled&&environment.shadows,environment?.shadowLength??1.3,props.graphics,true);
         const lightMode=props.graphics?.miniatureLightMode??'directional';
-        host.dataset.miniatureLightMode=lightMode;
+        setHostData('miniatureLightMode',lightMode);
         for(const instance of instances.values())instance.torchLighting.update(battlefield?.lighting.lights??impactLights,instance.root,camera,!!props.environmentPreview?.darkvisionTerrain,props.environmentPreview?.walls,lightMode,battlefield?.lighting.fieldUniforms);
         const batching=batches.update([...instances].map(([id,i])=>({root:i.root,lighting:i.torchLighting,
           eligible:!['druk','varis','vanec',DEATH_SKULL.id,SPIRITUAL_WEAPON.id].includes(tokenById.get(id)?.definition.id??'')&&!i.mixer&&!i.fx&&!i.lightning&&!tokenById.get(id)?.sharedSightOnly&&!tokenById.get(id)?.hidden&&!tokenById.get(id)?.invisible&&!tokenById.get(id)?.mirrorImages})),batchingEnabled,true,(props.graphics?.resolved??'high')==='high');
-        host.dataset.batchLighting=(props.graphics?.resolved??'high')==='high'?'instance-rows':'shared-uniforms';
+        setHostData('batchLighting',(props.graphics?.resolved??'high')==='high'?'instance-rows':'shared-uniforms');
         // New batch meshes were added after the scene transform preparation.
         for(const child of scene.children)if(child.name==='batched-miniatures')child.updateMatrixWorld();
-        host.dataset.miniatureBatches=String(batching.batches);host.dataset.batchedMeshInstances=String(batching.instances);
+        setHostData('miniatureBatches',String(batching.batches));setHostData('batchedMeshInstances',String(batching.instances));
         battlefield?.lighting.renderField(renderer,localShadows.revision);
         battlefield?.prepareMist(renderer);
         const visible=new Set([...instances].filter(([,instance])=>instance.root.visible).map(([id])=>id));
@@ -658,30 +703,36 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           scene.overrideMaterial = null; camera.layers.mask = originalLayers;
           renderer.setRenderTarget(null);
         }
-        host.dataset.bodyMaskUpdates=String(bodyMaskCache.updates);
+        setHostData('bodyMaskUpdates',String(bodyMaskCache.updates));
         // Shared figures cannot cast shadows or light the viewer's actual map.
         // A depth-only pass of personal figures preserves overlap ordering.
         const sw=renderer.domElement.width,sh=renderer.domElement.height;
-        if(sharedCanvas.width!==sw||sharedCanvas.height!==sh){sharedCanvas.width=sw;sharedCanvas.height=sh;}
-        sharedCanvas.dataset.tokenIds=[...sharedIds].filter(id=>visible.has(id)).join(',');
+        const visibleSharedIds=[...sharedIds].filter(id=>visible.has(id));
+        const sharedTokenIdsStr=visibleSharedIds.join(',');
+        if(sharedTokenIdsCache!==sharedTokenIdsStr){sharedTokenIdsCache=sharedTokenIdsStr;sharedCanvas.dataset.tokenIds=sharedTokenIdsStr;}
         const colorMemory=useStore.getState().snapshot?.map?.explorationMode!=='off'&&!environment?.darkvisionTerrain;
-        sharedCanvas.style.filter=colorMemory?'none':'grayscale(1)';
-        sharedCanvas.style.opacity=colorMemory?'1':'.78';
-
-        sharedCanvas.style.display=sharedCanvas.dataset.tokenIds?'block':'none';
+        const needsGpuMemory=!!sightFrame?.explored.length&&!!(props.environmentPreview?.heavyDarkness||props.environmentPreview?.darkvisionTerrain);
+        if(needsGpuMemory)battlefield?.renderMemory(renderer,camera,props.memoryTerrainCanvas?.()??null,!!visionComposite);
+        const useComposite=!!visionComposite&&!!sightFrame&&(!needsGpuMemory||sightFrame.memory?.dataset.ready==='true');
+        const gpuCompositeActive=!!props.personalVision&&useComposite&&(!!sightFrame.enabled||(!!sightFrame.grade&&!sightFrame.grade.daylight));
+        const sharedAnimated=visibleSharedIds.some(id=>{const inst=instances.get(id);return !!(inst?.mixer||inst?.fx||inst?.lightning);});
         // Static awareness need not redraw for weather or torch flicker. Camera,
         // pose, name, appearance and foreground occlusion changes invalidate it.
-        const sharedKey=sharedIds.size?JSON.stringify([sw,sh,camera.projectionMatrix.elements,camera.matrixWorld.elements,
+        const sharedKey=visibleSharedIds.length?JSON.stringify([sw,sh,gpuCompositeActive,camera.projectionMatrix.elements,camera.matrixWorld.elements,
           useStore.getState().snapshot?.map?.explorationMode,environment?.heavyDarkness,ambient.intensity,key.intensity,scene.environmentIntensity,ambient.color.toArray(),key.color.toArray(),
           props.tokens.map(t=>{const i=instances.get(t.id);return [t.id,t.sharedSightOnly,t.tint,t.shade,t.mirrorImages,i?.root.visible,i?.root.position.toArray(),i?.root.rotation.y,i?.root.scale.x];}),
           labels.map(l=>{if(!labelVersions.has(l.canvas))labelVersions.set(l.canvas,++nextLabelVersion);return [l.id,labelVersions.get(l.canvas),l.points,l.opacity];})]):'';
-        if(sharedKey!==sharedFrameKey||(sharedIds.size>0&&[...instances.values()].some(i=>i.mixer))){
-          sharedFrameKey=sharedKey;sharedContext.clearRect(0,0,sw,sh);
-          if(sharedIds.size){
-            const layers=camera.layers.mask,autoClear=renderer.autoClear;
-            const ambientIntensity=ambient.intensity,keyIntensity=key.intensity,reflection=scene.environmentIntensity;
-            const shadowUpdate=renderer.shadowMap.needsUpdate;
+        const renderSharedPass=()=>{
+          const layers=camera.layers.mask,autoClear=renderer.autoClear;
+          const ambientIntensity=ambient.intensity,keyIntensity=key.intensity,reflection=scene.environmentIntensity;
+          const shadowUpdate=renderer.shadowMap.needsUpdate;
+          const prevTarget=renderer.getRenderTarget(),clearAlpha=renderer.getClearAlpha();renderer.getClearColor(sharedClearColor);
+          try{
             renderer.shadowMap.needsUpdate=false;
+            if(gpuCompositeActive){
+              if(sharedTarget.width!==sw||sharedTarget.height!==sh)sharedTarget.setSize(sw,sh);
+              renderer.setRenderTarget(sharedTarget);renderer.setClearColor(0,0);renderer.autoClear=false;renderer.clear(true,true,true);
+            }
             camera.layers.set(5);scene.overrideMaterial=sharedDepth;
             renderer.render(scene,camera);
             scene.overrideMaterial=null;camera.layers.set(4);renderer.autoClear=false;
@@ -691,21 +742,38 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
               ambient.intensity=NEUTRAL_MINIATURE_LIGHTING.ambient;key.intensity=NEUTRAL_MINIATURE_LIGHTING.key;
               scene.environmentIntensity=NEUTRAL_MINIATURE_LIGHTING.reflection;
             }
-            for(const id of sharedIds){const i=instances.get(id);if(i)i.torchLighting.update([],i.root,camera,!!environment?.darkvisionTerrain&&!colorMemory,[]);}
+            for(const id of visibleSharedIds){const i=instances.get(id);if(i)i.torchLighting.update([],i.root,camera,!!environment?.darkvisionTerrain&&!colorMemory,[]);}
             renderer.render(scene,camera);
-            sharedContext.drawImage(renderer.domElement,0,0);
-            camera.layers.mask=layers;renderer.autoClear=autoClear;
+            if(!gpuCompositeActive){
+              if(sharedCanvas.width!==sw||sharedCanvas.height!==sh){sharedCanvas.width=sw;sharedCanvas.height=sh;}
+              sharedContext.clearRect(0,0,sw,sh);
+              sharedContext.drawImage(renderer.domElement,0,0);
+            }
+          }finally{
+            renderer.setRenderTarget(prevTarget);renderer.setClearColor(sharedClearColor,clearAlpha);
+            camera.layers.mask=layers;renderer.autoClear=autoClear;scene.overrideMaterial=null;
             ambient.intensity=ambientIntensity;key.intensity=keyIntensity;scene.environmentIntensity=reflection;
             renderer.shadowMap.needsUpdate=shadowUpdate;
           }
+        };
+        if(gpuCompositeActive){
+          sharedCanvas.style.display='none';
+          if(!visibleSharedIds.length)sharedFrameKey='';
+          else if(sharedKey!==sharedFrameKey||sharedAnimated){sharedFrameKey=sharedKey;renderSharedPass();}
+        }else{
+          sharedCanvas.style.filter=colorMemory?'none':'grayscale(1)';
+          sharedCanvas.style.opacity=colorMemory?'1':'.78';
+          sharedCanvas.style.display=visibleSharedIds.length?'block':'none';
+          if(!visibleSharedIds.length){
+            if(sharedFrameKey){sharedFrameKey='';sharedContext.clearRect(0,0,sw,sh);}
+          }else if(sharedKey!==sharedFrameKey||sharedAnimated){
+            sharedFrameKey=sharedKey;renderSharedPass();
+          }
         }
         for(const id of sharedIds){const i=instances.get(id);if(i)i.root.visible=false;}
-        const needsGpuMemory=!!sightFrame?.explored.length&&!!(props.environmentPreview?.heavyDarkness||props.environmentPreview?.darkvisionTerrain);
-        if(needsGpuMemory)battlefield?.renderMemory(renderer,camera,props.memoryTerrainCanvas?.()??null,!!visionComposite);
         raisedStudy?.update(useStore.getState().snapshot?.playerVision,props.visualPosition);
         // Keep the existing path until the remembered-art texture is ready;
         // this also covers daylight boards without an environment renderer.
-        const useComposite=!!visionComposite&&!!sightFrame&&(!needsGpuMemory||sightFrame.memory?.dataset.ready==='true');
         const deferSpells=!!props.personalVision&&(!useComposite||!!sightFrame?.enabled||!!sightFrame?.grade&&!sightFrame.grade.daylight);
         if(deferSpells)camera.layers.disable(SPELL_IMPACT_LAYER);else camera.layers.enable(SPELL_IMPACT_LAYER);
         const deferNames=!!props.personalVision&&useComposite&&!!(sightFrame?.enabled||(sightFrame?.grade&&!sightFrame.grade.daylight));
@@ -713,9 +781,10 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         renderer.render(scene, camera);
         camera.layers.enable(SPELL_IMPACT_LAYER);
         camera.layers.enable(MINIATURE_NAME_LAYER);
-        host.dataset.colorDrawCalls=String(renderer.info.render.calls);
-        host.dataset.colorTriangles=String(renderer.info.render.triangles);
-        host.dataset.loadedModelUrls=JSON.stringify([...instances.values()].map(i=>i.url).sort());
+        setHostData('colorDrawCalls',String(renderer.info.render.calls));
+        setHostData('colorTriangles',String(renderer.info.render.triangles));
+        if(lastLoadedUrlsVersion!==instancesVersion){lastLoadedUrlsVersion=instancesVersion;cachedLoadedUrls=JSON.stringify([...instances.values()].map(i=>i.url).sort());}
+        setHostData('loadedModelUrls',cachedLoadedUrls);
         recordGraphicsFrame(now,!!(animated||atmosphereAnimated||settling||casting.length||spellImpacts.active),loading.size>0);
         const outlineRects:OutlineRect[]=[];
         for(const [id,instance] of instances){
@@ -729,7 +798,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           const x=Math.max(0,Math.floor(minX)-4),y=Math.max(0,Math.floor(minY)-4);
           outlineRects.push({x,y,width:Math.min(props.width,Math.ceil(maxX)+4)-x,height:Math.min(props.height,Math.ceil(maxY)+4)-y});
         }
-        host.dataset.outlineMethod='silhouette';host.dataset.outlineShells='0';
+        setHostData('outlineMethod','silhouette');setHostData('outlineShells','0');
         battlefield?.renderMist(renderer,camera);
         archArtLayer.draw(useStore.getState().snapshot?.map?.id,view,props.width,props.height,props.tiltDegrees,props.rotationDegrees??0,
           [...instances.values()].map(i=>({x:i.root.position.x,y:i.root.position.z,visible:i.root.visible})),battlefield?.lighting,!!props.environmentPreview?.heavyDarkness);
@@ -743,6 +812,13 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const flashes=useComposite&&sightFrame?.enabled&&sightFrame.grade?.heavy?impactLights.filter(l=>l.revealsTerrain).map(l=>({source:l,
           polygon:battlefield?.lighting.wallPolygon(l.id)??FLASH_CIRCLE.map(v=>({x:l.x+v.x*spellLightReach(l),y:l.y+v.y*spellLightReach(l)}))})):NO_FLASHES;
         visionComposite?.render(!!props.personalVision&&useComposite,sightFrame,camera,flashes,battlefield?.memoryTexture);
+        if(gpuCompositeActive&&visibleSharedIds.length){
+          sharedCompositeMaterial.uniforms.grayscale.value=colorMemory?0:1;
+          sharedCompositeMaterial.uniforms.opacity.value=colorMemory?1:.78;
+          const autoClear=renderer.autoClear;
+          try{renderer.autoClear=false;renderer.render(sharedQuadScene,sharedQuadCamera);}
+          finally{renderer.autoClear=autoClear;}
+        }
         if(deferNames)names.renderForeground(renderer,camera,[...instances.values()].some(i=>i.root.visible&&i.hunterMark.visible));
         if(deferSpells){
           if(useComposite){
@@ -754,59 +830,65 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
             spellImpacts.renderForeground(renderer,camera);
           }
         }
-        host.dataset.spellFogPass=deferSpells?(useComposite?'foreground':'legacy-lift'):'scene';
+        setHostData('spellFogPass',deferSpells?(useComposite?'foreground':'legacy-lift'):'scene');
         visionTiming?.end();
         for(const id of sharedIds){const i=instances.get(id);if(i)i.root.visible=visible.has(id);}
-        host.dataset.lastRenderedPixelRatio=String(renderer.getPixelRatio());
-        host.dataset.renderCount=String(++totalPaintCount);
+        setHostData('lastRenderedPixelRatio',String(renderer.getPixelRatio()));
+        setHostData('renderCount',String(++totalPaintCount));
         // Count distinct browser frames, not extra scene draws within a frame.
         if (_frameTime !== countedFrame) {
           countedFrame = _frameTime; paintCount++;
-          host.dataset.frameCount=String(++totalFrameCount);
+          setHostData('frameCount',String(++totalFrameCount));
         }
-        if(now-paintEpoch>=1500){host.dataset.renderFps=(paintCount*1000/(now-paintEpoch)).toFixed(1);paintCount=0;paintEpoch=now;}
+        if(now-paintEpoch>=1500){setHostData('renderFps',(paintCount*1000/(now-paintEpoch)).toFixed(1));paintCount=0;paintEpoch=now;}
         if (battlefield) {
-          host.dataset.environment=props.environmentPreview?.enabled ? 'on' : 'off';
-          host.dataset.shadows=String(!!props.environmentPreview?.enabled && props.environmentPreview.shadows);
-          host.dataset.directionalShadow=String(key.castShadow);
-          for(const [name,value] of Object.entries(localShadows.state))host.dataset[name]=String(value);
-          host.dataset.groundReady=String(battlefield.ready);
+          setHostData('environment',props.environmentPreview?.enabled ? 'on' : 'off');
+          setHostData('shadows',String(!!props.environmentPreview?.enabled && props.environmentPreview.shadows));
+          setHostData('directionalShadow',String(key.castShadow));
+          for(const [name,value] of Object.entries(localShadows.state))setHostData(name,String(value));
+          setHostData('groundReady',String(battlefield.ready));
           const environment=props.environmentPreview!;
-          host.dataset.environmentBounds=JSON.stringify([environment.mapX??0,environment.mapY??0,environment.mapWidth,environment.mapHeight]);
+          const boundsKey=`${environment.mapX??0}:${environment.mapY??0}:${environment.mapWidth}:${environment.mapHeight}`;
+          if(boundsKey!==lastEnvBoundsKey){lastEnvBoundsKey=boundsKey;cachedEnvBounds=JSON.stringify([environment.mapX??0,environment.mapY??0,environment.mapWidth,environment.mapHeight]);}
+          setHostData('environmentBounds',cachedEnvBounds);
           const mistState=battlefield.mistState;
-          for(const [name,value] of Object.entries(battlefield.atmosphereState))host.dataset[name]=String(value);
-          host.dataset.mistVisible=String(mistState.visible);
-          host.dataset.mistCoverage=mistState.coverage;
-          host.dataset.mistHeight=String(mistState.height);
-          host.dataset.mistLayers=String(mistState.layers);
-          host.dataset.mistShadows=String(mistState.shadows);
-          host.dataset.mistForm='volume';
-          host.dataset.mistStyle='wisps';
-          host.dataset.mistQuality=mistState.quality;
-          host.dataset.mistScale=String(mistState.scale);
-          host.dataset.mistSteps=String(mistState.steps);
-          host.dataset.mistResolution=`${mistState.bufferWidth}x${mistState.bufferHeight}`;
-          host.dataset.mistDensityCache=String(mistState.densityCache);
-          host.dataset.mistCacheUpdates=String(mistState.cacheUpdates);
-          host.dataset.mistCacheResolution=mistState.cacheResolution;
-          host.dataset.mistCacheSlices=String(mistState.cacheSlices);
-          host.dataset.mistCacheHz=String(mistState.cacheHz);
-          host.dataset.mistWakes=String(mistState.wakes);
-          host.dataset.mistSpellImpulses=String(mistState.spellImpulses);
-          host.dataset.mistSpellEnabled=String(mistState.spellEnabled);
-          host.dataset.mistSpellSamples=String(mistState.spellSamples);
-          host.dataset.mistSpellUpdateMs=String(mistState.spellUpdateMs);
-          host.dataset.mistTime=String(mistState.time);
-          host.dataset.mistOldestWakeAge=String(mistState.oldestWakeAge);
-          host.dataset.mistBodies=JSON.stringify([...instances].flatMap(([id,instance])=>instance.mistBody?[{id,source:instance.mistBody.source,
-            height:instance.mistBody.height*instance.root.scale.x,width:instance.mistBody.radiusX*2*instance.root.scale.x,depth:instance.mistBody.radiusZ*2*instance.root.scale.x}]:[]));
-          host.dataset.mistObstacles=String(mistState.obstacles);
-          host.dataset.mistInteraction=String(mistState.enabled);
-          if(timing){host.dataset.gpuMs=String(timing.median===null?'unavailable':timing.median+(visionTiming?.median??0));host.dataset.gpuSamples=String(timing.count);
-            host.dataset.gpuSceneMs=String(timing.median??'unavailable');host.dataset.gpuVisionMs=String(visionTiming?.median??'unavailable');}
+          for(const [name,value] of Object.entries(battlefield.atmosphereState))setHostData(name,String(value));
+          setHostData('mistVisible',String(mistState.visible));
+          setHostData('mistCoverage',mistState.coverage);
+          setHostData('mistHeight',String(mistState.height));
+          setHostData('mistLayers',String(mistState.layers));
+          setHostData('mistShadows',String(mistState.shadows));
+          setHostData('mistForm','volume');
+          setHostData('mistStyle','wisps');
+          setHostData('mistQuality',mistState.quality);
+          setHostData('mistScale',String(mistState.scale));
+          setHostData('mistSteps',String(mistState.steps));
+          setHostData('mistResolution',`${mistState.bufferWidth}x${mistState.bufferHeight}`);
+          setHostData('mistDensityCache',String(mistState.densityCache));
+          setHostData('mistCacheUpdates',String(mistState.cacheUpdates));
+          setHostData('mistCacheResolution',mistState.cacheResolution);
+          setHostData('mistCacheSlices',String(mistState.cacheSlices));
+          setHostData('mistCacheHz',String(mistState.cacheHz));
+          setHostData('mistWakes',String(mistState.wakes));
+          setHostData('mistSpellImpulses',String(mistState.spellImpulses));
+          setHostData('mistSpellEnabled',String(mistState.spellEnabled));
+          setHostData('mistSpellSamples',String(mistState.spellSamples));
+          setHostData('mistSpellUpdateMs',String(mistState.spellUpdateMs));
+          setHostData('mistTime',String(mistState.time));
+          setHostData('mistOldestWakeAge',String(mistState.oldestWakeAge));
+          if(lastMistBodiesVersion!==instancesVersion||lastMistBodiesBattlefield!==!!battlefield){
+            lastMistBodiesVersion=instancesVersion;lastMistBodiesBattlefield=!!battlefield;
+            cachedMistBodies=JSON.stringify([...instances].flatMap(([id,instance])=>instance.mistBody?[{id,source:instance.mistBody.source,
+              height:instance.mistBody.height*instance.root.scale.x,width:instance.mistBody.radiusX*2*instance.root.scale.x,depth:instance.mistBody.radiusZ*2*instance.root.scale.x}]:[]));
+          }
+          setHostData('mistBodies',cachedMistBodies);
+          setHostData('mistObstacles',String(mistState.obstacles));
+          setHostData('mistInteraction',String(mistState.enabled));
+          if(timing){setHostData('gpuMs',String(timing.median===null?'unavailable':timing.median+(visionTiming?.median??0)));setHostData('gpuSamples',String(timing.count));
+            setHostData('gpuSceneMs',String(timing.median??'unavailable'));setHostData('gpuVisionMs',String(visionTiming?.median??'unavailable'));}
         }
         props.onRenderedNames?.(renderedNames);
-        host.dataset.nameRendering='per-pixel';host.dataset.nameCount=String(renderedNames.size);
+        setHostData('nameRendering','per-pixel');setHostData('nameCount',String(renderedNames.size));
         publish();
       } catch(error) { console.error('Miniature WebGL rendering failed',error); fail(); }
     }
@@ -830,9 +912,15 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const disposeInstance = (instance:Instance) => {
     batches.restore();
     instance.mirrors.dispose();
+    const depthProxy=instance.depthProxyKey?depthProxyGeometries.get(instance.depthProxyKey):undefined;
+    if(depthProxy&&--depthProxy.users===0){
+      depthProxy.geometries.body?.dispose();
+      depthProxy.geometries.weapon?.dispose();
+      depthProxyGeometries.delete(instance.depthProxyKey!);
+    }
     const silhouette=instance.movePreviewKey?movePreviewGeometries.get(instance.movePreviewKey):undefined;
     if(silhouette&&--silhouette.users===0){silhouette.geometry.dispose();movePreviewGeometries.delete(instance.movePreviewKey!);}
-    host.dataset.previewGeometryAssets=String(movePreviewGeometries.size);
+    setHostData('previewGeometryAssets',String(movePreviewGeometries.size));
     instance.mixer?.stopAllAction();
     if (instance.mixer) instance.mixer.uncacheRoot(instance.mixer.getRoot());
     scene.remove(instance.root);
@@ -858,6 +946,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     tokensDirty = true;
     disposeInstance(instance);
     instances.delete(id);
+    instancesVersion++;
     bodySlots.delete(id);
     loading.delete(id);
     moves.delete(id);
@@ -873,17 +962,27 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     instance.root.scale.setScalar(factor);
     const model = instance.root.children[0];
     if(appearanceChanged){
-    host.dataset.bodyAppearanceUpdates=String(Number(host.dataset.bodyAppearanceUpdates??0)+1);
+    instancesVersion++;
+    setHostData('bodyAppearanceUpdates',String(Number(hostDataCache.bodyAppearanceUpdates??host.dataset.bodyAppearanceUpdates??0)+1));
+    const hasDepthProxies=!!(instance.depthBodyProxy||instance.depthWeaponProxy);
     model.traverse(node=>{
       if(!(node instanceof Mesh)||node.name==='disposition-outline')return;
       node.layers.disable(4);node.layers.disable(5);
-      node.layers.enable(token.sharedSightOnly?4:5);
+      if(token.sharedSightOnly)node.layers.enable(4);
+      else if(!hasDepthProxies)node.layers.enable(5);
       if(!bodySlots.has(token.id)){
         const used=new Set(bodySlots.values());let slot=1;while(slot<255&&used.has(slot))slot++;
         bodySlots.set(token.id,slot<255?slot:0);
       }
       node.userData.bodySlot=bodySlots.get(token.id);
     });
+    for(const proxy of [instance.depthBodyProxy,instance.depthWeaponProxy]){
+      if(!proxy)continue;
+      proxy.layers.disable(4);proxy.layers.disable(5);
+      if(!token.sharedSightOnly)proxy.layers.enable(5);
+      proxy.userData.bodySlot=bodySlots.get(token.id);
+      proxy.userData.sharedSightOnly=!!token.sharedSightOnly;
+    }
     model.position.set(...token.definition.baseCenter.map((value) => -value) as [number, number, number]);
     model.updateMatrix();
     }
@@ -921,6 +1020,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     const outlineId=silhouette.slot(token.invisible||token.sharedSightOnly?undefined:token.outline,token.hidden?.45:1);
     const weaponOutlineId=outlineId?silhouette.slot(token.outline,(token.hidden?.45:1)*.25):0;
     model.traverse(node=>{if(node instanceof Mesh)node.userData.outlineId=node.userData.outlineWeapon?weaponOutlineId:outlineId;});
+    if(instance.depthBodyProxy)instance.depthBodyProxy.userData.outlineId=outlineId;
+    if(instance.depthWeaponProxy)instance.depthWeaponProxy.userData.outlineId=weaponOutlineId;
     instance.materials.forEach((material, index) => {
       if (material instanceof MeshStandardMaterial && instance.originalColors[index]) {
         material.color.copy(instance.originalColors[index]!);
@@ -968,9 +1069,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   };
   const publishPreloads=()=>{
     const urls=(props.preloadDefinitions??[]).map(d=>miniatureForPreload(d,props.graphics?.modelQuality??'high').url);
-    host.dataset.preloadModelCount=String(new Set(urls).size);
-    host.dataset.preloadReadyCount=String(new Set(urls.filter(url=>warmedAssets.has(url))).size);
-    host.dataset.preloadedModelUrls=JSON.stringify(urls.filter(url=>warmedAssets.has(url)));
+    setHostData('preloadModelCount',String(new Set(urls).size));
+    setHostData('preloadReadyCount',String(new Set(urls.filter(url=>warmedAssets.has(url))).size));
+    setHostData('preloadedModelUrls',JSON.stringify(urls.filter(url=>warmedAssets.has(url))));
   };
   const queuePreloads=(definitions:readonly MiniatureDefinition[])=>{
     const wanted=new Set(definitions.map(d=>d.url));
@@ -1027,8 +1128,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       if(old.modelId===instance.modelId&&allowed.includes(old.url))preparedInstances.set(token.id,old);
       else disposeInstance(old);
     }
-    instances.set(token.id,instance);place(token,instance);scene.add(instance.root);tokensDirty=true;
-    host.dataset.lodSwapCount=String(Number(host.dataset.lodSwapCount??0)+1);
+    instances.set(token.id,instance);instancesVersion++;place(token,instance);scene.add(instance.root);tokensDirty=true;
+    setHostData('lodSwapCount',String(Number(hostDataCache.lodSwapCount??host.dataset.lodSwapCount??0)+1));
     if(battlefield)renderer.shadowMap.needsUpdate=true;
     invalidate();
   };
@@ -1092,20 +1193,19 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     committedTilt=next.tiltDegrees;committedRotation=next.rotationDegrees??0;
     tokenById=new Map(next.tokens.map(t=>[t.id,t]));
     const archSnapshot=useStore.getState().snapshot;archArtLayer.sync(archSnapshot?.map,archSnapshot?.mapImages);
-    const marks=next.footprints?.()??[];footprints.sync(marks);host.dataset.footprintCount=String(marks.length);
+    const marks=next.footprints?.()??[];footprints.sync(marks);setHostData('footprintCount',String(marks.length));
     raisedStudy?.sync(useStore.getState().snapshot?.map?.id);
     spellImpacts.sync(next.spellImpacts??[],performance.now());
     // Unrelated snapshots during an imperative Konva pan must not restore the
     // last committed camera position before dragend commits the new view.
     if (next.view !== committedView) { view = next.view; committedView = next.view; }
     const pixelRatio = rollBackgroundBudget(Math.min(window.devicePixelRatio || 1, next.graphics?.pixelRatioCap??2),!!next.rollBackground,!!next.rollBackgroundPrepared).pixelRatio;
-    host.dataset.rollBackground=next.rollBackground?'reduced':'full';
-    host.dataset.backgroundFpsCap=next.rollBackground?'12':'60';
-    host.dataset.graphicsQuality=next.graphics?.resolved??'high';
-    host.dataset.modelQuality=next.graphics?.modelQuality==='high'?'original':next.graphics?.modelQuality==='balanced'?'balanced':'light';
-    host.dataset.modelUrls=JSON.stringify(next.tokens.map(t=>t.definition.url));
-    host.dataset.renderPixelRatio=String(pixelRatio);
-    host.dataset.backgroundPrepared=String(!!next.rollBackgroundPrepared);
+    setHostData('rollBackground',next.rollBackground?'reduced':'full');
+    setHostData('backgroundFpsCap',next.rollBackground?'12':'60');
+    setHostData('graphicsQuality',next.graphics?.resolved??'high');
+    setHostData('modelQuality',next.graphics?.modelQuality==='high'?'original':next.graphics?.modelQuality==='balanced'?'balanced':'light');
+    setHostData('renderPixelRatio',String(pixelRatio));
+    setHostData('backgroundPrepared',String(!!next.rollBackgroundPrepared));
     if (next.width !== renderedWidth || next.height !== renderedHeight || pixelRatio !== renderedPixelRatio) {
       renderedWidth = next.width; renderedHeight = next.height; renderedPixelRatio = pixelRatio;
       renderer.setPixelRatio(pixelRatio);
@@ -1118,18 +1218,18 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       else if(lastEnvironment!==next.environmentPreview)battlefield.update(next.environmentPreview);
       lastEnvironment=next.environmentPreview;
     } else if(battlefield){battlefield.dispose();battlefield=null;lastEnvironment=undefined;ambient.intensity=2;
-      host.dataset.environment='off';host.dataset.mistVisible='false';host.dataset.shadows='false';host.dataset.mistWakes='0';
-      host.dataset.weather='none';host.dataset.weatherCount='0';host.dataset.lighting='off';host.dataset.lightCount='0';
-      host.dataset.carriedLanternCount='0';host.dataset.visibleTorchCount='0';host.dataset.carriedLanternPositions='[]';
+      setHostData('environment','off');setHostData('mistVisible','false');setHostData('shadows','false');setHostData('mistWakes','0');
+      setHostData('weather','none');setHostData('weatherCount','0');setHostData('lighting','off');setHostData('lightCount','0');
+      setHostData('carriedLanternCount','0');setHostData('visibleTorchCount','0');setHostData('carriedLanternPositions','[]');
     }
     const plan=planLod(props);lodDecisionKey=plan.key;
     wantedModels.clear();for(const[id,definition]of plan.wanted)wantedModels.set(id,definition);
     props={...props,tokens:plan.tokens};
     for(const[id,level]of plan.levels)lodLevels.set(id,level);
     next=props;tokenById=new Map(next.tokens.map(t=>[t.id,t]));
-    host.dataset.modelLods=JSON.stringify(Object.fromEntries(lodLevels));
-    host.dataset.lodOnScreenIds=JSON.stringify(plan.onScreenIds);
-    host.dataset.modelUrls=JSON.stringify(next.tokens.map(t=>t.definition.url));
+    setHostData('modelLods',JSON.stringify(Object.fromEntries(lodLevels)));
+    setHostData('lodOnScreenIds',JSON.stringify(plan.onScreenIds));
+    setHostData('modelUrls',JSON.stringify(next.tokens.map(t=>t.definition.url)));
     shaderWarmup.update(camera,scene,`${renderer.shadowMap.enabled}:${key.castShadow}:${!!scene.environment}`);
     for (const [id, url] of loading) {
       if (!next.tokens.some((token) => token.id === id && (token.definition.url === url||wantedModels.get(id)?.url===url))) {loading.delete(id);cancelLoadingTask(`miniature:${id}`);cancelLoadingTask(`lod:${id}`);}
@@ -1139,7 +1239,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       const token=tokenById.get(id),allowed=token?[pair.far,pair.near].map(level=>miniatureForLod(token.definition,level,quality).url):[];
       if(!token||token.definition.id!==instance.modelId||![token.definition.url,wantedModels.get(id)?.url,...allowed].includes(instance.url)){
 
-        preparedInstances.delete(id);disposeInstance(instance);
+        preparedInstances.delete(id);disposeInstance(instance);instancesVersion++;
       }
     }
     for (const id of moves.keys()) {
@@ -1177,7 +1277,23 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         // Animated source transforms remain intact below this base-centering group.
         const centered = new Group();
         const model = gltf.scene.clone(true);
-        if(!gltf.animations.length)retainMiniatureLocalTransforms(model);
+        const isTrackHiddenByProceduralFx=(trackName:string)=>
+          definition.id==='vanec'&&/^(Palm_Lightning_|Staff_Lightning_)/.test(trackName.split('.')[0]??'');
+        const isTrackOnVisibleNode=(trackName:string)=>{
+          if(isTrackHiddenByProceduralFx(trackName))return false;
+          const nodeName=trackName.split('.')[0];
+          if(!nodeName)return true;
+          let node:Object3D|null|undefined=model.getObjectByName(nodeName);
+          if(!node)return true;
+          while(node){
+            if(!node.visible)return false;
+            if(node===model)break;
+            node=node.parent;
+          }
+          return true;
+        };
+        const hasVisibleAnimation=gltf.animations.some(clip=>clip.tracks.some(track=>!isTrackHiddenByProceduralFx(track.name)&&isTrackOnVisibleNode(track.name)));
+        if(!hasVisibleAnimation)retainMiniatureLocalTransforms(model);
         centered.matrixAutoUpdate=false;
         let measured=measurements.get(definition.url);
         if(!measured){measured={anchor:measureLanternAnchor(model,definition)};measurements.set(definition.url,measured);}
@@ -1272,21 +1388,61 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           };
           node.material = Array.isArray(node.material) ? node.material.map(copy) : copy(node.material);
         });
-        model.traverse(node=>{if(node instanceof Mesh){node.userData.outlineWeapon=isMiniatureWeaponPart(node.name);if((Array.isArray(node.material)?node.material:[node.material]).every(m=>!m.transparent))node.layers.enable(1);}});
-        const mixer = gltf.animations.length ? new AnimationMixer(model) : null;
-        gltf.animations.forEach((clip) => mixer!.clipAction(clip).play());
+        let opaqueMeshCount=0;
+        let hasSkinnedOrMorph=false;
+        model.traverse(node=>{
+          if(!(node instanceof Mesh))return;
+          if(node instanceof SkinnedMesh||(node.morphTargetInfluences?.length??0)>0)hasSkinnedOrMorph=true;
+          if(node.name!=='disposition-outline'&&(Array.isArray(node.material)?node.material:[node.material]).every(m=>!m.transparent))opaqueMeshCount++;
+        });
+        const batchExcluded=['druk','varis','vanec',DEATH_SKULL.id,SPIRITUAL_WEAPON.id].includes(definition.id);
+        const mixer = hasVisibleAnimation ? new AnimationMixer(model) : null;
+        if(mixer)gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
+        const useDepthProxy=batchExcluded&&!mixer&&!hasSkinnedOrMorph&&opaqueMeshCount>4;
+        model.traverse(node=>{
+          if(node instanceof Mesh){
+            node.userData.outlineWeapon=isMiniatureWeaponPart(node.name);
+            if(!useDepthProxy&&(Array.isArray(node.material)?node.material:[node.material]).every(m=>!m.transparent))node.layers.enable(1);
+          }
+        });
+        let depthProxyKey:string|undefined,depthBodyProxy:Mesh|undefined,depthWeaponProxy:Mesh|undefined;
+        if(useDepthProxy){
+          model.position.set(...definition.baseCenter.map((value)=>-value) as [number,number,number]);
+          model.updateMatrix();
+          depthProxyKey=JSON.stringify([definition.url,definition.baseCenter]);
+          let proxyEntry=depthProxyGeometries.get(depthProxyKey);
+          if(!proxyEntry){proxyEntry={geometries:createMiniatureDepthProxyGeometries(centered),users:0};depthProxyGeometries.set(depthProxyKey,proxyEntry);}
+          proxyEntry.users++;
+          if(proxyEntry.geometries.body){
+            depthBodyProxy=new Mesh(proxyEntry.geometries.body,depthProxyMaterial);
+            depthBodyProxy.name='miniature-depth-body-proxy';
+            depthBodyProxy.layers.set(1);depthBodyProxy.castShadow=false;depthBodyProxy.receiveShadow=false;
+            depthBodyProxy.raycast=()=>{};depthBodyProxy.matrixAutoUpdate=false;depthBodyProxy.updateMatrix();
+            root.add(depthBodyProxy);
+          }
+          if(proxyEntry.geometries.weapon){
+            depthWeaponProxy=new Mesh(proxyEntry.geometries.weapon,depthProxyMaterial);
+            depthWeaponProxy.name='miniature-depth-weapon-proxy';
+            depthWeaponProxy.layers.set(1);depthWeaponProxy.castShadow=false;depthWeaponProxy.receiveShadow=false;
+            depthWeaponProxy.raycast=()=>{};depthWeaponProxy.matrixAutoUpdate=false;depthWeaponProxy.updateMatrix();
+            root.add(depthWeaponProxy);
+          }
+        }
         const materials = [...cloned.values()];
         const outlineBounds=centeredMiniatureOutlineBounds(model,definition.baseCenter);
         const instance: Instance = {
           modelId:definition.id,
           mirrors:createMirrorImages(centered,root,renderer,()=>scene.environment,definition.baseDiameter),
           baseDiameter:definition.baseDiameter,outlineBounds,lanternAnchor,torchLighting,
+          depthProxyKey,depthBodyProxy,depthWeaponProxy,
           root, updateTransform, turnRing, selectionRing, targetRing, targetInnerRing, targetOuterRing, targetOuterMaterial, conditionRings, hunterMark, combatBadge, badgeMesh, badgeTexture, url: definition.url, materials,
           originalColors: materials.map(m => m instanceof MeshStandardMaterial ? m.color.clone() : null),
           originalOpacity: materials.map((material) => material.opacity),
           originalTransparent: materials.map((material) => material.transparent), mixer, fx: null,
           // Emissive/material flicker does not change the ground silhouette.
-          shadowAnimated: gltf.animations.some(clip => clip.tracks.some(track => /\.(position|quaternion|scale|morphTargetInfluences)(\[|$)/.test(track.name))),
+          shadowAnimated: hasVisibleAnimation && gltf.animations.some(clip => clip.tracks.some(track =>
+            !isTrackHiddenByProceduralFx(track.name) && isTrackOnVisibleNode(track.name) &&
+            /\.(position|quaternion|scale|morphTargetInfluences)(\[|$)/.test(track.name))),
           measureBody,
           mistBody:props.environmentPreview?measureBody():undefined,
           lightning: definition.id === 'vanec' ? createVanecLightning(model) : null,
@@ -1298,7 +1454,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         let silhouette=movePreviewGeometries.get(instance.movePreviewKey);
         if(!silhouette){silhouette={geometry:createMiniatureMovePreviewGeometry(centered),users:0};movePreviewGeometries.set(instance.movePreviewKey,silhouette);}
         silhouette.users++;instance.movePreviewGeometry=silhouette.geometry;
-        host.dataset.previewGeometryAssets=String(movePreviewGeometries.size);
+        setHostData('previewGeometryAssets',String(movePreviewGeometries.size));
         // First-use shader linking was blocking the movement frame for hundreds
         // of milliseconds. Compile against the real lighting before drawing the
         // new body; KHR_parallel_shader_compile lets existing figures keep moving.
@@ -1312,6 +1468,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const oldPrepared=preparedInstances.get(token.id);
         if(oldPrepared)disposeInstance(oldPrepared);
         preparedInstances.set(token.id,instance);
+        instancesVersion++;
         activatePrepared(latest);
         evictRetiredPlayerAssets();
         if(battlefield)renderer.shadowMap.needsUpdate=true;
@@ -1371,9 +1528,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     archArtLayer.dispose();
     spellImpacts.dispose();spellColor.dispose();spellFogTexture?.dispose();
     footprints.dispose();
-    clearPreview();previewMaterial.dispose();
+    clearPreview();previewMaterial.dispose();depthProxyMaterial.dispose();
     names.dispose();props.onRenderedNames?.(new Set());
-    sharedCanvas.remove();sharedDepth.dispose();visionLift?.dispose();visionComposite?.dispose();
+    sharedCanvas.remove();sharedDepth.dispose();sharedTarget.dispose();sharedQuadGeometry.dispose();sharedCompositeMaterial.dispose();visionLift?.dispose();visionComposite?.dispose();
     battlefield?.dispose();battlefield=null;
     localShadows.dispose();
     timing?.dispose();
@@ -1402,7 +1559,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const scheduleLod=()=>{if(lodTimer)return;lodTimer=setTimeout(()=>{
     lodTimer=undefined;if(disposed||failed)return;
     const plan=planLod(sourceProps);
-    host.dataset.lodOnScreenIds=JSON.stringify(plan.onScreenIds);
+    setHostData('lodOnScreenIds',JSON.stringify(plan.onScreenIds));
     if(plan.key!==lodDecisionKey)sync(sourceProps,true);
     if(plan.pending)scheduleLod();
   },80);};
@@ -1416,7 +1573,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       const point=instance.root.localToWorld(instance.hunterMark.position.clone()).project(camera);
       return {x:(point.x+1)*props.width/2,y:(1-point.y)*props.height/2};
     },
-    setFootprints(marks){if(disposed)return;footprints.sync(marks);host.dataset.footprintCount=String(marks.length);invalidate();},
+    setFootprints(marks){if(disposed)return;footprints.sync(marks);setHostData('footprintCount',String(marks.length));invalidate();},
     spellCast(tokenIds) {
       if (disposed || document.hidden) return;
       for (const id of tokenIds) instances.get(id)?.lightning?.cast(performance.now() / 1000);
@@ -1428,7 +1585,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       // The shared frame applies all camera/vision transforms before its one
       // scene paint, including an effects render queued before this gesture.
       updateCamera();invalidate();
-      host.dataset.tiltDegrees=String(tilt);scheduleLod();
+      setHostData('tiltDegrees',String(tilt));scheduleLod();
     },
     setView(next, immediate = false) { if (disposed||failed) return; view = next; scheduleLod();updateCamera(); if (immediate && hasRendered && currentCameraKey() !== drawnCameraKey) { cancelBattlefieldFrame(frame); frame = 0; lastPaint = 0; if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; } draw(performance.now()); } else invalidate(); },
     previewMove(id, point) {
@@ -1440,8 +1597,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         clearPreview();
         const root=new Group();
         root.add(new Mesh(instance.movePreviewGeometry,previewMaterial));
-        preview={id,root};scene.add(root);host.dataset.previewTokenId=id;
-        host.dataset.previewDrawCalls='1';
+        preview={id,root};scene.add(root);setHostData('previewTokenId',id);
+        setHostData('previewDrawCalls','1');
       }
       preview!.root.scale.copy(instance.root.scale);
       preview!.root.position.set(point.x,0,point.y);
