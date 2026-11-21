@@ -915,6 +915,19 @@ function MapStageInner({
     socket.timeout(1500).emit('token:preview',{tokenId:token.id,x,y},(error,result)=>done(error?null:result));
   },[]);
   const legacyAffinity=useMemo(()=>snapshot.serverRendering?.enabled&&snapshot.legacyGeometry!==undefined?new Set(snapshot.legacyGeometry?.affinity??[]):new Set(snapshot.tokens.filter(t=>!t.sharedSightOnly&&!t.partiallyRevealed&&visionShowsAffinity(snapshot.playerVision,t.x,t.y,tokenRadiusPx(t,snapshot.map))).map(t=>t.id)),[snapshot.serverRendering?.enabled,snapshot.legacyGeometry,snapshot.tokens,snapshot.playerVision,snapshot.map]);
+  const affinityVisibleAt = useMemo(() => {
+    const tokens = new Map(snapshot.tokens.map(t => [t.id, { x: t.x, y: t.y, sharedSightOnly: t.sharedSightOnly, partiallyRevealed: t.partiallyRevealed, radiusPx: tokenRadiusPx(t, snapshot.map) }]));
+    return (id: string, x: number, y: number) => {
+      const token = tokens.get(id);
+      if (!token || token.sharedSightOnly || token.partiallyRevealed) return false;
+      if (snapshot.role === 'dm') return true;
+      if ((legacy && snapshot.legacyGeometry !== undefined) || (!presentation.moving() && x === token.x && y === token.y)) return legacyAffinity.has(id);
+      return visionShowsAffinity(presentation.personalVision(), x, y, token.radiusPx);
+    };
+  }, [legacy, snapshot.role, snapshot.tokens, snapshot.map, snapshot.legacyGeometry, legacyAffinity, presentation]);
+  const affinityVisibleAtRef = useRef(affinityVisibleAt);
+  affinityVisibleAtRef.current = affinityVisibleAt;
+  const tokenAffinityVisibleAtPosition = useCallback((id: string, x: number, y: number) => affinityVisibleAtRef.current(id, x, y), []);
 
   // One RAF drives all anchors, including stationary enemies becoming visible.
   // Keeping this above individual layers also survives a 2D -> 3D or shared-sight
@@ -922,19 +935,32 @@ function MapStageInner({
   useLayoutEffect(()=>{
     let frame=0,lastPaint=-Infinity;
     const tokens=new Map(presentationSnapshot.tokens.map(t=>[t.id,t]));
-    const tokenNodes=stageRef.current?.find<Konva.Group>('.token')??[];
+    const tokenEntries=(stageRef.current?.find<Konva.Group>('.token')??[]).map(node=>({
+      node,
+      dot:node.findOne('.token-affinity-dot'),
+      art:node.findOne<Konva.Group>('.token-art'),
+    }));
     const paint=()=>{
       const now=performance.now();
       if(legacy&&legacyMovement.playback&&now-lastPaint<1000/60){frame=requestAnimationFrame(paint);return;}
       lastPaint=now;presentation.advance(now);
       const moving=presentation.moving();
-      for(const node of tokenNodes){
+      for(const {node,dot,art} of tokenEntries){
         const token=tokens.get(node.getAttr('tokenId'));if(!token)continue;
         const p=presentation.position(token.id)??token;
         const opacity=tokenVisibleAtPosition(token.id,p.x,p.y)?(token.isHidden?.45:1):0;
-        const changed=(!node.isDragging()&&(node.x()!==p.x||node.y()!==p.y))||node.opacity()!==opacity;
+        let changed=(!node.isDragging()&&(node.x()!==p.x||node.y()!==p.y))||node.opacity()!==opacity;
         if(!node.isDragging())node.position(p);
         node.opacity(opacity);
+        if(dot){
+          const showDot=tokenAffinityVisibleAtPosition(token.id,p.x,p.y);
+          if(dot.visible()!==showDot){
+            dot.visible(showDot);
+            if(art?.isCached())art.clearCache();
+            invalidateRetainedToken(dot);
+            changed=true;
+          }
+        }
         if(changed)node.getLayer()?.batchDraw();
         if(!node.isDragging())miniatureRef.current?.moveToken(token.id,p.x,p.y,!moving,presentation.facing(token.id,token.facing));
       }
@@ -942,7 +968,7 @@ function MapStageInner({
       if(moving)frame=requestAnimationFrame(paint);
     };
     paint();return ()=>cancelAnimationFrame(frame);
-  },[presentationSnapshot,readyMiniatures,presentation,tokenVisibleAtPosition,legacy,legacyMovement.playback?.id,legacyMovement.playback?.start]);
+  },[presentationSnapshot,readyMiniatures,presentation,tokenVisibleAtPosition,tokenAffinityVisibleAtPosition,legacy,legacyMovement.playback?.id,legacyMovement.playback?.start]);
 
   // Prepare map art before a door opens. Only role-filtered tokens below can
   // create an instance; this deduplicated art list contains no hidden positions.
@@ -984,7 +1010,7 @@ function MapStageInner({
       combatRole: !dead && !token.sharedSightOnly && !token.partiallyRevealed && token.kind==='monster'&&!monster?.objectKind?token.combatRole:undefined,
       hunterMarked: !dead && !token.partiallyRevealed && !!token.markLabels?.some(label=>/hunter.s mark/i.test(label)),
       conditionColors: dead || token.sharedSightOnly || token.partiallyRevealed ? [] : presentAuras(display.conditions.filter(c=>!c.id.startsWith("spell-mark:") || !/hunter.s mark/i.test(c.label))).map(a=>AURA_HEX[a]),
-      outline: token.sharedSightOnly || token.partiallyRevealed || !legacyAffinity.has(token.id) || monster?.objectKind ? undefined : monster ? DISPOSITION_HEX[monster.disposition] : DISPOSITION_HEX.friendly,
+      outline: token.sharedSightOnly || token.partiallyRevealed || monster?.objectKind ? undefined : monster ? DISPOSITION_HEX[monster.disposition] : DISPOSITION_HEX.friendly,
       affinity: !isTokenAffinityVisible(token, { role: snapshot.role, vision: snapshot.playerVision, map: snapshot.map, affinityIds: legacyAffinity }) && token.kind === 'monster' ? 'unknown' : monster ? monster.disposition : 'friendly',
       tint: !dead && monster ? monsterTint(monster) : undefined,
       shade: !dead && monster && !monster.objectKind ? monsterVariation(productionFamily(monster), token.refId).shade : undefined,
@@ -2153,7 +2179,7 @@ function MapStageInner({
         pxPerFoot={pxPerFoot}
         miniatureReady={miniatures}
         miniaturePending={!miniatures && !miniaturesUnavailable && !failedMiniatures.has(t.id) && miniatureIds.has(t.id)}
-        hideAffinity={!!t.sharedSightOnly || !legacyAffinity.has(t.id)}
+        hideAffinity={!!t.sharedSightOnly || !!t.partiallyRevealed || !legacyAffinity.has(t.id)}
         viewRotation={rotationDegrees}
         miniatureDiameterFt={miniatureBaseWidthFt(t, t.kind === 'monster' ? entities.monsters.get(t.refId) : { name: d.name })}
         movementWalls={actualDm?undefined:movementWalls}
@@ -2600,7 +2626,7 @@ function MapStageInner({
             </Layer>
           </Stage>
           {!legacy&&(miniatureTokens.length > 0 || preloadMiniatures.length > 0 || environment || spellImpacts.length > 0) && <MiniatureFallback onUnavailable={handleMiniatureUnavailable}><Suspense fallback={null}>
-            <MiniatureLayer preparedSpellImpacts={preparedSpellImpacts} spellColorOverlay={spellColorOverlay} spellMist={spellMist} key={map?.id} ref={miniatureRef} rollBackground={rollBackground} rollBackgroundPrepared={rollBackgroundPrepared} personalVision={renderPlayerVision&&(usesMapVision(map)||!!snapshot.playerVision?.heavy)} tokens={miniatureTokens} rayTargetIds={rayCast?rayTargets:undefined} preloadDefinitions={preloadMiniatures} onFailed={setFailedMiniatures} onUnavailable={handleMiniatureUnavailable} view={view} isVisibleAt={tokenVisibleAtPosition}
+            <MiniatureLayer preparedSpellImpacts={preparedSpellImpacts} spellColorOverlay={spellColorOverlay} spellMist={spellMist} key={map?.id} ref={miniatureRef} rollBackground={rollBackground} rollBackgroundPrepared={rollBackgroundPrepared} personalVision={renderPlayerVision&&(usesMapVision(map)||!!snapshot.playerVision?.heavy)} tokens={miniatureTokens} rayTargetIds={rayCast?rayTargets:undefined} preloadDefinitions={preloadMiniatures} onFailed={setFailedMiniatures} onUnavailable={handleMiniatureUnavailable} view={view} isVisibleAt={tokenVisibleAtPosition} isOutlineVisibleAt={tokenAffinityVisibleAtPosition}
               environmentPreview={environment} floorTerrain={floorTerrain} groundTokenSprites={() => readGroundSprites(groundTokenLayerRef.current)} onGpuFloorChange={handleGpuFloorChange} footprints={readFootprints} spellImpacts={spellImpacts} spellFog={spellFog} visualPosition={presentation.position} memoryTerrainCanvas={memoryTerrainCanvas} visionCoverFrame={visionCoverFrame}
               tiltDegrees={tiltDegrees} rotationDegrees={rotationDegrees} width={size.w} height={size.h} onReady={handleMiniatureReady}
               nameLabels={miniatureNameLabels} onRenderedNames={handleRenderedNames} onVisionLights={renderPlayerVision?handleVisionLights:undefined} onPrepareVisionLights={renderPlayerVision?handlePrepareVisionLights:undefined} />

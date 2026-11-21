@@ -1,6 +1,6 @@
 import type {StateSnapshot} from '../../shared/types.js';
 import {diffSnapshot,type StateFrame} from '../../shared/stateDelta.js';
-import {needsVisibilityLayer,usesMapVision} from '../../shared/playerVision.js';
+import {needsVisibilityLayer,tokenRadiusPx,usesMapVision} from '../../shared/playerVision.js';
 import {visibilityWorkers} from './visibilityWorkers.js';
 import {clearRenderedLayerCache,renderedSnapshot,renderingInputKey,reuseRenderedSnapshot} from './renderedSnapshot.js';
 import {flushRenderWarmer,setRenderWarmer} from './renderAssets.js';
@@ -29,7 +29,7 @@ async function addGeometry(snapshot:StateSnapshot,detailed=false,timing?:Movemen
  const layer=async(s:Pick<StateSnapshot,'map'|'playerVision'|'exploredTerrain'|'tokens'>)=>{
   if(!s.map)return undefined;
   if(!s.playerVision||!needsVisibilityLayer(s.map,s.playerVision))return clearGeometry(s);
-  const geometry=await visibilityWorkers.run({mapId:s.map.id,vision:s.playerVision,wallFog:usesMapVision(s.map),detailed,explored:detailed?undefined:s.exploredTerrain,tokens:s.tokens.map(({id,x,y,sharedSightOnly})=>({id,x,y,sharedSightOnly}))},timing?span=>timing.workers.push(span):undefined);
+  const geometry=await visibilityWorkers.run({mapId:s.map.id,vision:s.playerVision,wallFog:usesMapVision(s.map),detailed,explored:detailed?undefined:s.exploredTerrain,tokens:s.tokens.map(t=>({id:t.id,x:t.x,y:t.y,sharedSightOnly:t.sharedSightOnly,partiallyRevealed:t.partiallyRevealed,radiusPx:tokenRadiusPx(t,s.map)}))},timing?span=>timing.workers.push(span):undefined);
   // Retain shared base geometry in the pool for Legacy, but omit paths that
   // standard renderers do not consume from their delivered snapshots.
   return detailed?{...geometry,sight:[],near:[],lights:[],memory:[]}:geometry;

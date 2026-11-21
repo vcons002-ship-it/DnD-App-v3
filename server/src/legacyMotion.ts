@@ -1,7 +1,7 @@
 import type {StateSnapshot} from '../../shared/types.js';
 import type {LegacyMotion,LegacyMotionFrame} from '../../shared/legacyMotion.js';
 import {unionTerrain} from '../../shared/explorationSight.js';
-import {needsVisibilityLayer,usesMapVision,visionShowsAffinity} from '../../shared/playerVision.js';
+import {needsVisibilityLayer,tokenRadiusPx,usesMapVision,visionShowsAffinity} from '../../shared/playerVision.js';
 import {legacyPath} from '../../shared/legacyVision.js';
 import {equal} from '../../shared/stateDelta.js';
 import {walkingRoute} from './walking.js';
@@ -120,10 +120,10 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
    else if(index===0&&hasFullGeometry(before)&&first.tokens.length===before.tokens.length)view.legacyGeometry=before.legacyGeometry;
    else if(view.playerVision&&needsVisibilityLayer(view.map,view.playerVision)){
     if(hasFullGeometry(after)&&equal(view.playerVision,after.playerVision)){
-     view.legacyGeometry={sight:after.legacyGeometry!.sight,near:after.legacyGeometry!.near,lights:after.legacyGeometry!.lights,memory:t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
+     view.legacyGeometry={sight:after.legacyGeometry!.sight,near:after.legacyGeometry!.near,lights:after.legacyGeometry!.lights,memory:t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y,tokenRadiusPx(tok,view.map))).map(tok=>tok.id)};
     }else{
      if(hasFullGeometry(before)&&equal(view.playerVision,before.playerVision)){
-      view.legacyGeometry={sight:before.legacyGeometry!.sight,near:before.legacyGeometry!.near,lights:before.legacyGeometry!.lights,memory:t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
+      view.legacyGeometry={sight:before.legacyGeometry!.sight,near:before.legacyGeometry!.near,lights:before.legacyGeometry!.lights,memory:t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y,tokenRadiusPx(tok,view.map))).map(tok=>tok.id)};
      }else{
       const vKey=JSON.stringify(view.playerVision);
       let geomPromise=stepGeomByVision.get(vKey);
@@ -132,7 +132,7 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
        stepGeomByVision.set(vKey,geomPromise);
       }
       const geom=await geomPromise;
-      view.legacyGeometry={...geom,memory:index===LEGACY_MOTION_STEPS?formatMemory(after.exploredTerrain):t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y)).map(tok=>tok.id)};
+      view.legacyGeometry={...geom,memory:index===LEGACY_MOTION_STEPS?formatMemory(after.exploredTerrain):t>=.5?halfwayMemory:rememberedMemory,affinity:view.tokens.filter(tok=>!tok.sharedSightOnly&&!tok.partiallyRevealed&&visionShowsAffinity(view.playerVision,tok.x,tok.y,tokenRadiusPx(tok,view.map))).map(tok=>tok.id)};
      }
     }
    }

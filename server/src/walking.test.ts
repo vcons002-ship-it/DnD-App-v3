@@ -4,7 +4,7 @@ import {afterAll,it,expect} from 'vitest';
 import {config} from './config.js';
 import {renderedSnapshot} from './renderedSnapshot.js';
 import {renderAssetFor} from './renderAssets.js';
-import {createSession,createMap,createCharacter,claimCharacter,createToken,setActiveMap,updateMapEnvironment,moveToken,listMaps,createMonsterTemplate,instantiateMonster,setFogLayer,setFogRevealed,setTokenHidden,setExplorationMode} from './sessions.js';
+import {createSession,createMap,createCharacter,claimCharacter,createToken,setActiveMap,updateMapEnvironment,moveToken,listMaps,createMonsterTemplate,instantiateMonster,setFogLayer,setFogRevealed,setTokenHidden,setExplorationMode,setTokenLantern} from './sessions.js';
 import {buildSnapshot} from './visibility.js';
 import {recordWalkingMove,walkingRoute} from './walking.js';
 import {prepareLegacyMotion} from './legacyMotion.js';
@@ -161,4 +161,34 @@ it('lightweight movement keeps departing creatures and authorizes midpoint-only 
  expect(planOff?.frames[0].tokenIds).toContain(near.id);expect(planOff?.frames[6].tokenIds).toContain(middle.id);
  expect(planOff?.frames.at(-1)?.tokenIds).not.toContain(near.id);expect(planOff?.frames.at(-1)?.tokenIds).not.toContain(middle.id);
  expect(await prepareLegacyMotion('walker',{...before,playerVision:undefined},{...after,playerVision:undefined},undefined,{membershipOnly:true})).toBeUndefined();
+});
+it('populates legacyGeometry.affinity at midpoint in heavy darkness with a lantern and in dim light when endpoints omit it',async()=>{
+ const f=fixture(),monster=instantiateMonster(createMonsterTemplate(f.session.id,{name:'Corridor guard',maxHp:7}).id)!;
+ const enemy=createToken({mapId:f.map.id,kind:'monster',refId:monster.id,x:1100,y:100});
+ // 1. Heavy darkness + carried lantern passing by enemy.
+ setTokenLantern(f.token.id,true);
+ const beforeHeavy=f.snapshot(),movedHeavy=moveToken(f.token.id,2100,100,true)!;
+ await recordWalkingMove(f.token,movedHeavy,true);
+ const afterHeavy=f.snapshot();
+ const beforeHeavyGeo=await visibilityWorkers.run({mapId:f.map.id,vision:beforeHeavy.playerVision!,wallFog:true,explored:beforeHeavy.exploredTerrain,tokens:beforeHeavy.tokens});
+ const afterHeavyGeo=await visibilityWorkers.run({mapId:f.map.id,vision:afterHeavy.playerVision!,wallFog:true,explored:afterHeavy.exploredTerrain,tokens:afterHeavy.tokens});
+ const heavyPlan=await prepareLegacyMotion('walker-affinity-heavy',{...beforeHeavy,legacyGeometry:beforeHeavyGeo},{...afterHeavy,legacyGeometry:afterHeavyGeo});
+ expect(afterHeavyGeo.affinity).not.toContain(enemy.id);
+ expect(heavyPlan?.frames[0].legacyGeometry?.affinity).not.toContain(enemy.id);
+ expect(heavyPlan?.frames[6].legacyGeometry?.affinity).toContain(enemy.id);
+ expect(heavyPlan?.frames.at(-1)?.legacyGeometry?.affinity).not.toContain(enemy.id);
+ // 2. Dim light without lantern passing within darkvision range.
+ setTokenLantern(f.token.id,false);
+ updateMapEnvironment(f.session.id,f.map.id,{enabled:true,heavyDarkness:false,lighting:'dungeon',lights:[]});
+ const startDim=moveToken(f.token.id,100,100,true)!;
+ const beforeDim=f.snapshot(),movedDim=moveToken(f.token.id,2100,100,true)!;
+ await recordWalkingMove(startDim,movedDim,true);
+ const afterDim=f.snapshot();
+ const beforeDimGeo=await visibilityWorkers.run({mapId:f.map.id,vision:beforeDim.playerVision!,wallFog:true,explored:beforeDim.exploredTerrain,tokens:beforeDim.tokens});
+ const afterDimGeo=await visibilityWorkers.run({mapId:f.map.id,vision:afterDim.playerVision!,wallFog:true,explored:afterDim.exploredTerrain,tokens:afterDim.tokens});
+ const dimPlan=await prepareLegacyMotion('walker-affinity-dim',{...beforeDim,legacyGeometry:beforeDimGeo},{...afterDim,legacyGeometry:afterDimGeo});
+ expect(afterDimGeo.affinity).not.toContain(enemy.id);
+ expect(dimPlan?.frames[0].legacyGeometry?.affinity).not.toContain(enemy.id);
+ expect(dimPlan?.frames[6].legacyGeometry?.affinity).toContain(enemy.id);
+ expect(dimPlan?.frames.at(-1)?.legacyGeometry?.affinity).not.toContain(enemy.id);
 });

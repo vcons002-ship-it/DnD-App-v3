@@ -123,6 +123,7 @@ type Props = {
   width: number;
   height: number;
   isVisibleAt?: (id: string, x: number, y: number) => boolean;
+  isOutlineVisibleAt?: (id: string, x: number, y: number) => boolean;
   visualPosition?: (id:string)=>{x:number;y:number}|undefined;
   onReady: (tokenIds: ReadonlySet<string>) => void;
   nameLabels?: () => MiniatureNameLabel[];
@@ -151,6 +152,9 @@ type FxManifest = {
 };
 type Instance = {
   appearanceKey?:string;
+  activeOutline?:string;
+  outlineHidden?:boolean;
+  outlineInitialized?:boolean;
   modelId:string;
   mirrors:ReturnType<typeof createMirrorImages>;
   baseDiameter:number;
@@ -593,6 +597,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const position = {...(moves.get(token.id) ?? token),...props.visualPosition?.(token.id),...(preview?.id===token.id?{facing:preview.root.rotation.y}:{})};
         const wasVisible = instance.root.visible;
         instance.root.visible = props.isVisibleAt?.(token.id, position.x, position.y) ?? true;
+        if (instance.root.visible) applyOutline(token, instance, position);
         const tokenMoved = wasVisible !== instance.root.visible || instance.root.position.x !== position.x || instance.root.position.z !== position.y || instance.root.rotation.y !== (position.facing ?? 0);
         if (tokenMoved) tokensDirty = true;
         if (battlefield && (tokenMoved || (animated && instance.shadowAnimated))) renderer.shadowMap.needsUpdate = true;
@@ -826,8 +831,10 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         setHostData('loadedModelUrls',cachedLoadedUrls);
         recordGraphicsFrame(now,!!(animated||atmosphereAnimated||settling||casting.length||spellImpacts.active),loading.size>0);
         const outlineRects:OutlineRect[]=[];
+        const outlinedIds:string[]=[];
         for(const [id,instance] of instances){
-          const token=tokenById.get(id);if(!instance.root.visible||!token?.outline||token.invisible||token.sharedSightOnly)continue;
+          const token=tokenById.get(id);if(!instance.root.visible||!instance.activeOutline||!token||token.invisible||token.sharedSightOnly)continue;
+          outlinedIds.push(id);
           const b=instance.outlineBounds;let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
           for(const x of [b.min.x,b.max.x])for(const y of [b.min.y,b.max.y])for(const z of [b.min.z,b.max.z]){
             const p=new Vector3(x,y,z).applyMatrix4(instance.root.matrixWorld).project(camera);
@@ -837,7 +844,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           const x=Math.max(0,Math.floor(minX)-4),y=Math.max(0,Math.floor(minY)-4);
           outlineRects.push({x,y,width:Math.min(props.width,Math.ceil(maxX)+4)-x,height:Math.min(props.height,Math.ceil(maxY)+4)-y});
         }
-        setHostData('outlineMethod','silhouette');setHostData('outlineShells','0');
+        setHostData('outlineMethod','silhouette');setHostData('outlineShells','0');setHostData('outlinedTokenIds',outlinedIds.join(','));
         battlefield?.renderMist(renderer,camera);
         archArtLayer.draw(useStore.getState().snapshot?.map?.id,view,props.width,props.height,props.tiltDegrees,props.rotationDegrees??0,
           [...instances.values()].map(i=>({x:i.root.position.x,y:i.root.position.z,visible:i.root.visible})),battlefield?.lighting,!!props.environmentPreview?.heavyDarkness);
@@ -992,6 +999,20 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     loading.delete(id);
     moves.delete(id);
   };
+  const applyOutline = (token: MiniatureToken, instance: Instance, position: { x: number; y: number }, force = false) => {
+    const activeOutline = !token.invisible && !token.sharedSightOnly && !token.partiallyRevealed && token.outline && (props.isOutlineVisibleAt?.(token.id, position.x, position.y) ?? true) ? token.outline : undefined;
+    const outlineHidden = !!token.hidden;
+    if (!force && instance.outlineInitialized && instance.activeOutline === activeOutline && instance.outlineHidden === outlineHidden) return;
+    instance.outlineInitialized = true;
+    instance.activeOutline = activeOutline;
+    instance.outlineHidden = outlineHidden;
+    const outlineId = silhouette.slot(activeOutline, outlineHidden ? 0.45 : 1);
+    const weaponOutlineId = outlineId ? silhouette.slot(activeOutline, (outlineHidden ? 0.45 : 1) * 0.25) : 0;
+    const model = instance.root.children[0];
+    model?.traverse(node => { if (node instanceof Mesh) node.userData.outlineId = node.userData.outlineWeapon ? weaponOutlineId : outlineId; });
+    if (instance.depthBodyProxy) instance.depthBodyProxy.userData.outlineId = outlineId;
+    if (instance.depthWeaponProxy) instance.depthWeaponProxy.userData.outlineId = weaponOutlineId;
+  };
   const place = (token: MiniatureToken, instance: Instance) => {
     const appearanceKey=miniatureAppearanceKey(token,!!props.environmentPreview?.enabled&&!!props.environmentPreview.shadows);
     const appearanceChanged=appearanceKey!==instance.appearanceKey;
@@ -1057,12 +1078,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     instance.selectionRing.scale.setScalar(token.definition.baseDiameter);
     instance.selectionRing.material.opacity = token.hidden ? 0.45 : 1;
     updateTargetRing(token, instance, (performance.now() - started) / 1000);
+    applyOutline(token, instance, position, appearanceChanged);
     if(appearanceChanged){
-    const outlineId=silhouette.slot(token.invisible||token.sharedSightOnly?undefined:token.outline,token.hidden?.45:1);
-    const weaponOutlineId=outlineId?silhouette.slot(token.outline,(token.hidden?.45:1)*.25):0;
-    model.traverse(node=>{if(node instanceof Mesh)node.userData.outlineId=node.userData.outlineWeapon?weaponOutlineId:outlineId;});
-    if(instance.depthBodyProxy)instance.depthBodyProxy.userData.outlineId=outlineId;
-    if(instance.depthWeaponProxy)instance.depthWeaponProxy.userData.outlineId=weaponOutlineId;
     instance.materials.forEach((material, index) => {
       if (material instanceof MeshStandardMaterial && instance.originalColors[index]) {
         material.color.copy(instance.originalColors[index]!);

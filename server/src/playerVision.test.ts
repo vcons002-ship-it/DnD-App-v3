@@ -136,4 +136,24 @@ describe('personal dungeon vision',()=>{
   moveToken(f.ta.id,2100,100);
   expect(buildSnapshot(f.s.id,'player',null,'vision-a')!.tokens.find(t=>t.id===f.far.id)?.revealTag).not.toBe('U');
  });
+ it('evaluates token footprint edges for lights, transient flashes, walls, and dim-light darkvision',()=>{
+  const staticLight={id:'lamp',x:500,y:100,radius:100,height:0,strength:1};
+  const transientFlash={id:'spell',x:1200,y:100,radius:80,height:0,strength:3,transient:true};
+  // Heavy darkness + non-transient light: footprint offset at 0.9*r reaches just inside spill.
+  const heavyVision={rangeFt:60 as const,radius:600,heavy:true,daylight:false,origins:[{id:'pc',x:100,y:100}],lights:[staticLight],walls:[]};
+  expect(visionShowsAffinity(heavyVision,670,100,0)).toBe(false);
+  expect(visionShowsAffinity(heavyVision,670,100,40)).toBe(true);
+  expect(visionShowsAffinity(heavyVision,700,100,40)).toBe(false);
+  // Wall blocks static light even within footprint reach.
+  const walledVision={...heavyVision,walls:[{id:'w',ax:600,ay:0,bx:600,by:200}]};
+  expect(visionShowsAffinity(walledVision,670,100,40)).toBe(false);
+  // Transient spell flash still illuminates without being culled by 1.5*radius cutoff.
+  const spellVision={...heavyVision,lights:[transientFlash]};
+  expect(visionShowsAffinity(spellVision,1200,100,0)).toBe(true);
+  // Dim light darkvision checks token footprint edges around origin radius.
+  const dimVision={rangeFt:60 as const,radius:600,heavy:false,daylight:false,origins:[{id:'pc',x:100,y:100}],lights:[],walls:[]};
+  expect(visionShowsAffinity(dimVision,730,100,0)).toBe(false);
+  expect(visionShowsAffinity(dimVision,730,100,40)).toBe(true);
+  expect(visionShowsAffinity(dimVision,750,100,40)).toBe(false);
+ });
 });
