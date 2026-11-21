@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import {TokenPresentation} from '../../client/src/canvas/tokenPresentation.js';
-import {createPlayerVision,visionContains,visionLit} from '../../shared/playerVision.js';
+import {createPlayerVision,visionContains,visionLit,visionShowsAffinity} from '../../shared/playerVision.js';
 import type {StateSnapshot,Token} from '../../shared/types.js';
 import type {ExploredTerrain} from '../../shared/exploration.js';
 
@@ -72,5 +72,80 @@ describe('movement-aligned reveal presentation',()=>{
     expect(p.moving()).toBe(false);expect(p.position('varis')!.y).toBe(550);expect(p.explored()).toBe(newMemory);
     const next=snapshot();next.map={...next.map!,id:'other'};p.sync(next,10,1002);
     expect(p.moving()).toBe(false);expect(p.position('varis')!.y).toBe(650);expect(p.explored()).toBe(oldMemory);
+  });
+  it('shows affinity mid-walk in heavy darkness when passing an enemy with a carried lantern even if endpoints are out of view',()=>{
+    const corridorMap={id:'corridor',gridSizePx:50,feetPerSquare:5,mapFogEnabled:false,tokenFogEnabled:false,
+      environment:{enabled:true,lighting:'dungeon' as const,heavyDarkness:true,lights:[]},walls:[]};
+    const build=(x:number,withEnemy:boolean,shared=false)=>{
+      const tokens=[{id:'varis',refId:'varis-sheet',kind:'pc' as const,x,y:600,widthFt:5,carriedLantern:true},
+        ...(withEnemy?[{id:'goblin',refId:'goblin-sheet',kind:'monster' as const,x:900,y:600,widthFt:5,sharedSightOnly:shared}]:[])] as Token[];
+      const s={role:'player',map:corridorMap,tokens,exploredTerrain:[]} as unknown as StateSnapshot;
+      s.playerVision=createPlayerVision(s.map,tokens,new Set(['varis-sheet']));
+      return s;
+    };
+    const p=new TokenPresentation();
+    p.sync(build(100,false),10,1000);
+    const end=build(1700,false);
+    // Mid-walk membership frame has endpoint playerVision (x=1700) plus the passing goblin in tokens.
+    const midFrame={...build(1700,true),playerVision:end.playerVision};
+    p.sync(midFrame,10,1001,false,{id:'walk',start:1001,durationMs:400,moves:{varis:{from:{x:100,y:600},to:{x:1700,y:600}}}});
+    expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(false);
+    p.advance(1201);
+    expect(p.position('varis')!.x).toBe(900);
+    expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(true);
+    p.advance(1402);
+    expect(p.position('varis')!.x).toBe(1700);
+    expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(false);
+  });
+  it('shows affinity mid-walk in dim light without a lantern when passing within darkvision range',()=>{
+    const corridorMap={id:'dim-corridor',gridSizePx:50,feetPerSquare:5,mapFogEnabled:false,tokenFogEnabled:false,
+      environment:{enabled:true,lighting:'dungeon' as const,heavyDarkness:false,lights:[]},walls:[]};
+    const build=(x:number)=>{
+      const tokens=[{id:'varis',refId:'varis-sheet',kind:'pc' as const,x,y:600,widthFt:5,carriedLantern:false},
+        {id:'goblin',refId:'goblin-sheet',kind:'monster' as const,x:900,y:600,widthFt:5}] as Token[];
+      const s={role:'player',map:corridorMap,tokens,exploredTerrain:[]} as unknown as StateSnapshot;
+      s.playerVision=createPlayerVision(s.map,tokens,new Set(['varis-sheet']));
+      return s;
+    };
+    const p=new TokenPresentation();
+    p.sync(build(100),10,1000);
+    p.sync(build(1700),10,1001,false,{id:'dim-walk',start:1001,durationMs:400,moves:{varis:{from:{x:100,y:600},to:{x:1700,y:600}}}});
+    expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(false);
+    p.advance(1201);
+    expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(true);
+    p.advance(1402);
+    expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(false);
+  });
+  it('discovers carried lanterns on units only temporarily visible mid-walk when excluded from endpoint playerVision.lights',()=>{
+    const roomMap={id:'lantern-alcove',gridSizePx:50,feetPerSquare:5,mapFogEnabled:false,tokenFogEnabled:false,
+      environment:{enabled:true,lighting:'dungeon' as const,heavyDarkness:true,lights:[]},
+      walls:[
+        {id:'w-left',kind:'rectangle' as const,ax:700,ay:200,bx:700,by:550},
+        {id:'w-right',kind:'rectangle' as const,ax:1100,ay:200,bx:1100,by:550},
+      ]};
+    const startTokens=[{id:'scout',refId:'scout-sheet',kind:'pc' as const,x:300,y:600,widthFt:5}] as Token[];
+    const endTokens=[{id:'scout',refId:'scout-sheet',kind:'pc' as const,x:1500,y:600,widthFt:5}] as Token[];
+    const midTokens=[
+      {id:'scout',refId:'scout-sheet',kind:'pc' as const,x:1500,y:600,widthFt:5},
+      {id:'ally',refId:'ally-sheet',kind:'pc' as const,x:900,y:300,widthFt:5,carriedLantern:true},
+      {id:'enemy',refId:'goblin-sheet',kind:'monster' as const,x:950,y:300,widthFt:5},
+    ] as Token[];
+    const start={role:'player',map:roomMap,tokens:startTokens,exploredTerrain:[],
+      playerVision:createPlayerVision(roomMap as any,startTokens,new Set(['scout-sheet']))} as unknown as StateSnapshot;
+    const endVision=createPlayerVision(roomMap as any,[...endTokens,midTokens[1]],new Set(['scout-sheet']))!;
+    expect(endVision.lights).toEqual([]);
+    const midFrame={role:'player',map:roomMap,tokens:midTokens,exploredTerrain:[],playerVision:endVision} as unknown as StateSnapshot;
+    const p=new TokenPresentation();
+    p.sync(start,10,1000);
+    p.sync(midFrame,10,1001,false,{id:'alcove-walk',start:1001,durationMs:400,moves:{scout:{from:{x:300,y:600},to:{x:1500,y:600}}}});
+    expect(visionShowsAffinity(p.personalVision(),950,300,25)).toBe(false);
+    p.advance(1201);
+    expect(p.position('scout')!.x).toBe(900);
+    expect(p.personalVision()?.lights.some(l=>l.id==='ally'&&l.carried)).toBe(true);
+    expect(visionShowsAffinity(p.personalVision(),950,300,25)).toBe(true);
+    p.advance(1402);
+    expect(p.position('scout')!.x).toBe(1500);
+    expect(p.personalVision()?.lights.some(l=>l.id==='ally')).toBe(false);
+    expect(visionShowsAffinity(p.personalVision(),950,300,25)).toBe(false);
   });
 });

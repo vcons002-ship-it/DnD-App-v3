@@ -1,4 +1,4 @@
-import {CARRIED_LANTERN_LIGHT_HEIGHT_FT,type LightBeam} from './lightFalloff.js';
+import {CARRIED_LANTERN_LIGHT_HEIGHT_FT,LIGHT_SPILL_MULTIPLIER,type LightBeam} from './lightFalloff.js';
 import {lightIrradiance,lightColorCoverage,spellEmissionIrradiance} from './lightFalloff.js';
 import {tokenVisibleAt} from './fog.js';
 import {hasPotentialSightBlockers,type MapWall} from './mapWalls.js';
@@ -134,7 +134,36 @@ export function visionHasDarkvision(vision:PlayerVision|undefined|null,x:number,
 }
 /** Dim-light darkvision shows affinity; heavy-darkness affinity needs actual light. */
 export function visionShowsAffinity(vision:PlayerVision|undefined|null,x:number,y:number,radiusPx=0):boolean{
- return visionLit(vision,x,y)||(radiusPx>0&&tokenFootprintPoints(x,y,radiusPx).some(p=>visionLit(vision,p.x,p.y)))||(!vision?.heavy&&(visionHasDarkvision(vision,x,y)||(radiusPx>0&&tokenFootprintPoints(x,y,radiusPx).some(p=>visionHasDarkvision(vision,p.x,p.y)))));
+ if(!vision||vision.daylight)return true;
+ const r=Math.max(0,radiusPx),walls=vision.walls,hasWalls=!!walls?.length;
+ for(const l of vision.lights){
+  if(!l.transient){
+   const dx=x-l.x,dy=y-l.y,reach=l.radius*LIGHT_SPILL_MULTIPLIER+r;
+   if(dx*dx+dy*dy>reach*reach)continue;
+  }
+  if(lightCoverage(Math.hypot(x-l.x,y-l.y),l)>.10&&(!hasWalls||sightCache.visible(`l:${l.id}:${x},${y}`,l,{x,y},walls)))return true;
+  if(r>0){
+   for(let i=1;i<TOKEN_FOOTPRINT_UNIT_OFFSETS.length;i++){
+    const u=TOKEN_FOOTPRINT_UNIT_OFFSETS[i],px=x+u.dx*r,py=y+u.dy*r;
+    if(lightCoverage(Math.hypot(px-l.x,py-l.y),l)>.10&&(!hasWalls||sightCache.visible(`l:${l.id}:${px},${py}`,l,{x:px,y:py},walls)))return true;
+   }
+  }
+ }
+ if(!vision.heavy){
+  const darkOuter=vision.radius+r+1e-6;
+  for(const o of vision.origins){
+   const dx=x-o.x,dy=y-o.y;
+   if(dx*dx+dy*dy>darkOuter*darkOuter)continue;
+   if(Math.hypot(dx,dy)<=vision.radius+1e-6)return true;
+   if(r>0){
+    for(let i=1;i<TOKEN_FOOTPRINT_UNIT_OFFSETS.length;i++){
+     const u=TOKEN_FOOTPRINT_UNIT_OFFSETS[i];
+     if(Math.hypot(x+u.dx*r-o.x,y+u.dy*r-o.y)<=vision.radius+1e-6)return true;
+    }
+   }
+  }
+ }
+ return false;
 }
 export function visionLit(vision:PlayerVision|undefined|null,x:number,y:number):boolean{
  return !vision||!!vision.daylight||vision.lights.some(l=>lightCoverage(Math.hypot(x-l.x,y-l.y),l)>.10&&(!(vision.walls?.length)||sightCache.visible(`l:${l.id}:${x},${y}`,l,{x,y},vision.walls)));

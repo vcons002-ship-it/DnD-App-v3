@@ -131,7 +131,7 @@ parentPort!.on('message',async(msg:{id?:number;job?:GeometryJob|MovementPreviewJ
   // outline augmentation can omit base paths; delivery strips unused paths.
   const paths=job.outlinesOnly?{sight:[],near:[],lights:[]}:geometry(job.vision,job.wallFog);
   const memory=boundedPaths((job.explored??[]).map(p=>p.map(r=>legacyPath(r.map(([x,y])=>({x,y})))).join('')),visionBounds(job.vision));
-  const affinity=job.tokens.filter(t=>!t.sharedSightOnly&&visionShowsAffinity(job.vision,t.x,t.y)).map(t=>t.id);
+  const affinity=job.tokens.filter(t=>!t.sharedSightOnly&&!t.partiallyRevealed&&visionShowsAffinity(job.vision,t.x,t.y,t.radiusPx)).map(t=>t.id);
   let prepared:OutlineSet|undefined;
   if(job.detailed){
    const wallsKey=JSON.stringify(job.vision.walls??[]);

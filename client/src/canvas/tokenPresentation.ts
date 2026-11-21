@@ -1,6 +1,8 @@
 import type {StateSnapshot} from '../../../shared/types.js';
 import type {ExploredTerrain} from '../../../shared/exploration.js';
-import {createPlayerVision, type PlayerVision} from '../../../shared/playerVision.js';
+import {createPlayerVision, type PlayerVision, type VisionLight} from '../../../shared/playerVision.js';
+import {CARRIED_LANTERN_LIGHT_HEIGHT_FT} from '../../../shared/lightFalloff.js';
+import {hasLineOfSight} from '../../../shared/mapWalls.js';
 import {tokenMoveDuration, tokenMoveProgress} from './tokenMotion.js';
 import {facingAfterMove} from '../../../shared/tokenFacing.js';
 import type {LegacyPlayback} from '../../../shared/legacyMotion.js';
@@ -22,6 +24,8 @@ export class TokenPresentation {
   private reducedMotion = false;
   private playbackId?:string;
   private playback?:LegacyPlayback;
+  private mapFogSource?:readonly string[];
+  private mapFogSet?:Set<string>;
 
   sync(snapshot:StateSnapshot, pxPerFoot:number, now:number, reducedMotion=false,playback?:LegacyPlayback) {
     if(this.snapshot===snapshot&&this.reducedMotion===reducedMotion&&this.playbackId===playback?.id)return;
@@ -73,7 +77,10 @@ export class TokenPresentation {
     if(!this.moving())this.memory=this.snapshot?.exploredTerrain;
   }
 
-  moving() {return [...this.moves.values()].some(m=>this.time<m.start+m.duration);}
+  moving() {
+    for(const m of this.moves.values())if(this.time<m.start+m.duration)return true;
+    return false;
+  }
   facing = (id:string,fallback?:number):number|undefined => {
     const move=this.moves.get(id);
     return move&&this.time<move.start+move.duration?facingAfterMove(move.from.x,move.from.y,move.to.x,move.to.y,fallback):fallback;
@@ -88,8 +95,49 @@ export class TokenPresentation {
     if(!this.visionDirty)return;
     this.visionDirty=false;
     const snapshot=this.snapshot, vision=snapshot?.playerVision;
-    this.personal=vision?{...vision,origins:vision.origins.map(o=>({...o,...this.position(o.id)})),
-      lights:vision.lights.map(l=>({...l,...this.position(l.id)}))}:undefined;
+    if(vision){
+      const origins=vision.origins.map(o=>({...o,...this.position(o.id)}));
+      const walls=vision.walls??[];
+      const tokenById=new Map((snapshot?.tokens??[]).map(t=>[t.id,t]));
+      const lights:VisionLight[]=[];
+      const lightIds=new Set<string>();
+      for(const l of vision.lights){
+        const moved:VisionLight={...l,...this.position(l.id)};
+        if(moved.carried){
+          const tok=tokenById.get(moved.id);
+          if(tok&&(tok.isHidden||tok.sharedSightOnly||tok.partiallyRevealed))continue;
+          if(origins.length>0&&!origins.some(o=>o.id===moved.id||!walls.length||hasLineOfSight(o,moved,walls)))continue;
+        }
+        lights.push(moved);
+        lightIds.add(moved.id);
+      }
+      if(origins.length>0&&snapshot?.tokens){
+        const map=snapshot.map;
+        const px=map?map.gridSizePx/Math.max(.001,map.feetPerSquare):10;
+        const grid=map?.gridSizePx??50;
+        let mapFog:Set<string>|null|undefined;
+        for(const tok of snapshot.tokens){
+          if(!tok.carriedLantern||tok.isHidden||tok.sharedSightOnly||tok.partiallyRevealed||lightIds.has(tok.id))continue;
+          const p=this.position(tok.id)??tok;
+          if(mapFog===undefined){
+            if(map?.mapFogEnabled){
+              if(this.mapFogSource!==map.mapFogRevealed){
+                this.mapFogSource=map.mapFogRevealed;
+                this.mapFogSet=new Set(map.mapFogRevealed);
+              }
+              mapFog=this.mapFogSet!;
+            }else mapFog=null;
+          }
+          if(mapFog&&!mapFog.has(`${Math.floor(p.x/grid)},${Math.floor(p.y/grid)}`))continue;
+          if(!origins.some(o=>o.id===tok.id||!walls.length||hasLineOfSight(o,p,walls)))continue;
+          lights.push({id:tok.id,x:p.x,y:p.y,radius:20*px,height:CARRIED_LANTERN_LIGHT_HEIGHT_FT*px,strength:.85,carried:true});
+          lightIds.add(tok.id);
+        }
+      }
+      this.personal={...vision,origins,lights};
+    }else{
+      this.personal=undefined;
+    }
     const tokens=snapshot?.tokens.map(t=>({...t,...this.position(t.id)}))??[];
     this.party=snapshot?.role==='player'?createPlayerVision(snapshot.map,tokens,new Set(tokens.filter(t=>t.kind==='pc').map(t=>t.refId))):undefined;
   }
