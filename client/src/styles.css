@@ -606,6 +606,15 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 .fm-weapons-list {
   display: flex; flex-direction: column; gap: 2px; padding: 2px;
 }
+.floating-menu-item.weapon-attack-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  border-left: 3px solid #e35d52;
+}
+.floating-menu-item.weapon-attack-btn > span:first-child { min-width: 0; flex: 1 1 auto; }
+.floating-menu-item.weapon-attack-btn.is-long-range { border-left-color: #f0b43a; }
+.floating-menu-item.weapon-attack-btn.is-out-of-range { opacity: 0.78; border-left-color: #8d95a5; }
+.fm-title-dist.is-long { color: #ffe08a; }
+.fm-title-dist.is-out { color: #ffb3b3; }
 .floating-menu.is-mobile-sheet,
 .layout.player-fantasy .floating-menu.is-mobile-sheet {
   zoom: 1;
@@ -651,6 +660,9 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 }
 .floating-menu.is-mobile-sheet .floating-menu-item {
   padding: 5px 6px; font-size: 12px; line-height: 1.2;
+}
+.floating-menu.is-mobile-sheet .weapon-range-tag {
+  font-size: 9px; padding: 1px 4px;
 }
 .floating-menu.is-mobile-sheet .fm-dmg {
   gap: 3px; padding: 3px; border-top: 1px solid var(--line);

@@ -172,4 +172,48 @@ const svgMockNode=()=>{const children:any[]=[];const el:any={id:'',attrs:new Map
   expect(layer.attrs.retainedStats.toolFrames).toBe(1);
   dispose();
  });
+ it('retains wall-door-marker across pan and updates scene/hit on doorVisualVersionChange',()=>{
+  const noop=()=>undefined;
+  const ctx={save:noop,translate:noop,beginPath:noop,clearRect:noop,rect:noop,clip:noop,restore:noop};
+  const canvas={width:800,height:600,pixelRatio:1,getContext:()=>ctx};
+  let rect={x:350,y:288,width:100,height:24};
+  const nodeHandlers=new Map<string,Set<()=>void>>();
+  const layerHandlers=new Map<string,Set<()=>void>>();
+  const emit=(map:Map<string,Set<()=>void>>,ev:string)=>{for(const fn of map.get(ev)??[])fn();};
+  const layer:any={
+   attrs:{},
+   on(evs:string,fn:()=>void){for(const ev of evs.split(' ')){const key=ev.split('.')[0];if(!layerHandlers.has(key))layerHandlers.set(key,new Set());layerHandlers.get(key)!.add(fn);}},
+   off:noop,fire:noop,batchDraw:noop,drawScene:noop,drawHit:noop,
+   getChildren:()=>children,getCanvas:()=>canvas,getHitCanvas:()=>canvas,getAttr:(k:string)=>layer.attrs[k],
+  };
+  const door:any={
+   drawCalls:0,hitCalls:0,
+   hasName:(n:string)=>n==='wall-door-marker',isVisible:()=>true,getAbsoluteOpacity:()=>1,isListening:()=>true,getAttr:()=>0,
+   getClientRect:()=>rect,findOne:()=>undefined,getParent:()=>layer,getLayer:()=>layer,
+   drawScene(){this.drawCalls++;},drawHit(){this.hitCalls++;},
+   on(evs:string,fn:()=>void){for(const ev of evs.split(' ')){const key=ev.split('.')[0];if(!nodeHandlers.has(key))nodeHandlers.set(key,new Set());nodeHandlers.get(key)!.add(fn);}},
+   off(){},
+  };
+  const children:any[]=[door];
+  const dispose=installRetainedTokenLayer(layer as unknown as Konva.Layer);
+  layer.drawScene();
+  layer.drawHit();
+  expect(layer.attrs.retainedStats.toolFrames).toBe(0);
+  expect(layer.attrs.retainedStats.fullScene).toBe(1);
+  expect(door.hitCalls).toBe(1);
+  // Panning moves the layer without triggering a full-layer scene clear.
+  rect={x:380,y:288,width:100,height:24};
+  emit(layerHandlers,'xChange');
+  layer.drawScene();
+  expect(layer.attrs.retainedStats.toolFrames).toBe(0);
+  expect(layer.attrs.retainedStats.fullScene).toBe(1);
+  expect(layer.attrs.retainedStats.partialScene).toBe(1);
+  // Visual door state changes invalidate both scene and padded hit bounds.
+  emit(nodeHandlers,'doorVisualVersionChange');
+  layer.drawScene();
+  layer.drawHit();
+  expect(layer.attrs.retainedStats.partialScene).toBe(2);
+  expect(door.hitCalls).toBe(2);
+  dispose();
+ });
 });

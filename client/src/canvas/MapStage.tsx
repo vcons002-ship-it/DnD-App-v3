@@ -76,6 +76,7 @@ import { useComfyAvailable, comfyGenerate } from '../lib/comfy';
 import { useStableCallback } from '../lib/useStableCallback';
 import { getPlayerId, useStore, isRollImpactPending } from '../state/socket';
 import { FloatingMenu } from '../components/FloatingMenu';
+import type { ScreenRect } from '../lib/floatingMenuPlacement';
 import {useEnvironmentQuality} from '../lib/useEnvironmentQuality';
 import {useEnvironmentEditor} from '../lib/useEnvironmentEditor';
 import {DEFAULT_MAP_ENVIRONMENT} from '../../../shared/mapEnvironment';
@@ -255,9 +256,9 @@ function MapStageInner({
   // can linger after its token leaves the snapshot (deleted, hidden, fogged, or
   // moved off this map). Prune them when the referenced id is gone.
   useEffect(() => {
-    const ids = new Set(snapshot.tokens.map((t) => t.id));
-    if (menu && !ids.has(menu.token.id)) setMenu(null);
-    if (hover && !ids.has(hover.token.id)) setHover(null);
+    const ids=new Set(snapshot.tokens.map(t=>t.id));
+    if(menu&&!ids.has(menu.token.id))setMenu(null);
+    if(hover&&!ids.has(hover.token.id))setHover(null);
   }, [snapshot.tokens, menu, hover]);
   // Keep authoring data and permissions while rendering the party sight snapshot.
   const map = actualDm ? sourceSnapshot.map : snapshot.map;
@@ -2015,16 +2016,25 @@ function MapStageInner({
     suppressGroundHudSyncRef.current = true;
     const prevAutoDraw = Konva.autoDrawEnabled;
     Konva.autoDrawEnabled = false;
+    const hudHasVisibleKonvaContent = (hud: Konva.Node): boolean => {
+      if (!hud.isVisible() || hud.getAbsoluteOpacity() <= 0) return false;
+      if (!(hud instanceof Konva.Container)) return true;
+      return hud.getChildren().some((c) => c.isVisible() && c.getAbsoluteOpacity() > 0);
+    };
     try {
       for(const layer of [layerRef.current,legacyFootstepsLayerRef.current,groundTokenLayerRef.current,tokenLayerRef.current,sharedTokenLayerRef.current,spellAreaLayerRef.current]){
         if(!layer)continue;
         if(previous.tilt!==tilt){layer.position({x:nextView.x,y:nextView.y});layer.scale({x:nextView.scale,y:nextView.scale*groundYScale(tilt)});}
         const labels=layer.find('.token-upright-hud');
-        for(const label of labels){label.rotation(-rotation);invalidateRetainedToken(label,false);}
+        let visibleHudRotated=false;
+        for(const label of labels){
+          label.rotation(-rotation);
+          if(hudHasVisibleKonvaContent(label)){invalidateRetainedToken(label,false);visibleHudRotated=true;}
+        }
         const pills=layer.find('.ray-mid-pill');
         const invSy=1/Math.max(0.25,groundYScale(tilt));
         for(const pill of pills){pill.rotation(-rotation);pill.scaleY(invSy);}
-        if(previous.tilt!==tilt || labels.length || pills.length){
+        if(previous.tilt!==tilt || visibleHudRotated || pills.length){
           if(layer===spellAreaLayerRef.current){
             const hasContent=spellAreaHasContent();
             if(!hasContent && !spellAreaHasPixelsRef.current)continue;
@@ -2161,6 +2171,43 @@ function MapStageInner({
         isVisibleAt={tokenVisibleAtPosition}
       />
     );
+  });
+
+  const getTokenScreenRect = useStableCallback((tok: Token): ScreenRect | null => {
+    const box = containerRef.current?.getBoundingClientRect();
+    if (!box || size.w <= 0 || size.h <= 0) return null;
+    const lv = viewRef.current;
+    const tilt = projectionState.current.tilt;
+    const rot = projectionState.current.rotation;
+    const pos = getLiveTokenPosition(tok.id) ?? tok;
+    const r = (getTokenBaseWidthFt(tok) * pxPerFoot) / 2;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4;
+      const g = mapToScreen(pos.x + Math.cos(a) * r, pos.y + Math.sin(a) * r, lv, tilt);
+      const p = projectGround(g.x, g.y, size.w, size.h, tilt, rot);
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+    const hudPad = Math.max(22, Math.round(28 * Math.min(1.3, Math.max(0.7, lv.scale))));
+    maxY += hudPad;
+    const mBox = miniatureRef.current?.screenBounds(tok.id);
+    if (mBox) {
+      minX = Math.min(minX, mBox.left);
+      minY = Math.min(minY, mBox.top);
+      maxX = Math.max(maxX, mBox.right);
+      maxY = Math.max(maxY, mBox.bottom);
+    }
+    return {
+      left: box.left + minX - 4,
+      top: box.top + minY - 4,
+      right: box.left + maxX + 4,
+      bottom: box.top + maxY + 4,
+    };
   });
 
   const liveView = viewRef.current;
@@ -2576,6 +2623,7 @@ function MapStageInner({
               )}
               x={menu.x}
               y={menu.y}
+              getTokenScreenRect={getTokenScreenRect}
               onClose={() => setMenu(null)}
             />
           )}

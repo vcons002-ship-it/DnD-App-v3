@@ -302,9 +302,12 @@ export function createBattlefieldLighting(scene:Scene,key:DirectionalLight,ambie
     if(enabled){key.intensity=baseLight.key;key.color.copy(baseLight.color);if(ambient)ambient.intensity=baseLight.ambient;scene.environmentIntensity=baseLight.reflection;}
     else restore();tick(time);
   },tick,prepareTransient(next:readonly TorchLight[],renderer?:WebGLRenderer){
-      if(!settings)return;ensureCapacity(lights.length+Math.min(24,next.length));
+      if(!settings)return;
+      if(!next.length&&!preparedWallLights.size)return;
+      ensureCapacity(lights.length+Math.min(24,next.length));
       const ids=new Set(next.map(l=>l.id));
       for(const [id,entry] of preparedWallLights)if(!ids.has(id)){entry.mesh.geometry.dispose();preparedWallLights.delete(id);}
+      if(!next.length){preparationScene.clear();return;}
       const walls=settings.walls??[];if(!walls.length)return;
       const key=JSON.stringify(walls);let upload=false;
       for(const light of next.slice(0,24)){

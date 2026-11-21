@@ -135,6 +135,7 @@ type Props = {
 };
 export type MiniatureLayerHandle = {
   headPosition: (id:string)=>{x:number;y:number}|undefined;
+  screenBounds: (id:string)=>{left:number;top:number;right:number;bottom:number}|undefined;
   setFootprints: (marks:FootprintMark[])=>void;
   spellCast: (tokenIds: string[]) => void;
   setView: (view: BattlefieldView, immediate?: boolean) => void;
@@ -431,6 +432,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   let renderedPixelRatio = 0;
   let battlefield: ReturnType<typeof createBattlefieldEnvironment> | null = null;
   let lastEnvironment: EnvironmentPreviewSettings | undefined;
+  let hadPreparedTransientLights = false;
   let paintCount = 0, paintEpoch = performance.now();
   let totalPaintCount = 0, totalFrameCount = 0, countedFrame = -Infinity;
   const timing=initial.environmentPreview&&new URLSearchParams(location.search).has('benchmark')?createPreviewGpuTiming(renderer.getContext()):null;
@@ -621,8 +623,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         return {x,y,height:instance?.mistBody?instance.mistBody.height*instance.root.scale.x:undefined,visible:props.isVisibleAt?.(id,x,y)??true};
       });
       if(preparedLights.length){
-        if(!props.spellColorOverlay){battlefield?.lighting.prepareTransient(preparedLights,renderer);props.onPrepareVisionLights?.(preparedLights);}
-      }else if(!staged.length&&!spellImpacts.active){battlefield?.lighting.prepareTransient([]);props.onPrepareVisionLights?.([]);}
+        if(!props.spellColorOverlay){battlefield?.lighting.prepareTransient(preparedLights,renderer);props.onPrepareVisionLights?.(preparedLights);hadPreparedTransientLights=true;}
+        else if(hadPreparedTransientLights){battlefield?.lighting.prepareTransient([]);props.onPrepareVisionLights?.([]);hadPreparedTransientLights=false;}
+      }else if(!staged.length&&!spellImpacts.active&&hadPreparedTransientLights){battlefield?.lighting.prepareTransient([]);props.onPrepareVisionLights?.([]);hadPreparedTransientLights=false;}
       if(spellImpacts.preparation.pending)spellImpacts.warm(renderer,camera);
       setHostData('spellPreparedCount',String(spellImpacts.preparation.pending));
       setHostData('spellGeometryBuilt',String(spellImpacts.preparation.built));
@@ -1252,7 +1255,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       if(!battlefield)battlefield=createBattlefieldEnvironment(scene,renderer,key,next.environmentPreview,{texture:outlineMask.depthTexture!,resolution:outlineResolution.value},localShadows.uniforms,invalidate,ambient);
       else if(lastEnvironment!==next.environmentPreview)battlefield.update(next.environmentPreview);
       lastEnvironment=next.environmentPreview;
-    } else if(battlefield){battlefield.dispose();battlefield=null;lastEnvironment=undefined;ambient.intensity=2;
+    } else if(battlefield){battlefield.dispose();battlefield=null;lastEnvironment=undefined;hadPreparedTransientLights=false;ambient.intensity=2;
       setHostData('environment','off');setHostData('mistVisible','false');setHostData('shadows','false');setHostData('mistWakes','0');
       setHostData('weather','none');setHostData('weatherCount','0');setHostData('lighting','off');setHostData('lightCount','0');
       setHostData('carriedLanternCount','0');setHostData('visibleTorchCount','0');setHostData('carriedLanternPositions','[]');
@@ -1628,6 +1631,20 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       const point=instance.root.localToWorld(instance.hunterMark.position.clone()).project(camera);
       return {x:(point.x+1)*props.width/2,y:(1-point.y)*props.height/2};
     },
+    screenBounds(id){
+      const instance=instances.get(id);
+      if(disposed||!instance?.root.visible)return undefined;
+      const b=instance.outlineBounds;
+      let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+      for(const x of [b.min.x,b.max.x])for(const y of [b.min.y,b.max.y])for(const z of [b.min.z,b.max.z]){
+        const p=new Vector3(x,y,z).applyMatrix4(instance.root.matrixWorld).project(camera);
+        const sx=(p.x+1)*props.width/2,sy=(1-p.y)*props.height/2;
+        if(!Number.isFinite(sx)||!Number.isFinite(sy))continue;
+        minX=Math.min(minX,sx);maxX=Math.max(maxX,sx);minY=Math.min(minY,sy);maxY=Math.max(maxY,sy);
+      }
+      if(!Number.isFinite(minX)||!Number.isFinite(minY))return undefined;
+      return {left:minX,top:minY,right:maxX,bottom:maxY};
+    },
     setFootprints(marks){if(disposed)return;footprints.sync(marks);setHostData('footprintCount',String(marks.length));invalidate();},
     spellCast(tokenIds) {
       if (disposed || document.hidden) return;
@@ -1696,6 +1713,7 @@ export const MiniatureLayer = forwardRef<MiniatureLayerHandle, Props>(function M
   }, [socket]);
   useImperativeHandle(ref, () => ({
     headPosition: (id) => engine.current?.headPosition(id),
+    screenBounds: (id) => engine.current?.screenBounds(id),
     setFootprints: (marks) => engine.current?.setFootprints(marks),
     spellCast: (tokenIds) => engine.current?.spellCast(tokenIds),
     setView: (view, immediate) => engine.current?.setView(view, immediate),

@@ -1,4 +1,4 @@
-import {Box3, BufferGeometry, Color, DataTexture, DynamicDrawUsage, Float32BufferAttribute, Mesh, NearestFilter, OrthographicCamera, RGBAFormat, Scene, ShaderMaterial, Vector2, Vector3, type Matrix4, type Object3D, type Texture, type WebGLRenderer} from 'three';
+import {Box3, BufferAttribute, BufferGeometry, Color, DataTexture, DynamicDrawUsage, Mesh, NearestFilter, OrthographicCamera, RGBAFormat, Scene, ShaderMaterial, Vector2, Vector3, type Matrix4, type Object3D, type Texture, type WebGLRenderer} from 'three';
 export type OutlineRect={x:number;y:number;width:number;height:number};
 /** Match the placement group's one base offset without changing source poses. */
 export function centeredMiniatureOutlineBounds(model:Object3D,baseCenter:readonly number[]):Box3 {
@@ -82,8 +82,8 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
   let capacity = 32;
   let positions = new Float32Array(capacity * 6 * 3), uvs = new Float32Array(capacity * 6 * 2);
   let geometry = new BufferGeometry();
-  let posAttr = new Float32BufferAttribute(positions, 3).setUsage(DynamicDrawUsage);
-  let uvAttr = new Float32BufferAttribute(uvs, 2).setUsage(DynamicDrawUsage);
+  let posAttr = new BufferAttribute(positions, 3).setUsage(DynamicDrawUsage);
+  let uvAttr = new BufferAttribute(uvs, 2).setUsage(DynamicDrawUsage);
   geometry.setAttribute('position', posAttr);
   geometry.setAttribute('uv', uvAttr);
   geometry.setDrawRange(0, 0);
@@ -97,8 +97,8 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
     positions = new Float32Array(capacity * 6 * 3);
     uvs = new Float32Array(capacity * 6 * 2);
     geometry = new BufferGeometry();
-    posAttr = new Float32BufferAttribute(positions, 3).setUsage(DynamicDrawUsage);
-    uvAttr = new Float32BufferAttribute(uvs, 2).setUsage(DynamicDrawUsage);
+    posAttr = new BufferAttribute(positions, 3).setUsage(DynamicDrawUsage);
+    uvAttr = new BufferAttribute(uvs, 2).setUsage(DynamicDrawUsage);
     geometry.setAttribute('position', posAttr);
     geometry.setAttribute('uv', uvAttr);
     mesh.geometry = geometry;

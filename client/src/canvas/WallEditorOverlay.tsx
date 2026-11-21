@@ -258,6 +258,7 @@ export function WallAndDoorKonvaGroup({
             doorId={d.id}
             doorState={label}
             doorPreview={previewed}
+            doorVisualVersion={`${label}|${previewed ? 1 : 0}|${approached ? 1 : 0}|${hidden ? 1 : 0}|${viewScale}|${pxPerFoot}|${faces.length}|${d.open ? 1 : 0}|${d.ax},${d.ay},${d.bx},${d.by},${d.rotation ?? 0}|${visibleFaces ? [...visibleFaces].join(',') : 'all'}`}
             opacity={hidden ? 0.45 : 1}
             listening={!wallActive}
             onMouseDown={(e) => {

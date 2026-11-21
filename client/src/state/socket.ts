@@ -102,6 +102,26 @@ let rollSfxReady = false;
  *  persisted/replayed; unrelated/manual adjustments bypass this map. */
 const heldHpFx = new Map<string, HpFloater[]>();
 
+type CombatTargetSelection = {
+  attackerTokenId: string;
+  targetTokenId: string;
+  midLabel?: string;
+  outOfRange?: boolean;
+  hoveredWeapon?: Weapon;
+  weaponsOnlyList?: readonly Weapon[];
+};
+
+const sameCombatTarget = (
+  a: CombatTargetSelection | null,
+  b: CombatTargetSelection | null,
+) =>
+  a?.attackerTokenId === b?.attackerTokenId &&
+  a?.targetTokenId === b?.targetTokenId &&
+  a?.midLabel === b?.midLabel &&
+  a?.outOfRange === b?.outOfRange &&
+  a?.hoveredWeapon === b?.hoveredWeapon &&
+  a?.weaponsOnlyList === b?.weaponsOnlyList;
+
 type Store = {
   hiddenRollReview:import('../../../shared/types').HiddenRollReview|null;
   hiddenRollSubmitting:boolean;
@@ -223,28 +243,12 @@ type Store = {
   showTargetLine: boolean;
   setShowTargetLine: (show: boolean) => void;
   toggleTargetLine: () => void;
-  combatPanelTarget: {
-    attackerTokenId: string;
-    targetTokenId: string;
-    midLabel?: string;
-    outOfRange?: boolean;
-    hoveredWeapon?: Weapon;
-    weaponsOnlyList?: readonly Weapon[];
-  } | null;
-  setCombatPanelTarget: (
-    target: {
-      attackerTokenId: string;
-      targetTokenId: string;
-      midLabel?: string;
-      outOfRange?: boolean;
-      hoveredWeapon?: Weapon;
-      weaponsOnlyList?: readonly Weapon[];
-    } | null,
-  ) => void;
+  combatPanelTarget: CombatTargetSelection | null;
+  setCombatPanelTarget: (target: CombatTargetSelection | null) => void;
   tokenDragPreview: { tokenId: string; x: number; y: number; key: string } | null;
   setTokenDragPreview: (preview: { tokenId: string; x: number; y: number; key: string } | null) => void;
-  floatingMenuTarget: { attackerTokenId: string; targetTokenId: string } | null;
-  setFloatingMenuTarget: (target: { attackerTokenId: string; targetTokenId: string } | null) => void;
+  floatingMenuTarget: CombatTargetSelection | null;
+  setFloatingMenuTarget: (target: CombatTargetSelection | null) => void;
   setCombatTarget: (id: string, mode?: 'attack' | 'heal' | 'buff') => void;
   /** Armed "Apply damage" from a save/damage roll: clicking tokens rolls their
    *  save and auto-applies full/half. Null = not arming. (DM-only.) */
@@ -796,27 +800,13 @@ export const useStore = create<Store>((set, get) => ({
     }),
   combatPanelTarget: null,
   setCombatPanelTarget: (combatPanelTarget) =>
-    set((s) =>
-      s.combatPanelTarget?.attackerTokenId === combatPanelTarget?.attackerTokenId &&
-      s.combatPanelTarget?.targetTokenId === combatPanelTarget?.targetTokenId &&
-      s.combatPanelTarget?.midLabel === combatPanelTarget?.midLabel &&
-      s.combatPanelTarget?.outOfRange === combatPanelTarget?.outOfRange &&
-      s.combatPanelTarget?.hoveredWeapon === combatPanelTarget?.hoveredWeapon &&
-      s.combatPanelTarget?.weaponsOnlyList === combatPanelTarget?.weaponsOnlyList
-        ? s
-        : { combatPanelTarget },
-    ),
+    set((s) => (sameCombatTarget(s.combatPanelTarget, combatPanelTarget) ? s : { combatPanelTarget })),
   tokenDragPreview: null,
   setTokenDragPreview: (tokenDragPreview) =>
     set((s) => (s.tokenDragPreview?.key === tokenDragPreview?.key ? s : { tokenDragPreview })),
   floatingMenuTarget: null,
   setFloatingMenuTarget: (floatingMenuTarget) =>
-    set((s) =>
-      s.floatingMenuTarget?.attackerTokenId === floatingMenuTarget?.attackerTokenId &&
-      s.floatingMenuTarget?.targetTokenId === floatingMenuTarget?.targetTokenId
-        ? s
-        : { floatingMenuTarget },
-    ),
+    set((s) => (sameCombatTarget(s.floatingMenuTarget, floatingMenuTarget) ? s : { floatingMenuTarget })),
   setCombatTarget: (id, mode) =>
     set((s) => ({ combatTarget: { id, n: (s.combatTarget?.n ?? 0) + 1, ...(mode ? { mode } : {}) }, mapTargetPick: null })),
 
