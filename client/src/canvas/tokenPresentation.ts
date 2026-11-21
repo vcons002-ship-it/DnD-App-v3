@@ -43,9 +43,9 @@ export class TokenPresentation {
     for(const id of this.moves.keys())if(!ids.has(id))this.moves.delete(id);
     for(const token of snapshot.tokens){
       const planned=playback?.moves[token.id];
-      if(newPlayback&&planned&&!reducedMotion){
-        const from=priorPositions?.get(token.id)??planned.from;
-        this.moves.set(token.id,{from:{x:from.x,y:from.y},to:planned.to,start:playback.start,duration:playback.durationMs});
+      if(planned&&!reducedMotion&&(newPlayback||!this.moves.has(token.id))){
+        const from=newPlayback?(priorPositions?.get(token.id)??planned.from):planned.from;
+        this.moves.set(token.id,{from:{x:from.x,y:from.y},to:planned.to,start:playback!.start,duration:playback!.durationMs});
         continue;
       }
       const old=this.moves.get(token.id);
@@ -55,7 +55,7 @@ export class TokenPresentation {
       }
       const from=old?this.position(token.id)!:token;
       const prevToken=previous?.tokens.find(t=>t.id===token.id);
-      const teleported=(token.teleportedAt!==undefined&&token.teleportedAt!==prevToken?.teleportedAt)||!!token.revealedOnly||!!prevToken?.revealedOnly;
+      const teleported=(token.teleportedAt!==undefined&&token.teleportedAt!==prevToken?.teleportedAt)||(token.kind!=='pc'&&(!!token.revealedOnly||!!prevToken?.revealedOnly));
       const duration=old&&!reducedMotion&&!teleported?tokenMoveDuration(Math.hypot(token.x-from.x,token.y-from.y),pxPerFoot):0;
       this.moves.set(token.id,{from:{x:from.x,y:from.y},to:{x:token.x,y:token.y},start:now,duration});
     }

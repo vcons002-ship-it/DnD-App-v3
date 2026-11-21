@@ -49,3 +49,28 @@ it('retains raster geometry and sprite appearance while normalizing moving recor
  expect(frames[0].tokens[0]).toBe(input.tokens[0]);expect(frames[0].legacyGeometry).toBe(geometry);
  expect(motion.frames[0].tokens?.[0].x).toBe(100);
 });
+
+it('normalizes and compacts a departing moving token omitted from source.tokens',()=>{
+ const departed={id:'departed',kind:'monster' as const,refId:'goblin',x:728,y:100,facing:Math.PI/2};
+ const endpoint={role:'player',tokens:[pc],monsters:[],characters:[]} as unknown as StateSnapshot;
+ const departingPlan=compactMotionEntities({
+  membershipOnly:true,
+  id:'depart-walk',
+  durationMs:400,
+  moves:{departed:{from:{x:400,y:100},to:{x:728,y:100}}},
+  frames:[
+   {at:0,tokenIds:['pc','departed'],tokens:[{...departed,x:400,facing:undefined}],monsters:[monster]},
+   {at:0.25,tokenIds:['pc','departed'],tokens:[{...departed}],monsters:[monster]},
+   {at:0.5,tokenIds:['pc','departed'],tokens:[{...departed}],monsters:[monster]},
+   {at:0.75,tokenIds:['pc','departed'],tokens:[{...departed,partiallyRevealed:true}],monsters:[monster]},
+   {at:1,tokenIds:['pc']},
+  ],
+ });
+ const frames=createMotionSnapshots(endpoint,departingPlan);
+ expect(frames[0].tokens.find(t=>t.id==='departed')).toMatchObject({x:728,y:100,facing:Math.PI/2});
+ expect(frames[1].tokens).toBe(frames[0].tokens);
+ expect(frames[2]).toBe(frames[1]);
+ expect(frames[3].tokens.find(t=>t.id==='departed')?.partiallyRevealed).toBe(true);
+ expect(frames[4].tokens.map(t=>t.id)).toEqual(['pc']);
+ expect(frames[4].monsters).toEqual([]);
+});
