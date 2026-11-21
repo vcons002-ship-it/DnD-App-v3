@@ -87,7 +87,13 @@ export function mistyStepError(sid:string,kind:TokenKind,id:string,d:AbilityRoll
   if(passageWalls(map.walls??[]).some(w=>!(w.door&&w.open)&&distanceToWall(d,w)<.1))return 'Choose a destination outside the wall.';
   // A visible window permits teleporting through it; closed opaque walls do not.
   if(!hasLineOfSight(source,d,map.walls))return 'Choose a destination the caster can see.';
-  if(listTokens(map.id).some(t=>t.id!==source.id&&Math.hypot(t.x-d.x,t.y-d.y)<(source.widthFt+t.widthFt)*map.gridSizePx/map.feetPerSquare/2))return 'Choose an unoccupied destination.';
+  if(listTokens(map.id).some(t=>{
+    if(t.id===source.id)return false;
+    const targetEntity=entity(t.kind,t.refId);
+    if(targetEntity&&isDeadEntity(t.kind,targetEntity))return false;
+    if(t.kind==='monster'&&targetEntity&&'objectKind' in targetEntity&&targetEntity.objectKind)return false;
+    return Math.hypot(t.x-d.x,t.y-d.y)<(source.widthFt+t.widthFt)*map.gridSizePx/map.feetPerSquare/2;
+  }))return 'Choose an unoccupied destination.';
 }
 export function teleportMistyStep(sid:string,kind:TokenKind,id:string,d:NonNullable<AbilityRollPayload['destination']>):boolean {
   if(mistyStepError(sid,kind,id,d))return false;

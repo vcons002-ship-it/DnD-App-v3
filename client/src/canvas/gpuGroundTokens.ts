@@ -40,9 +40,9 @@ export function createGroundTokenSpriteReader() {
       const id = node.getAttr('tokenId') as string | undefined;
       if (!id) continue;
       const version = String(node.getAttr('tokenBodyVersion') ?? '');
+      const art = node.findOne<Konva.Group>('.token-art');
       let entry = cache.get(id);
       if (!entry || entry.node !== node || entry.version !== version || version === '') {
-        const art = node.findOne<Konva.Group>('.token-art');
         if (!art) {
           cache.delete(id);
           continue;
@@ -69,8 +69,8 @@ export function createGroundTokenSpriteReader() {
       result.push({
         id,
         canvas: entry.canvas,
-        x: node.x(),
-        y: node.y(),
+        x: node.x() + (art?.x() ?? 0),
+        y: node.y() + (art?.y() ?? 0),
         bx: entry.bx,
         by: entry.by,
         w: entry.w,

@@ -609,6 +609,7 @@ function MapStageInner({
     privateDrag.current=active;
     for(const line of gridRef.current?.getChildren()??[]){line.setAttrs({stroke:active||measureActive?'#ffffffcc':'#ffffff5c',strokeWidth:active||measureActive?1.5:1});}
     gridRef.current?.getLayer()?.batchDraw();
+    miniatureRef.current?.setGridHot(active);
     // A shared DM pointer must not disclose the otherwise private destination.
     if(active){hideCursor();setHover(null);}
   });
@@ -1125,6 +1126,7 @@ function MapStageInner({
     const ground = groundTokenLayerRef.current;
     if (!(renderVisionLayer || containerRef.current?.dataset.gpuFloorActive === 'true') || !ground) return false;
     for (const child of ground.getChildren()) {
+      if (child.hasName('token-move-preview') && child.isVisible() && child.getAbsoluteOpacity() > 0) return true;
       if (!(child instanceof Konva.Group) || !child.hasName('token') || !child.isVisible() || child.getAbsoluteOpacity() <= 0) continue;
       const hud = child.findOne<Konva.Group>('.token-upright-hud');
       if (hud && hud.isVisible() && hud.getChildren().some((c) => c.isVisible())) return true;
@@ -1308,10 +1310,16 @@ function MapStageInner({
     const overlayLayer = spellAreaLayerRef.current;
     if (!groundLayer || !overlayLayer || !(renderVisionLayer || gpuFloorEligible)) return;
     const paintVisionHud = () => {
-      if (!renderVisionLayer && containerRef.current?.dataset.gpuFloorActive !== 'true') return;
+      const gpuFloor = containerRef.current?.dataset.gpuFloorActive === 'true';
+      if (!renderVisionLayer && !gpuFloor) return;
       const canvas = overlayLayer.getCanvas();
       const buffer = overlayLayer.getAttr('retainedPerspectiveBuffer');
       for (const child of groundLayer.getChildren()) {
+        if (gpuFloor && child instanceof Konva.Group && child.hasName('token-move-preview') && child.isVisible() && child.getAbsoluteOpacity() > 0) {
+          (child as unknown as { _clearSelfAndDescendantCache?: (attr: string) => void })._clearSelfAndDescendantCache?.('absoluteTransform');
+          child.drawScene(canvas, undefined, buffer);
+          continue;
+        }
         if (!(child instanceof Konva.Group) || !child.hasName('token') || !child.isVisible() || child.getAbsoluteOpacity() <= 0) continue;
         const hud = child.findOne<Konva.Group>('.token-upright-hud');
         if (hud && hud.isVisible() && hud.getChildren().some((c) => c.isVisible())) {
@@ -1320,7 +1328,7 @@ function MapStageInner({
         }
       }
     };
-    const syncOverlay = () => { if (!suppressGroundHudSyncRef.current && !Konva.isDragging()) overlayLayer.batchDraw(); };
+    const syncOverlay = () => { if (!suppressGroundHudSyncRef.current && !activeCameraGesture()) overlayLayer.batchDraw(); };
     overlayLayer.on('draw.groundVisionHud', paintVisionHud);
     groundLayer.on('draw.groundVisionHud', syncOverlay);
     overlayLayer.batchDraw();

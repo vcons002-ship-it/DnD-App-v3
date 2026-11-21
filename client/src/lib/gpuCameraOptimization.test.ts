@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+vi.mock('konva', () => ({ default: { Group: class {} } }));
+import Konva from 'konva';
 import {
   BoxGeometry,
   BufferGeometry,
@@ -10,6 +12,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   Scene,
+  ShaderMaterial,
   Texture,
   Vector2,
   Vector3,
@@ -19,6 +22,8 @@ import { clampMapTextureDimensions } from '../canvas/mapTileTextures.js';
 import { canonicalMaterialKey, mergeStaticHeroMeshes } from '../canvas/miniatureStaticMerge.js';
 import { createMiniatureSilhouetteOutline } from '../canvas/miniatureSilhouetteOutline.js';
 import { createBattlefieldLighting } from '../canvas/battlefieldLighting.js';
+import { createGpuMapFloor } from '../canvas/gpuMapFloor.js';
+import { createGroundTokenSpriteReader } from '../canvas/gpuGroundTokens.js';
 import { DEFAULT_MAP_ENVIRONMENT } from '../../../shared/mapEnvironment.js';
 
 describe('clampMapTextureDimensions', () => {
@@ -201,5 +206,104 @@ describe('battlefieldLighting.prepareTransient', () => {
     spy.mockRestore();
     lighting.dispose();
     dummyTex.dispose();
+  });
+});
+
+describe('createGpuMapFloor grid brightening', () => {
+  it('switches live gridAlpha/gridWidth on setGridHot without rebuilding or altering memoryMaterial', () => {
+    const scene = new Scene();
+    const capturedScenes: Scene[] = [];
+    const fakeRenderer = {
+      capabilities: { maxTextureSize: 4096 },
+      domElement: { width: 800, height: 600 },
+      shadowMap: { needsUpdate: false },
+      getRenderTarget: () => null,
+      setRenderTarget() {},
+      getClearAlpha: () => 0,
+      getClearColor: (c: { set: (v: number) => void }) => c.set(0),
+      setClearColor() {},
+      clear() {},
+      render: (s: Scene) => { capturedScenes.push(s); },
+    } as unknown as WebGLRenderer;
+
+    const invalidate = vi.fn();
+    const floor = createGpuMapFloor(scene, fakeRenderer, invalidate);
+    const config = {
+      tiles: [],
+      bounds: { x: 0, y: 0, w: 400, h: 400 },
+      grid: { size: 50, x: 0, y: 0, hot: false },
+      canvasBg: '#0b0c10',
+      exploredBrightness: 0.48,
+    };
+    floor.update(config);
+    const fakeCam = new Scene() as unknown as Parameters<typeof floor.renderMemory>[1] & {
+      projectionMatrix: Matrix4;
+      matrixWorld: Matrix4;
+    };
+    fakeCam.projectionMatrix = new Matrix4();
+    fakeCam.matrixWorld = new Matrix4();
+    floor.renderMemory(fakeRenderer, fakeCam, true, 0.48);
+
+    const floorRoot = scene.getObjectByName('gpu-map-floor')!;
+    const liveMesh = floorRoot.children.find((c): c is Mesh<BufferGeometry, ShaderMaterial> => c instanceof Mesh)!;
+    const memScene = capturedScenes.at(-1)!;
+    const memMesh = memScene.children.find((c): c is Mesh<BufferGeometry, ShaderMaterial> => c instanceof Mesh)!;
+
+    expect(liveMesh.material.uniforms.gridAlpha.value).toBeCloseTo(0x5c / 255, 6);
+    expect(liveMesh.material.uniforms.gridWidth.value).toBe(1);
+    expect(memMesh.material.uniforms.gridAlpha.value).toBeCloseTo(0x5c / 255, 6);
+    expect(memMesh.material.uniforms.gridWidth.value).toBe(1);
+
+    floor.setGridHot(true);
+    floor.setGridHot(true);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(liveMesh.material.uniforms.gridAlpha.value).toBeCloseTo(0xcc / 255, 6);
+    expect(liveMesh.material.uniforms.gridWidth.value).toBe(1.5);
+    expect(memMesh.material.uniforms.gridAlpha.value).toBeCloseTo(0x5c / 255, 6);
+    expect(memMesh.material.uniforms.gridWidth.value).toBe(1);
+
+    // Repeating update with identical structure preserves dragHot without rebuilding the mesh.
+    floor.update(config);
+    expect(floorRoot.children.find((c): c is Mesh => c instanceof Mesh)).toBe(liveMesh);
+    expect(liveMesh.material.uniforms.gridAlpha.value).toBeCloseTo(0xcc / 255, 6);
+
+    floor.setGridHot(false);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(liveMesh.material.uniforms.gridAlpha.value).toBeCloseTo(0x5c / 255, 6);
+    expect(liveMesh.material.uniforms.gridWidth.value).toBe(1);
+
+    floor.dispose();
+  });
+});
+
+describe('createGroundTokenSpriteReader', () => {
+  it('applies .token-art drag anchor offsets on cache hits so 2D tokens stay anchored during drag', () => {
+    const reader = createGroundTokenSpriteReader();
+    let gx = 100, gy = 100, ax = 0, ay = 0;
+    const art = {
+      x: () => ax,
+      y: () => ay,
+      clone: () => ({
+        findOne: () => undefined,
+        getClientRect: () => ({ x: -20, y: -20, width: 40, height: 40 }),
+        toCanvas: () => ({ width: 44, height: 44 }),
+        destroy() {},
+      }),
+    };
+    const tokenNode = Object.assign(new (Konva.Group as unknown as new () => object)(), {
+      hasName: (n: string) => n === 'token',
+      visible: () => true,
+      getAbsoluteOpacity: () => 1,
+      getAttr: (k: string) => (k === 'tokenId' ? 't1' : k === 'tokenBodyVersion' ? 'v1' : false),
+      findOne: (sel: string) => (sel === '.token-art' ? art : undefined),
+      x: () => gx,
+      y: () => gy,
+    });
+    const fakeLayer = { getChildren: () => [tokenNode] } as unknown as Parameters<typeof reader>[0];
+
+    expect(reader(fakeLayer)[0]).toMatchObject({ id: 't1', x: 100, y: 100 });
+    // Konva drag moves group to pointer (160, 140) while paintDrag offsets .token-art back by (-60, -40).
+    gx = 160; gy = 140; ax = -60; ay = -40;
+    expect(reader(fakeLayer)[0]).toMatchObject({ id: 't1', x: 100, y: 100 });
   });
 });

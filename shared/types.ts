@@ -1272,7 +1272,7 @@ export type PendingDamage = {
 /** Persistent continuation of one Chromatic Orb casting. Visited entries identify creatures, not token copies. */
 export type OrbChain = {
   slotLevel: number; leapsUsed: number; visited: string[];
-  origin: { mapId: string; x: number; y: number; widthFt: number };
+  origin: { mapId: string; x: number; y: number; widthFt: number; miniatureWidthFt?: number };
   matches: number[]; available: boolean; initial?: boolean;
 };
 
