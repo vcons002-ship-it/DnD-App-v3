@@ -17,7 +17,8 @@ export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:S
  layer.attrs.retainedStats=stats;
  let fullScene=true,fullHit=true,hasScenePixels=true,size='',wasDragging=false,sceneOrder:Konva.Node[]=[],hadTools=false;
  const origin=():{x:number;y:number}=>layer.getAttr('retainedCanvasOrigin')??{x:0,y:0};
- const hasTools=(children:Konva.Node[])=>children.some(node=>!node.hasName('token')&&!node.hasName('token-move-preview')&&node.isVisible());
+ const isRetainedChild=(node:Konva.Node)=>node.hasName('token')||node.hasName('token-move-preview')||node.hasName('wall-door-marker');
+ const hasTools=(children:Konva.Node[])=>children.some(node=>!isRetainedChild(node)&&node.isVisible());
  const removedScene:(PaintRect|null)[]=[],removedHit:(PaintRect|null)[]=[];
  const touch=(entry:Entry,force:boolean)=>{entry.sceneDirty=true;entry.hitDirty=true;entry.force ||= force;};
  const sync=()=>{
@@ -28,7 +29,7 @@ export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:S
   for(const node of children)if(!entries.has(node)){
    const entry:Entry={node,scene:null,hit:null,sceneDirty:true,hitDirty:true,force:true};entries.set(node,entry);
    node.on('xChange.retainedToken yChange.retainedToken scaleXChange.retainedToken scaleYChange.retainedToken rotationChange.retainedToken',()=>touch(entry,false));
-   node.on('opacityChange.retainedToken visibleChange.retainedToken listeningChange.retainedToken retainedRadiusChange.retainedToken imageChange.retainedToken widthChange.retainedToken heightChange.retainedToken',()=>touch(entry,true));
+   node.on('opacityChange.retainedToken visibleChange.retainedToken listeningChange.retainedToken retainedRadiusChange.retainedToken imageChange.retainedToken widthChange.retainedToken heightChange.retainedToken doorVisualVersionChange.retainedToken',()=>touch(entry,true));
    if(node instanceof Konva.Group){entry.art=node.findOne('.token-art');entry.art?.on('xChange.retainedToken yChange.retainedToken',()=>touch(entry,false));}
   }
   const canvas=layer.getCanvas(),offset=origin(),key=[canvas.width,canvas.height,canvas.pixelRatio,offset.x,offset.y].join(':');
@@ -41,6 +42,10 @@ export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:S
    const r=node.getAttr('retainedRadius') as number;
    if(r){const transform=node.getAbsoluteTransform(),a=transform.point({x:-r,y:-r}),b=transform.point({x:r,y:r});return {x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),width:Math.abs(b.x-a.x),height:Math.abs(b.y-a.y)};}
   }
+  if(hit&&node.hasName('wall-door-marker')){
+   const rect=node.getClientRect();
+   return rect.width||rect.height?{x:rect.x-18,y:rect.y-18,width:rect.width+36,height:rect.height+36}:null;
+  }
   if(hit&&!node.hasName('token'))return null;
   const rect=node.getClientRect();return rect.width&&rect.height?rect:null;
  };
@@ -50,7 +55,9 @@ export function installRetainedTokenLayer(layer:Konva.Layer,perspectiveBuffer?:S
   const entry=entries.get(node);if(entry)touch(entry,true);
   if(scheduleDraw)layer.batchDraw();
  };
- layer.on('xChange.retainedToken yChange.retainedToken scaleXChange.retainedToken scaleYChange.retainedToken rotationChange.retainedToken opacityChange.retainedToken visibleChange.retainedToken',()=>{fullScene=fullHit=true;});
+ layer.on('opacityChange.retainedToken visibleChange.retainedToken',()=>{fullScene=fullHit=true;});
+ layer.on('xChange.retainedToken yChange.retainedToken',()=>{fullHit=true;if(!fullScene&&!hadTools){for(const e of entries.values())e.sceneDirty=true;}else fullScene=true;});
+ layer.on('scaleXChange.retainedToken scaleYChange.retainedToken rotationChange.retainedToken',()=>{fullHit=true;if(!fullScene&&!hadTools){for(const e of entries.values()){e.sceneDirty=true;e.force=true;}}else fullScene=true;});
  layer.on('listeningChange.retainedToken',()=>{fullHit=true;});
  layer.drawScene=function(canvas,top,buffer){
   if(canvas&&canvas!==layer.getCanvas()||top)return originalScene.call(layer,canvas,top,buffer);

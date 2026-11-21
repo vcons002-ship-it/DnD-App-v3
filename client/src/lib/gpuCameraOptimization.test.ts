@@ -1,15 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BoxGeometry,
   BufferGeometry,
+  DirectionalLight,
   Float32BufferAttribute,
   Group,
+  HemisphereLight,
+  Matrix4,
   Mesh,
   MeshStandardMaterial,
+  Scene,
+  Texture,
+  Vector2,
   Vector3,
+  type WebGLRenderer,
 } from 'three';
 import { clampMapTextureDimensions } from '../canvas/mapTileTextures.js';
 import { canonicalMaterialKey, mergeStaticHeroMeshes } from '../canvas/miniatureStaticMerge.js';
+import { createMiniatureSilhouetteOutline } from '../canvas/miniatureSilhouetteOutline.js';
+import { createBattlefieldLighting } from '../canvas/battlefieldLighting.js';
+import { DEFAULT_MAP_ENVIRONMENT } from '../../../shared/mapEnvironment.js';
 
 describe('clampMapTextureDimensions', () => {
   it('keeps dimensions unchanged when within the limit', () => {
@@ -119,5 +129,77 @@ describe('mergeStaticHeroMeshes', () => {
     g1.dispose();
     g2.dispose();
     gNoUv.dispose();
+  });
+});
+
+describe('createMiniatureSilhouetteOutline', () => {
+  it('writes non-zero quad positions and UVs into live GPU attributes', () => {
+    let capturedMesh: Mesh | undefined;
+    const fakeRenderer = {
+      domElement: { width: 1600, height: 1000 },
+      autoClear: true,
+      getPixelRatio: () => 2,
+      render: (scene: Scene) => {
+        capturedMesh = scene.children.find((c): c is Mesh => c instanceof Mesh);
+      },
+    } as unknown as WebGLRenderer;
+
+    const outline = createMiniatureSilhouetteOutline(new Texture(), new Texture(), { value: new Matrix4() });
+    outline.render(fakeRenderer, [{ x: 100, y: 200, width: 80, height: 120 }]);
+
+    expect(capturedMesh).toBeDefined();
+    const pos = capturedMesh!.geometry.getAttribute('position');
+    const uv = capturedMesh!.geometry.getAttribute('uv');
+    expect(capturedMesh!.geometry.drawRange).toEqual({ start: 0, count: 6 });
+
+    // CSS viewport is 800x500 (1600/2 x 1000/2): u0=0.125, u1=0.225 -> x0=-0.75, x1=-0.55
+    expect(pos.getX(0)).toBeCloseTo(-0.75, 4);
+    expect(pos.getX(1)).toBeCloseTo(-0.55, 4);
+    expect(uv.getX(0)).toBeCloseTo(0.125, 4);
+    expect(uv.getX(1)).toBeCloseTo(0.225, 4);
+    expect(uv.getY(2)).toBeCloseTo(0.64, 4);
+
+    outline.dispose();
+  });
+});
+
+describe('battlefieldLighting.prepareTransient', () => {
+  it('returns immediately when called repeatedly with no transient lights', () => {
+    const scene = new Scene();
+    const key = new DirectionalLight();
+    const ambient = new HemisphereLight();
+    const dummyTex = new Texture();
+    const lighting = createBattlefieldLighting(
+      scene,
+      key,
+      ambient,
+      { visibilityMask: { value: dummyTex } } as never,
+      { texture: dummyTex, resolution: new Vector2(1, 1) },
+      { shadowSlots: { value: dummyTex } } as never,
+    );
+
+    const walls = [{ id: 'w1', ax: 0, ay: 0, bx: 100, by: 0 }];
+    lighting.update({
+      ...DEFAULT_MAP_ENVIRONMENT,
+      enabled: true,
+      lighting: 'dungeon',
+      walls,
+      mapX: 0,
+      mapY: 0,
+      mapWidth: 1000,
+      mapHeight: 1000,
+      mapUrl: '',
+      scenery: false,
+      pixelsPerFoot: 12.8,
+    });
+
+    const spy = vi.spyOn(JSON, 'stringify');
+    lighting.prepareTransient([]);
+    lighting.prepareTransient([]);
+    expect(spy).not.toHaveBeenCalled();
+
+    spy.mockRestore();
+    lighting.dispose();
+    dummyTex.dispose();
   });
 });

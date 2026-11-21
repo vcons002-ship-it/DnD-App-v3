@@ -56,7 +56,7 @@ export function WeaponButtons({
               {menu && w.range && <span className="muted"> ({w.range})</span>}
               {dmg ? menu ? ` (${dmg})` : <span className="muted"> {dmg}</span> : null}
             </span>
-            {!menu && rangeEval && rangeEval.status !== 'normal' && (
+            {rangeEval && rangeEval.status !== 'normal' && (
               <span className={`weapon-range-tag is-${rangeEval.status}`} aria-hidden="true">
                 {rangeEval.status === 'long' ? `Long (${rangeEval.normalFt}/${rangeEval.longFt})` : `Out (${rangeHint})`}
               </span>

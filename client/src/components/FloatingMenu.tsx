@@ -1,7 +1,9 @@
 import {partySpell} from '../../../shared/partySpells';
 import {tokenDistanceFt} from '../../../shared/distance';
+import { formatTetherRangePill } from '../../../shared/weaponRange';
 import { AdvantageToggle } from './AdvantageToggle';
 import { targetLabel, previewAttackAdvantage } from '../lib/targets';
+import { computeDesktopFloatingMenuPosition, type ScreenRect } from '../lib/floatingMenuPlacement';
 import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { isHasteSpell, effectiveSheetAbility } from '../../../shared/spellExecution';
 import { spellCombatSupport } from '../../../shared/spellSupport';
@@ -30,6 +32,7 @@ type Props = {
   /** Screen position (clientX/clientY) where the menu was summoned. */
   x: number;
   y: number;
+  getTokenScreenRect?: (token: Token) => ScreenRect | null;
   onClose: () => void;
 };
 
@@ -90,8 +93,9 @@ function computeMobileAutoDock(
  * Right-click / long-press action menu anchored at a token. Quick combat actions
  * (damage/heal where HP is visible) for everyone; DM gets the editing actions.
  */
-export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y, onClose }: Props) {
+export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y, getTokenScreenRect, onClose }: Props) {
   const [chosenAttacker, setChosenAttacker] = useState('');
+  const [hoveredWeaponIdx, setHoveredWeaponIdx] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [dockPref, setDockPref] = useState<'auto' | MobileDock>('auto');
   const [viewport, setViewport] = useState<ViewportMetrics>(readViewport);
@@ -111,7 +115,6 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
   const attacker = actors.find(t => t.id === chosenAttacker) ?? defaultAttacker ?? actors.find(t => t.id === snapshot.activeTurnTokenId) ?? actors[0] ?? null;
   const isMobileSheet = viewport.mobile;
   const tetherDx = attacker && attacker.id !== token.id ? attacker.x - token.x : 0;
-  const tetherDy = attacker && attacker.id !== token.id ? attacker.y - token.y : 0;
   const autoDock = computeMobileAutoDock(x, viewport, tetherDx);
   const effectiveDock: MobileDock = dockPref !== 'auto' ? dockPref : autoDock;
 
@@ -134,27 +137,63 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
       const scaleRatio = el.offsetWidth > 0 ? rect.width / el.offsetWidth : 1;
       const sx = Number.isFinite(x) ? x : vp.vw * 0.5;
       const sy = Number.isFinite(y) ? y : vp.vh * 0.5;
-      const offset = 24;
-      const preferLeft =
-        (tetherDx > 20 && sx - rect.width - offset >= 8) || sx + offset + rect.width > vp.vw - 8;
-      const rawLeft = preferLeft ? sx - rect.width - offset : sx + offset;
-      const leftPx = Math.max(8, Math.min(rawLeft, vp.vw - rect.width - 8));
-      const rawTop = tetherDy > 20 && sy - rect.height * 0.6 >= 8 ? sy - rect.height * 0.5 : sy - 16;
-      const topPx = Math.max(8, Math.min(rawTop, vp.vh - rect.height - 8));
+      const targetRect = getTokenScreenRect?.(token) ?? null;
+      const attackerRect =
+        attacker && attacker.id !== token.id ? (getTokenScreenRect?.(attacker) ?? null) : null;
+      const otherTokenRects: ScreenRect[] = [];
+      if (getTokenScreenRect) {
+        for (const other of snapshot.tokens) {
+          if (
+            other.sharedSightOnly ||
+            other.partiallyRevealed ||
+            other.mapId !== token.mapId ||
+            other.id === token.id ||
+            other.id === attacker?.id
+          ) {
+            continue;
+          }
+          const r = getTokenScreenRect(other);
+          if (
+            r &&
+            r.right > -40 &&
+            r.left < vp.vw + 40 &&
+            r.bottom > -40 &&
+            r.top < vp.vh + 40
+          ) {
+            otherTokenRects.push(r);
+          }
+        }
+      }
+      const best = computeDesktopFloatingMenuPosition({
+        anchorX: sx,
+        anchorY: sy,
+        menuWidth: rect.width,
+        menuHeight: rect.height,
+        targetRect,
+        attackerRect,
+        otherTokenRects,
+        viewport: { vw: vp.vw, vh: vp.vh, safeTop: vp.safeTop, margin: 8 },
+      });
       setPosition({
-        left: Math.round(leftPx / (scaleRatio || 1)),
-        top: Math.round(topPx / (scaleRatio || 1)),
+        left: Math.round(best.left / (scaleRatio || 1)),
+        top: Math.round(best.top / (scaleRatio || 1)),
       });
     };
     computePosition();
+    const ro =
+      typeof ResizeObserver === 'function' && menuRef.current
+        ? new ResizeObserver(computePosition)
+        : null;
+    if (ro && menuRef.current) ro.observe(menuRef.current);
     window.addEventListener('resize', computePosition);
     const vv = window.visualViewport;
     vv?.addEventListener('resize', computePosition);
     return () => {
+      ro?.disconnect();
       window.removeEventListener('resize', computePosition);
       vv?.removeEventListener('resize', computePosition);
     };
-  }, [x, y, tetherDx, tetherDy, collapsed, isMobileSheet]);
+  }, [x, y, token, attacker, snapshot.tokens, collapsed, isMobileSheet, getTokenScreenRect]);
   const applyDamage = useStore((s) => s.applyDamage);
   const setTempHp = useStore((s) => s.setTempHp);
   const combatAttack = useStore((s) => s.combatAttack);
@@ -219,17 +258,58 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
         )
       : [];
   const canCastAsSelected = pcAbilities.length > 0 || monAbilities.length > 0;
+  useEffect(() => {
+    setHoveredWeaponIdx(null);
+  }, [token.id, attacker?.id]);
+  const targetDistanceFt =
+    attacker && attacker.id !== token.id && snapshot.map && attacker.mapId === token.mapId
+      ? tokenDistanceFt(attacker, token, snapshot.map)
+      : undefined;
+  const tetherHoveredWeapon =
+    canAttackAsSelected && hoveredWeaponIdx !== null ? aWeapons[hoveredWeaponIdx] : undefined;
+  const tetherWeaponsOnlyList =
+    canAttackAsSelected && !tetherHoveredWeapon && aWeapons.length > 0 && !canCastAsSelected
+      ? aWeapons
+      : undefined;
+  const tetherRangeMeta =
+    targetDistanceFt !== undefined
+      ? formatTetherRangePill(targetDistanceFt, {
+          hoveredWeapon: tetherHoveredWeapon,
+          weaponsOnlyList: tetherWeaponsOnlyList,
+        })
+      : { midLabel: undefined, outOfRange: false };
+  const previewWeapon =
+    tetherHoveredWeapon ??
+    (canAttackAsSelected && aWeapons.length === 1 && !canCastAsSelected ? aWeapons[0] : undefined);
   const showTargetLine = useStore((s) => s.showTargetLine);
   const setShowTargetLine = useStore((s) => s.setShowTargetLine);
   const setFloatingMenuTarget = useStore((s) => s.setFloatingMenuTarget);
   useEffect(() => {
     if ((canAttackAsSelected || canCastAsSelected) && attacker && !targetingSelf) {
-      setFloatingMenuTarget({ attackerTokenId: attacker.id, targetTokenId: token.id });
+      setFloatingMenuTarget({
+        attackerTokenId: attacker.id,
+        targetTokenId: token.id,
+        midLabel: tetherRangeMeta.midLabel,
+        outOfRange: tetherRangeMeta.outOfRange,
+        hoveredWeapon: tetherHoveredWeapon,
+        weaponsOnlyList: tetherWeaponsOnlyList,
+      });
     } else {
       setFloatingMenuTarget(null);
     }
     return () => setFloatingMenuTarget(null);
-  }, [attacker, token.id, canAttackAsSelected, canCastAsSelected, targetingSelf, setFloatingMenuTarget]);
+  }, [
+    attacker,
+    token.id,
+    canAttackAsSelected,
+    canCastAsSelected,
+    targetingSelf,
+    setFloatingMenuTarget,
+    tetherRangeMeta.midLabel,
+    tetherRangeMeta.outOfRange,
+    tetherHoveredWeapon,
+    tetherWeaponsOnlyList,
+  ]);
 
   // Dismiss on outside click, scroll, or Escape — but IGNORE events for a short
   // grace period after opening. On touch, lifting the finger after the
@@ -277,9 +357,11 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
         <span className="fm-title-label" title={targetLabel(snapshot, token, attacker ?? undefined)}>
           {targetLabel(snapshot, token)}
         </span>
-        {attacker && attacker.id !== token.id && snapshot.map && attacker.mapId === token.mapId && (
-          <span className="fm-title-dist">
-            {Math.round(tokenDistanceFt(attacker, token, snapshot.map))} ft
+        {targetDistanceFt !== undefined && (
+          <span
+            className={`fm-title-dist${tetherRangeMeta.outOfRange ? ' is-out' : tetherRangeMeta.midLabel?.includes('Long') ? ' is-long' : ''}`}
+          >
+            {tetherRangeMeta.midLabel ?? `${Math.round(targetDistanceFt)} ft`}
           </span>
         )}
         {canSeeHp && (
@@ -347,7 +429,7 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
                 >
                   {actors.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {targetLabel(snapshot, t)}
+                      {targetLabel(snapshot, t, t.id !== token.id ? token : undefined)}
                     </option>
                   ))}
                 </select>
@@ -378,7 +460,7 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
             <div className="fm-attacks">
               {attacker && <div className="dice-row fm-dice-row"><AdvantageToggle entityId={attacker.refId} />
                 {(() => {
-                  const adv = previewAttackAdvantage(snapshot, attacker, token, useStore.getState().manualAdvantage[attacker.refId]);
+                  const adv = previewAttackAdvantage(snapshot, attacker, token, useStore.getState().manualAdvantage[attacker.refId], previewWeapon);
                   const autoReasons = adv.reasons.filter((r) => r !== 'manual');
                   return autoReasons.length > 0 ? (
                     <span className={adv.state === 'adv' ? 'adv-up' : adv.state === 'dis' ? 'adv-down' : 'muted'} role="status">
@@ -413,11 +495,8 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
                     weapons={aWeapons}
                     twoHanded={twoHanded}
                     variant="menu"
-                    distanceFt={
-                      attacker && snapshot.map && attacker.mapId === token.mapId
-                        ? tokenDistanceFt(attacker, token, snapshot.map)
-                        : undefined
-                    }
+                    distanceFt={targetDistanceFt}
+                    onHoverWeapon={setHoveredWeaponIdx}
                     onAttack={(i) =>
                       run(() =>
                         combatAttack({

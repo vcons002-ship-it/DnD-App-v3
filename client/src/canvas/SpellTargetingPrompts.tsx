@@ -70,11 +70,12 @@ export const CombatTargetLine = memo(function CombatTargetLine({
   const showTargetLine = useStore((s) => s.showTargetLine);
   const floatingMenuTarget = useStore((s) => s.floatingMenuTarget);
   const combatPanelTarget = useStore((s) => s.combatPanelTarget);
+  const activeTarget = floatingMenuTarget ?? combatPanelTarget;
   const tokenDragPreview = useStore((s) => s.tokenDragPreview);
   const rayCast = useStore((s) => s.rayCast);
   const areaCast = useStore((s) => s.areaCast);
-  const hoveredWeapon = !floatingMenuTarget ? combatPanelTarget?.hoveredWeapon : undefined;
-  const weaponsOnlyList = !floatingMenuTarget ? combatPanelTarget?.weaponsOnlyList : undefined;
+  const hoveredWeapon = activeTarget?.hoveredWeapon;
+  const weaponsOnlyList = activeTarget?.weaponsOnlyList;
   const formatMidLabel = useCallback(
     (distFt: number) => formatTetherRangePill(distFt, { hoveredWeapon, weaponsOnlyList }),
     [hoveredWeapon, weaponsOnlyList],
@@ -114,7 +115,7 @@ export const CombatTargetLine = memo(function CombatTargetLine({
     getEffectivePosition,
   ]);
   if (!showTargetLine || rayCast || areaCast) return null;
-  const active = floatingMenuTarget ?? combatPanelTarget;
+  const active = activeTarget;
   if (!active || active.attackerTokenId === active.targetTokenId) return null;
   const liveTokens = storeSnapshot?.tokens ?? tokens;
   const caster =
@@ -157,13 +158,12 @@ export const CombatTargetLine = memo(function CombatTargetLine({
       mapScale={storeSnapshot?.map}
       formatMidLabel={storeSnapshot?.map ? formatMidLabel : undefined}
       midLabel={
-        !floatingMenuTarget && combatPanelTarget?.midLabel
-          ? combatPanelTarget.midLabel
-          : storeSnapshot?.map
-            ? `${Math.round(tokenDistanceFt(liveCasterForDist, liveTargetForDist, storeSnapshot.map))} ft`
-            : undefined
+        activeTarget?.midLabel ??
+        (storeSnapshot?.map
+          ? `${Math.round(tokenDistanceFt(liveCasterForDist, liveTargetForDist, storeSnapshot.map))} ft`
+          : undefined)
       }
-      outOfRange={!floatingMenuTarget ? combatPanelTarget?.outOfRange : undefined}
+      outOfRange={activeTarget?.outOfRange}
       targets={[{ token: target, count: 1, tag: '', affinity: targetDisposition }]}
     />
   );
