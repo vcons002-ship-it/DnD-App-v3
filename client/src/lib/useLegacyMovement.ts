@@ -16,7 +16,7 @@ export function useLegacyMovement(source:StateSnapshot,enabled:boolean){
   const startNew=Boolean(sameView&&plan&&plan.id!==previous.lastId&&continuous);
   // A replacement snapshot without a plan may revoke an intermediate creature
   // (hide/delete/fog change). Never carry those extra permissions forward.
-  const keepOld=Boolean(!startNew&&sameView&&previous.plan&&now<previous.start+previous.plan.durationMs&&(plan?.id===previous.lastId)&&previous.source?.explorationEpoch===source.explorationEpoch&&previous.source?.map?.mapFogEnabled===source.map?.mapFogEnabled&&JSON.stringify(previous.source?.map?.mapFogRevealed)===JSON.stringify(source.map?.mapFogRevealed)&&Object.entries(previous.plan.moves).every(([id,m])=>{const cur=curTokens.get(id),old=oldTokens.get(id);return cur&&cur.x===m.to.x&&cur.y===m.to.y&&cur.teleportedAt===old?.teleportedAt;}));
+  const keepOld=Boolean(!startNew&&sameView&&previous.plan&&now<previous.start+previous.plan.durationMs&&(plan?.id===previous.lastId)&&previous.source?.explorationEpoch===source.explorationEpoch&&previous.source?.map?.mapFogEnabled===source.map?.mapFogEnabled&&JSON.stringify(previous.source?.map?.mapFogRevealed)===JSON.stringify(source.map?.mapFogRevealed)&&Object.entries(previous.plan.moves).every(([id,m])=>{const cur=curTokens.get(id),old=oldTokens.get(id);return (!cur&&!old)||(!!cur&&cur.x===m.to.x&&cur.y===m.to.y&&cur.teleportedAt===old?.teleportedAt);}));
   state.current={source,lastId:plan?.id??(keepOld?previous.lastId:undefined),start:keepOld?previous.start:now,plan:startNew?plan:keepOld?previous.plan:undefined};
  }
  if(!enabled||window.matchMedia('(prefers-reduced-motion: reduce)').matches)state.current.plan=undefined;

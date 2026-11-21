@@ -192,3 +192,74 @@ it('populates legacyGeometry.affinity at midpoint in heavy darkness with a lante
  expect(dimPlan?.frames[6].legacyGeometry?.affinity).toContain(enemy.id);
  expect(dimPlan?.frames.at(-1)?.legacyGeometry?.affinity).not.toContain(enemy.id);
 });
+it.each([false,true])('animates a token moving outside darkvision without leaking unseen destination (membershipOnly=%s)',async(membershipOnly)=>{
+ for(const mode of ['remembered','off'] as const){
+  const f=fixture();setExplorationMode(f.session.id,f.map.id,mode);
+  const monster=instantiateMonster(createMonsterTemplate(f.session.id,{name:'Night Prowler',maxHp:7}).id)!;
+  const enemy=createToken({mapId:f.map.id,kind:'monster',refId:monster.id,x:400,y:100});
+  const before=f.snapshot();
+  const shortMove=moveToken(enemy.id,900,100)!;await recordWalkingMove(enemy,shortMove,true);const afterShort=f.snapshot();
+  expect(afterShort.tokens.some(t=>t.id===enemy.id)).toBe(false);
+  const shortPlan=await prepareLegacyMotion('depart-short',before,afterShort,undefined,{membershipOnly});
+  expect(shortPlan?.frames).toHaveLength(13);
+  expect(shortPlan?.moves[enemy.id].from).toEqual({x:400,y:100});
+  expect(shortPlan?.moves[enemy.id].to.y).toBe(100);
+  expect(shortPlan?.moves[enemy.id].to.x).toBeGreaterThan(722);
+  expect(shortPlan?.moves[enemy.id].to.x).toBeLessThan(740);
+
+  // Moving much farther past darkvision along the same ray produces the exact same clipped exit and duration.
+  const f2=fixture();setExplorationMode(f2.session.id,f2.map.id,mode);
+  const m2=instantiateMonster(createMonsterTemplate(f2.session.id,{name:'Night Prowler',maxHp:7}).id)!;
+  const enemy2=createToken({mapId:f2.map.id,kind:'monster',refId:m2.id,x:400,y:100});
+  const beforeFar=f2.snapshot();
+  const farMove=moveToken(enemy2.id,2400,100)!;await recordWalkingMove(enemy2,farMove,true);const afterFar=f2.snapshot();
+  const farPlan=await prepareLegacyMotion('depart-far',beforeFar,afterFar,undefined,{membershipOnly});
+  expect(farPlan?.frames).toHaveLength(13);
+  expect(farPlan?.moves[enemy2.id].to).toEqual(shortPlan?.moves[enemy.id].to);
+  expect(farPlan?.durationMs).toBe(shortPlan?.durationMs);
+  expect(JSON.stringify(farPlan)).not.toContain('2400');
+  expect(farPlan?.frames[0].tokenIds).toContain(enemy2.id);
+  expect(farPlan?.frames[0].tokens?.find(t=>t.id===enemy2.id)?.partiallyRevealed).toBeUndefined();
+  expect(farPlan?.frames.some(frame=>frame.tokens?.some(t=>t.id===enemy2.id&&t.partiallyRevealed))).toBe(true);
+  expect(farPlan?.frames.at(-1)?.tokenIds).not.toContain(enemy2.id);
+ }
+
+ // Relocate, explicit hide, and wall-crossing departures must still snap immediately.
+ const reloc=fixture(),relocMon=instantiateMonster(createMonsterTemplate(reloc.session.id,{name:'Blinker',maxHp:7}).id)!;
+ const relocTok=createToken({mapId:reloc.map.id,kind:'monster',refId:relocMon.id,x:400,y:100});
+ const beforeReloc=reloc.snapshot(),relocMoved=moveToken(relocTok.id,2400,100,false,true)!;await recordWalkingMove(relocTok,relocMoved,true,true);
+ expect(await prepareLegacyMotion('depart-reloc',beforeReloc,reloc.snapshot(),undefined,{membershipOnly})).toBeUndefined();
+
+ const hid=fixture(),hidMon=instantiateMonster(createMonsterTemplate(hid.session.id,{name:'Sneaker',maxHp:7}).id)!;
+ const hidTok=createToken({mapId:hid.map.id,kind:'monster',refId:hidMon.id,x:400,y:100});
+ const beforeHid=hid.snapshot(),hidMoved=moveToken(hidTok.id,2400,100)!;setTokenHidden(hidTok.id,true);
+ await recordWalkingMove(hidTok,{...hidMoved,isHidden:true},true);
+ expect(await prepareLegacyMotion('depart-hid',beforeHid,hid.snapshot(),undefined,{membershipOnly})).toBeUndefined();
+
+ const walled=fixture(),wallMon=instantiateMonster(createMonsterTemplate(walled.session.id,{name:'Phaser',maxHp:7}).id)!;
+ const wallTok=createToken({mapId:walled.map.id,kind:'monster',refId:wallMon.id,x:400,y:100});
+ editMapWalls(walled.session.id,walled.map.id,{add:{id:'solid',ax:600,ay:-500,bx:600,by:500}});
+ const beforeWalled=walled.snapshot(),wallMoved=moveToken(wallTok.id,2400,100)!;
+ await recordWalkingMove(wallTok,wallMoved,true);
+ expect(await prepareLegacyMotion('depart-wall',beforeWalled,walled.snapshot(),undefined,{membershipOnly})).toBeUndefined();
+});
+it.each([false,true])('animates party PCs entering or leaving revealedOnly distance while snapping remembered monster ghosts (membershipOnly=%s)',async(membershipOnly)=>{
+ const f=fixture(),ally=createCharacter(f.session.id,{name:'Scout'});claimCharacter(ally.id,'ally');
+ const allyTok=createToken({mapId:f.map.id,kind:'pc',refId:ally.id,x:400,y:200});
+ const before=f.snapshot();
+ const movedAlly=moveToken(allyTok.id,1000,200,true)!;await recordWalkingMove(allyTok,movedAlly,true);
+ const afterAlly=f.snapshot();
+ expect(afterAlly.tokens.find(t=>t.id===allyTok.id)).toMatchObject({sharedSightOnly:true,revealedOnly:true});
+ const pcPlan=await prepareLegacyMotion('walker-ally',before,afterAlly,undefined,{membershipOnly});
+ expect(pcPlan?.frames).toHaveLength(13);
+ expect(pcPlan?.moves[allyTok.id]).toEqual({from:{x:400,y:200},to:{x:1000,y:200}});
+
+ // Now move walker away so enemy becomes a remembered revealedOnly ghost, then relocate walker + enemy back together: ghost must snap.
+ const fGhost=fixture(),gm=instantiateMonster(createMonsterTemplate(fGhost.session.id,{name:'Ghost',maxHp:7}).id)!;
+ const ge=createToken({mapId:fGhost.map.id,kind:'monster',refId:gm.id,x:400,y:100});
+ const movedPcAway=moveToken(fGhost.token.id,-1000,100,true)!;await recordWalkingMove(fGhost.token,movedPcAway,true);
+ const beforeGhost=fGhost.snapshot();
+ expect(beforeGhost.tokens.find(t=>t.id===ge.id)?.revealedOnly).toBe(true);
+ const movedGe=moveToken(ge.id,-900,100)!;await recordWalkingMove(ge,movedGe,true);
+ expect(await prepareLegacyMotion('walker-ghost',beforeGhost,fGhost.snapshot(),undefined,{membershipOnly})).toBeUndefined();
+});

@@ -148,4 +148,62 @@ describe('movement-aligned reveal presentation',()=>{
     expect(p.personalVision()?.lights.some(l=>l.id==='ally')).toBe(false);
     expect(visionShowsAffinity(p.personalVision(),950,300,25)).toBe(false);
   });
+  it('animates a departing monster across partiallyRevealed transition and clears when omitted on final frame',()=>{
+    const map={id:'dark',gridSizePx:50,feetPerSquare:5,mapFogEnabled:false,tokenFogEnabled:false,
+      environment:{enabled:true,lighting:'dungeon' as const,heavyDarkness:true,lights:[]},walls:[]};
+    const pc={id:'pc',refId:'pc-sheet',kind:'pc' as const,x:100,y:100,widthFt:5};
+    const goblin={id:'goblin',refId:'goblin-sheet',kind:'monster' as const,x:400,y:100,widthFt:5};
+    const build=(tokens:Token[])=>({role:'player',map,tokens,exploredTerrain:[],playerVision:createPlayerVision(map as any,tokens,new Set(['pc-sheet']))} as unknown as StateSnapshot);
+    const playback={id:'depart',start:1000,durationMs:400,moves:{goblin:{from:{x:400,y:100},to:{x:728,y:100}}}};
+    const p=new TokenPresentation();
+    p.sync(build([pc,goblin] as Token[]),10,999);
+    // Early frame: normalized to move.to (728,100), starts animating from (400,100).
+    p.sync(build([pc,{...goblin,x:728}] as Token[]),10,1000,false,playback);
+    expect(p.position('goblin')!.x).toBe(400);
+    p.advance(1200);
+    expect(p.position('goblin')!.x).toBe(564);
+    // Intermediate partiallyRevealed frame preserves the active interpolation clock.
+    p.sync(build([pc,{...goblin,x:728,partiallyRevealed:true}] as Token[]),10,1300,false,playback);
+    expect(p.position('goblin')!.x).toBeGreaterThan(564);
+    expect(p.position('goblin')!.x).toBeLessThan(728);
+    // Final frame omits departed monster completely.
+    p.sync(build([pc] as Token[]),10,1400);
+    expect(p.position('goblin')).toBeUndefined();
+  });
+  it('resumes playback interpolation if a moving token reappears after crossing an unlit gap mid-walk',()=>{
+    const map={id:'pillar',gridSizePx:50,feetPerSquare:5,mapFogEnabled:false,tokenFogEnabled:false,
+      environment:{enabled:true,lighting:'dungeon' as const,heavyDarkness:true,lights:[]},walls:[]};
+    const pc={id:'pc',refId:'pc-sheet',kind:'pc' as const,x:500,y:500,widthFt:5};
+    const runner={id:'runner',refId:'runner-sheet',kind:'monster' as const,x:200,y:100,widthFt:5};
+    const build=(tokens:Token[])=>({role:'player',map,tokens,exploredTerrain:[],playerVision:createPlayerVision(map as any,tokens,new Set(['pc-sheet']))} as unknown as StateSnapshot);
+    const playback={id:'pillar-walk',start:1000,durationMs:400,moves:{runner:{from:{x:200,y:100},to:{x:800,y:100}}}};
+    const p=new TokenPresentation();
+    p.sync(build([pc,runner] as Token[]),10,999);
+    p.sync(build([pc,{...runner,x:800}] as Token[]),10,1000,false,playback);
+    // Temporarily occluded behind a pillar on a midpoint frame.
+    p.sync(build([pc] as Token[]),10,1200,false,playback);
+    expect(p.position('runner')).toBeUndefined();
+    // Reappears on the other side: resumes on the shared playback clock rather than snapping to 800.
+    p.sync(build([pc,{...runner,x:800}] as Token[]),10,1300,false,playback);
+    expect(p.position('runner')!.x).toBeGreaterThan(600);
+    expect(p.position('runner')!.x).toBeLessThan(800);
+  });
+  it('animates party PC revealedOnly transitions while snapping remembered monster ghosts',()=>{
+    const map={id:'rem',gridSizePx:50,feetPerSquare:5,mapFogEnabled:false,tokenFogEnabled:false,
+      environment:{enabled:true,lighting:'dungeon' as const,heavyDarkness:true,lights:[]},walls:[]};
+    const build=(tokens:Token[])=>({role:'player',map,tokens,exploredTerrain:[]} as unknown as StateSnapshot);
+    const pc={id:'ally',refId:'ally-sheet',kind:'pc' as const,x:400,y:100,widthFt:5};
+    const mon={id:'orc',refId:'orc-sheet',kind:'monster' as const,x:400,y:300,widthFt:5};
+    const p=new TokenPresentation();
+    p.sync(build([pc,mon] as Token[]),10,1000);
+    p.sync(build([
+      {...pc,x:900,sharedSightOnly:true,revealedOnly:true},
+      {...mon,x:900,sharedSightOnly:true,revealedOnly:true},
+    ] as Token[]),10,1001);
+    expect(p.moving()).toBe(true);
+    p.advance(1150);
+    expect(p.position('ally')!.x).toBeGreaterThan(400);
+    expect(p.position('ally')!.x).toBeLessThan(900);
+    expect(p.position('orc')!.x).toBe(900);
+  });
 });

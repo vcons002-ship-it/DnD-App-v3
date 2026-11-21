@@ -1188,6 +1188,8 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         const blocked=spellActionBlockMessage(spectral.caster,{inCombat:!!getSessionById(spectral.caster.sessionId)?.combatRound});
         const result=blocked?{error:blocked}:moveSpiritualWeapon(moving,x,y);
         if(result.error){socket.emit('notice',{message:result.error});sendSnapshot(io,socket.id);return;}
+        const movedSpectral=result.point?getToken(moving.id):undefined;
+        if(movedSpectral)void recordWalkingMove(moving,movedSpectral,getActiveMapId(sessionId()!)===movedSpectral.mapId,false).catch(error=>console.warn('Could not remember walking route:',String(error)));
         afterChange();if(result.point&&typeof placed==='function')placed({x:result.point.x,y:result.point.y});return;
       }
       // Players may move PCs and FRIENDLY creatures (companions/summons) only —
