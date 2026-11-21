@@ -65,7 +65,7 @@ it('normalizes and compacts a departing moving token omitted from source.tokens'
    {at:0.75,tokenIds:['pc','departed'],tokens:[{...departed,partiallyRevealed:true}],monsters:[monster]},
    {at:1,tokenIds:['pc']},
   ],
- });
+ } as unknown as LegacyMotion);
  const frames=createMotionSnapshots(endpoint,departingPlan);
  expect(frames[0].tokens.find(t=>t.id==='departed')).toMatchObject({x:728,y:100,facing:Math.PI/2});
  expect(frames[1].tokens).toBe(frames[0].tokens);
