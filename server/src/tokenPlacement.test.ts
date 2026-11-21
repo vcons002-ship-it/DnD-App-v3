@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { baseOverlap, baseSeparation, placeBase } from '../../shared/tokenPlacement.js';
-import { createSession, createMap, createCharacter, createToken, moveToken, getToken, resizeMiniature, updateMapGrid } from './sessions.js';
+import { createSession, createMap, createCharacter, createToken, moveToken, getToken, resizeMiniature, updateMapGrid, createMonsterTemplate, instantiateMonster, applyDamage } from './sessions.js';
 
 describe('40 percent base overlap placement', () => {
   it('preserves legal positions and pushes exact overlap toward the approach', () => {
@@ -54,5 +54,38 @@ describe('40 percent base overlap placement', () => {
     expect(baseOverlap(100,45,Math.hypot(moved.x-a.x,moved.y-a.y))).toBeLessThanOrEqual(.400001);
     expect(getToken(a.id)).toMatchObject({x:300,y:300});
     expect(moveToken(b.id,800,600)).toMatchObject({x:800,y:600});
+  });
+  it('allows moving and spawning onto dead skulls while downed-alive PCs and revived creatures still block', () => {
+    const session=createSession('dead skull movement');
+    const map=createMap(session.id,{name:'board'});
+    updateMapGrid(map.id,50,5,60);
+    const druk=createCharacter(session.id,{name:'Druk',maxHp:30,curHp:30});
+    const varis=createCharacter(session.id,{name:'Varis',maxHp:20,curHp:20});
+    const template=createMonsterTemplate(session.id,{name:'Goblin',maxHp:12});
+    const foe=instantiateMonster(template.id)!;
+    const pcTok=createToken({mapId:map.id,kind:'pc',refId:druk.id,x:200,y:200});
+    const allyTok=createToken({mapId:map.id,kind:'pc',refId:varis.id,x:400,y:400});
+    const foeTok=createToken({mapId:map.id,kind:'monster',refId:foe.id,x:300,y:300});
+
+    // Living creature blocks movement onto its center.
+    expect(Math.hypot(moveToken(pcTok.id,300,300)!.x-300,getToken(pcTok.id)!.y-300)).toBeGreaterThan(5);
+
+    // Dead monster skull does not block movement, spawning, or being dragged across living tokens.
+    applyDamage('monster',foe.id,12);
+    expect(moveToken(pcTok.id,300,300)).toMatchObject({x:300,y:300});
+    expect(moveToken(foeTok.id,300,300)).toMatchObject({x:300,y:300});
+
+    // Reviving restores collision.
+    applyDamage('monster',foe.id,-5,undefined,false,undefined,{correction:true});
+    const pushed=moveToken(pcTok.id,300,300)!;
+    expect(Math.hypot(pushed.x-300,pushed.y-300)).toBeGreaterThan(5);
+
+    // Downed PC (< 3 failures) still blocks; dead PC (3 failures) becomes a non-blocking skull.
+    applyDamage('pc',varis.id,20);
+    const nearDowned=moveToken(pcTok.id,400,400)!;
+    expect(Math.hypot(nearDowned.x-400,nearDowned.y-400)).toBeGreaterThan(5);
+    applyDamage('pc',varis.id,1,undefined,true);
+    applyDamage('pc',varis.id,1);
+    expect(moveToken(pcTok.id,400,400)).toMatchObject({x:400,y:400});
   });
 });

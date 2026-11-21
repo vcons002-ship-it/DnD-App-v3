@@ -85,7 +85,7 @@ void main() {
 }`;
 
 const FRAGMENT_SHADER = `uniform sampler2D art, manualFogTex;
-uniform float hasArt, gridSize, gridAlpha, gridMinStep, gridMaxStep, memoryPass, keepRevealed, memoryBrightness;
+uniform float hasArt, gridSize, gridAlpha, gridWidth, memoryPass, keepRevealed, memoryBrightness;
 uniform float manualFogAlpha, tokenFogAlpha;
 uniform vec2 gridOffset, manualFogEnabled;
 uniform vec3 fillColor, canvasBg, manualFogColor, tokenFogColor;
@@ -100,8 +100,15 @@ void main() {
   float grid = 0.;
   if (gridSize > 0.) {
     vec2 cell = (world.xz - gridOffset) / gridSize;
-    vec2 d = abs(fract(cell - .5) - .5) / max(fwidth(cell), vec2(.0001));
-    grid = 1. - smoothstep(gridMinStep, gridMaxStep, min(d.x, d.y));
+    vec2 grad = vec2(
+      length(vec2(dFdx(cell.x), dFdy(cell.x))),
+      length(vec2(dFdx(cell.y), dFdy(cell.y)))
+    );
+    vec2 safeGrad = max(grad, vec2(1e-5));
+    vec2 distPx = abs(fract(cell - .5) - .5) / safeGrad;
+    vec2 wPx = gridWidth / max(safeGrad * gridSize, vec2(1e-5));
+    vec2 cov = clamp(.5 + wPx * .5 - distPx, vec2(0.), min(wPx, vec2(1.)));
+    grid = max(cov.x, cov.y);
   }
   if (memoryPass > .5) {
     if (manualFogEnabled.x > .5 && manualFogAlpha > .99 && inFog && mf.r < .5) {
@@ -162,6 +169,8 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
   let memoryTarget: WebGLRenderTarget | undefined;
   let lastStructuralKey = '';
   let lastConfig: GpuMapFloorConfig | undefined;
+  let dragHot = false;
+  const effectiveHot = () => !!lastConfig?.grid?.hot || dragHot;
   let generation = 0;
   let memoryKey = '';
   let maxTexDim = 8192;
@@ -287,8 +296,7 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
         gridSize: { value: params.gridSize },
         gridOffset: { value: params.gridOffset },
         gridAlpha: { value: (params.gridHot ? 0xcc : 0x5c) / 255 },
-        gridMinStep: { value: params.gridHot ? 0.6 : 0.35 },
-        gridMaxStep: { value: params.gridHot ? 1.55 : 1.15 },
+        gridWidth: { value: params.gridHot ? 1.5 : 1 },
         memoryPass: { value: 0 },
         keepRevealed: { value: 1 },
         memoryBrightness: { value: 0.48 },
@@ -319,19 +327,18 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
       const gridSize = config.grid?.size ?? 0;
       const gridX = config.grid?.x ?? 0;
       const gridY = config.grid?.y ?? 0;
-      const gridHot = !!config.grid?.hot;
+      const gridHot = effectiveHot();
       const bgVec = cssColorToSrgbVec3(config.canvasBg);
       const structuralKey = JSON.stringify([maxTexDim, config.canvasBg, config.bounds, config.tiles]);
 
       if (structuralKey === lastStructuralKey && entries.length > 0) {
         for (const entry of entries) {
-          for (const mat of [entry.material, entry.memoryMaterial]) {
-            mat.uniforms.gridSize.value = gridSize;
-            (mat.uniforms.gridOffset.value as Vector2).set(gridX, gridY);
-            mat.uniforms.gridAlpha.value = (gridHot ? 0xcc : 0x5c) / 255;
-            mat.uniforms.gridMinStep.value = gridHot ? 0.6 : 0.35;
-            mat.uniforms.gridMaxStep.value = gridHot ? 1.55 : 1.15;
-          }
+          entry.material.uniforms.gridSize.value = gridSize;
+          (entry.material.uniforms.gridOffset.value as Vector2).set(gridX, gridY);
+          entry.material.uniforms.gridAlpha.value = (gridHot ? 0xcc : 0x5c) / 255;
+          entry.material.uniforms.gridWidth.value = gridHot ? 1.5 : 1;
+          entry.memoryMaterial.uniforms.gridSize.value = gridSize;
+          (entry.memoryMaterial.uniforms.gridOffset.value as Vector2).set(gridX, gridY);
         }
         return;
       }
@@ -359,7 +366,13 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
       root.add(backdropMesh);
 
       const backdropMemMat = backdropMat.clone();
-      backdropMemMat.uniforms = { ...backdropMat.uniforms, ...manualFogUniforms, memoryPass: { value: 1 } };
+      backdropMemMat.uniforms = {
+        ...backdropMat.uniforms,
+        ...manualFogUniforms,
+        gridAlpha: { value: 0x5c / 255 },
+        gridWidth: { value: 1 },
+        memoryPass: { value: 1 },
+      };
       backdropMemMat.transparent = true;
       const backdropMem = new Mesh(backdropGeom, backdropMemMat);
       backdropMem.copy(backdropMesh, false);
@@ -397,7 +410,13 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
         root.add(mesh);
 
         const memoryMaterial = material.clone();
-        memoryMaterial.uniforms = { ...material.uniforms, ...manualFogUniforms, memoryPass: { value: 1 } };
+        memoryMaterial.uniforms = {
+          ...material.uniforms,
+          ...manualFogUniforms,
+          gridAlpha: { value: 0x5c / 255 },
+          gridWidth: { value: 1 },
+          memoryPass: { value: 1 },
+        };
         memoryMaterial.transparent = true;
         const memory = new Mesh(geom, memoryMaterial);
         memory.copy(mesh, false);
@@ -544,11 +563,23 @@ export function createGpuMapFloor(scene: Scene, renderer: WebGLRenderer, invalid
       }
     },
 
+    setGridHot(hot: boolean) {
+      if (dragHot === hot) return;
+      dragHot = hot;
+      const nextHot = effectiveHot();
+      for (const entry of entries) {
+        entry.material.uniforms.gridAlpha.value = (nextHot ? 0xcc : 0x5c) / 255;
+        entry.material.uniforms.gridWidth.value = nextHot ? 1.5 : 1;
+      }
+      invalidate();
+    },
+
     get memoryTexture(): Texture | null {
       return memoryTarget?.texture ?? null;
     },
 
     dispose() {
+      dragHot = false;
       clear();
       clearSprites();
       spriteGeom.dispose();

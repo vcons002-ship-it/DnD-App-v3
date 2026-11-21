@@ -29,4 +29,20 @@ describe('tokenDistanceFt / tokensWithin5ft', () => {
   it('overlapping tokens are 0 ft apart', () => {
     expect(tokenDistanceFt(tok(20, 20), tok(20, 20), map)).toBe(0);
   });
+
+  it('measures from enlarged miniatureWidthFt edge when larger than widthFt without shrinking smaller bases', () => {
+    const medium = tok(1963.2, 622.6, 5);
+    const enlargedDragon = { x: 1924.6, y: 633.7, widthFt: 7.5, miniatureWidthFt: 13.5 };
+    const halfGridMap = { feetPerSquare: 5, gridSizePx: 25 } as const;
+    expect(tokenDistanceFt(medium, enlargedDragon, halfGridMap)).toBeLessThanOrEqual(5);
+    expect(tokensWithin5ft(medium, enlargedDragon, halfGridMap)).toBe(true);
+
+    const smallerMini = { x: 100, y: 0, widthFt: 10, miniatureWidthFt: 4 };
+    expect(tokenDistanceFt(tok(0, 0, 5), smallerMini, map)).toBeCloseTo(7.5);
+  });
+
+  it('keeps widthFt=0 point queries centered regardless of miniatureWidthFt', () => {
+    const pointCaster = { x: 0, y: 0, widthFt: 0, miniatureWidthFt: 13.5 };
+    expect(tokenDistanceFt(pointCaster, { x: 100, y: 0, widthFt: 0, miniatureWidthFt: 13.5 }, map)).toBeCloseTo(10);
+  });
 });

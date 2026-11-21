@@ -648,7 +648,7 @@ export function setTokenShape(tokenId: string, shape: Token['shape']): Token | n
 }
 
 /** Resolve against shared base sizes, never camera-dependent projected art. Objects
- * (doors, scenery, traps) have no miniature base and do not block placement. */
+ * (doors, scenery, traps) and dead creatures (skulls) have no blocking base and do not block placement. */
 function resolveBasePlacement(token: Token, x: number, y: number) {
   const map = getMap(token.mapId);
   if (!map) return {x,y};
@@ -656,6 +656,7 @@ function resolveBasePlacement(token: Token, x: number, y: number) {
   const radius = (t: Token) => {
     const entity = t.kind === 'monster' ? getMonster(t.refId) : getCharacter(t.refId);
     if (t.kind === 'monster' && (entity as Monster | null)?.objectKind) return 0;
+    if (entity && isDeadEntity(t.kind, entity)) return 0;
     return miniatureBaseWidthFt(t, entity ?? {}) * pxPerFoot / 2;
   };
   return placeBase({x,y,radius:radius(token)}, listTokens(token.mapId)

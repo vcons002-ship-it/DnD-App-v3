@@ -649,8 +649,8 @@ export function SpellRayTargetShapes({
           curFormatMidLabel && curMapScale
             ? curFormatMidLabel(
                 tokenDistanceFt(
-                  { x: cPos.x, y: cPos.y, widthFt: curCaster.widthFt },
-                  { x: tPos.x, y: tPos.y, widthFt: item.token.widthFt },
+                  { x: cPos.x, y: cPos.y, widthFt: curCaster.widthFt, miniatureWidthFt: curCaster.miniatureWidthFt },
+                  { x: tPos.x, y: tPos.y, widthFt: item.token.widthFt, miniatureWidthFt: item.token.miniatureWidthFt },
                   curMapScale,
                 ),
               )
@@ -896,8 +896,8 @@ export function SpellRayTargetShapes({
           formatMidLabel && mapScale
             ? formatMidLabel(
                 tokenDistanceFt(
-                  { x: cPos.x, y: cPos.y, widthFt: caster.widthFt },
-                  { x: tPos.x, y: tPos.y, widthFt: token.widthFt },
+                  { x: cPos.x, y: cPos.y, widthFt: caster.widthFt, miniatureWidthFt: caster.miniatureWidthFt },
+                  { x: tPos.x, y: tPos.y, widthFt: token.widthFt, miniatureWidthFt: token.miniatureWidthFt },
                   mapScale,
                 ),
               )

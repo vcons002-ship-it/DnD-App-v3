@@ -136,6 +136,7 @@ type Props = {
 export type MiniatureLayerHandle = {
   headPosition: (id:string)=>{x:number;y:number}|undefined;
   screenBounds: (id:string)=>{left:number;top:number;right:number;bottom:number}|undefined;
+  setGridHot: (hot: boolean) => void;
   setFootprints: (marks:FootprintMark[])=>void;
   spellCast: (tokenIds: string[]) => void;
   setView: (view: BattlefieldView, immediate?: boolean) => void;
@@ -583,7 +584,10 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       for(const [id,move] of moves)if(move.until<now)moves.delete(id);
       for (const token of props.tokens) {
         const instance = instances.get(token.id);
-        if (!instance) continue;
+        if (!instance) {
+          if (battlefield && token.carriedLantern && props.visualPosition?.(token.id)) tokensDirty = true;
+          continue;
+        }
         const move = moves.get(token.id);
         if (move && move.until < now) moves.delete(token.id);
         const position = {...(moves.get(token.id) ?? token),...props.visualPosition?.(token.id),...(preview?.id===token.id?{facing:preview.root.rotation.y}:{})};
@@ -1645,6 +1649,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       if(!Number.isFinite(minX)||!Number.isFinite(minY))return undefined;
       return {left:minX,top:minY,right:maxX,bottom:maxY};
     },
+    setGridHot(hot){if(!disposed)gpuMapFloor.setGridHot(hot);},
     setFootprints(marks){if(disposed)return;footprints.sync(marks);setHostData('footprintCount',String(marks.length));invalidate();},
     spellCast(tokenIds) {
       if (disposed || document.hidden) return;
@@ -1714,6 +1719,7 @@ export const MiniatureLayer = forwardRef<MiniatureLayerHandle, Props>(function M
   useImperativeHandle(ref, () => ({
     headPosition: (id) => engine.current?.headPosition(id),
     screenBounds: (id) => engine.current?.screenBounds(id),
+    setGridHot: (hot) => engine.current?.setGridHot(hot),
     setFootprints: (marks) => engine.current?.setFootprints(marks),
     spellCast: (tokenIds) => engine.current?.spellCast(tokenIds),
     setView: (view, immediate) => engine.current?.setView(view, immediate),

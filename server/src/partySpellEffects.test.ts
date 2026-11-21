@@ -159,6 +159,12 @@ describe('Misty Step destination',()=>{
   expect(mistyStepError(f.session.id,'pc',f.caster.id,{...d,x:900})).toMatch(/30/);expect(mistyStepError(f.session.id,'pc',f.caster.id,{...d,x:200})).toMatch(/unoccupied/);
   setWalls(f.map.id,[{id:'wall',ax:250,ay:0,bx:250,by:300}]);expect(mistyStepError(f.session.id,'pc',f.caster.id,d)).toMatch(/see/);
   setWalls(f.map.id,[{id:'window',ax:250,ay:0,bx:250,by:300,window:true}]);expect(teleportMistyStep(f.session.id,'pc',f.caster.id,d)).toBe(true);expect(getToken(f.actor.id)).toMatchObject({x:350,y:100});
+  const deadTemplate=createMonsterTemplate(f.session.id,{name:'Fallen',maxHp:10}),deadMon=instantiateMonster(deadTemplate.id)!;
+  const skull={mapId:f.map.id,x:450,y:100};
+  createToken({mapId:f.map.id,kind:'monster',refId:deadMon.id,x:skull.x,y:skull.y});
+  expect(mistyStepError(f.session.id,'pc',f.caster.id,skull)).toMatch(/unoccupied/);
+  applyDamage('monster',deadMon.id,10);
+  expect(mistyStepError(f.session.id,'pc',f.caster.id,skull)).toBeUndefined();
  });
  it('preserves explicitly custom/manual entries and leaves Command/Alter Self untouched',()=>{
   for(const name of ['Shield','Misty Step','Hypnotic Pattern','Pass without Trace']){

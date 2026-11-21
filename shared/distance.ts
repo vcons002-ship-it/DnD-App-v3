@@ -5,15 +5,18 @@
 import type { MapState, Token } from './types.js';
 
 type Scale = Pick<MapState, 'feetPerSquare' | 'gridSizePx'> | null | undefined;
-type Tok = Pick<Token, 'x' | 'y' | 'widthFt'>;
+type Tok = Pick<Token, 'x' | 'y' | 'widthFt'> & Partial<Pick<Token, 'miniatureWidthFt'>>;
+
+function effectiveWidthFt(t: Tok): number {
+  return t.widthFt > 0 ? Math.max(t.widthFt, t.miniatureWidthFt ?? 0) : 0;
+}
 
 /**
  * 5e distance between two tokens in feet, measured on the grid (Chebyshev — a
  * diagonal counts as one square) from CENTER to center, then reduced by the
- * footprint reach of any creature larger than one square (a Large creature
- * occupies more cells, so it threatens further). Tokens carry their center
- * (x,y) and a `widthFt` footprint. So two adjacent 5-ft creatures are 5 ft
- * apart; one empty square between them is 10 ft.
+ * footprint reach of any creature larger than one square (or enlarged miniature
+ * base, so standing next to a large figure stays in melee reach). Point queries
+ * (`widthFt === 0`) stay center-based.
  */
 export function tokenDistanceFt(a: Tok, b: Tok, map: Scale): number {
   const fps = map && map.feetPerSquare > 0 ? map.feetPerSquare : 5;
@@ -21,7 +24,7 @@ export function tokenDistanceFt(a: Tok, b: Tok, map: Scale): number {
   const fpp = fps / gs; // feet per pixel (matches the client's grid scale)
   const chebFt = Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) * fpp;
   // Extra reach for a creature bigger than one square (0 for a normal 5-ft token).
-  const extra = Math.max(0, (a.widthFt - fps) / 2) + Math.max(0, (b.widthFt - fps) / 2);
+  const extra = Math.max(0, (effectiveWidthFt(a) - fps) / 2) + Math.max(0, (effectiveWidthFt(b) - fps) / 2);
   return Math.max(0, chebFt - extra);
 }
 

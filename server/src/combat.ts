@@ -2048,7 +2048,7 @@ export function resolveTargetedSpellAttack(opts: {
       amount: 0, dc: 0, dice: opts.dice, damageType: opts.damageType,
       attack: {attacker: opts.attacker, bonus: opts.attackBonus, bonusDetail: opts.attackBonusDetail, toHitSteps: opts.toHitSteps},
       ...(opts.attacker.kind === 'pc' ? {owner: opts.attacker.refId} : {}),
-      orb: {...opts.orb, initial: false, origin: {mapId: tt!.mapId, x: tt!.x, y: tt!.y, widthFt: tt!.widthFt},
+      orb: {...opts.orb, initial: false, origin: {mapId: tt!.mapId, x: tt!.x, y: tt!.y, widthFt: tt!.widthFt, miniatureWidthFt: tt!.miniatureWidthFt},
         visited: [...opts.orb.visited, `${tt!.kind}:${tt!.refId}`],
         matches: spellDamageFaces.filter((v, i, faces) => faces.indexOf(v) !== i || faces.lastIndexOf(v) !== i),
         available: hit && opts.orb.leapsUsed < opts.orb.slotLevel &&
@@ -2518,7 +2518,7 @@ function resolveSheetAbilityFor(
       const origin = casterToken ?? (targetTokenId ? getToken(targetTokenId) : null);
       if (!origin) return false;
       const orb: OrbChain = {slotLevel: Math.max(1,Math.min(9,castLevel ?? 1)),leapsUsed:0,visited:[],matches:[],available:true,
-        origin:{mapId:origin.mapId,x:origin.x,y:origin.y,widthFt:origin.widthFt}};
+        origin:{mapId:origin.mapId,x:origin.x,y:origin.y,widthFt:origin.widthFt,miniatureWidthFt:origin.miniatureWidthFt}};
       if (targetTokenId) return resolveTargetedSpellAttack({sessionId,roller,title,description:ability.description,
         attackBonus:bonus,attackBonusDetail:bonusDetail,toHitSteps,dice,damageType:roll.damageType,targetTokenId,
         advantage,attacker:{kind,refId:entity.id},orb});
