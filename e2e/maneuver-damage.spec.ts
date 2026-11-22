@@ -1,8 +1,9 @@
 import { test, expect, type Page } from './helpers/test';
 import { io, type Socket } from 'socket.io-client';
 import type { StateSnapshot } from '../shared/types';
+import { LIVE_DICE_RESULT_HOLD_MS } from '../shared/dicePresentationTiming';
 import { DM_SECRET, PORT } from './playwright.config';
-import { completedDice, LIVE_COMBAT_TIMEOUT, observeCombatDice, waitForCombatRoll } from './helpers/combatLive';
+import { completedDice, dismissCommittedRoll, LIVE_COMBAT_TIMEOUT, observeCombatDice, waitForCombatRoll } from './helpers/combatLive';
 
 const connections: Socket[] = [];
 test.afterEach(() => connections.splice(0).forEach((socket) => socket.disconnect()));
@@ -103,4 +104,129 @@ for (const manual of [false, true]) test(`Fighter offers normal damage and known
   expect(before-after.monsters.find(m=>m.id===enemy.refId)!.curHp).toBe(after.rollLog.find(r=>r.id===hit.id)!.pending!.amount);
   socket.emit('combat:maneuver',{rollId:hit.id,abilityId:'trip'});
   expect((await snapshot()).characters.find(c=>c.id===character.id)!.resources['Superiority Dice'].used).toBe(1);
+});
+
+test('Pushing Attack on a Paralyzed target holds superiority dice then displays Auto-failed push reveal', async ({ page, request }) => {
+  test.setTimeout(180_000);
+  const created = await request.post('/api/sessions', {
+    headers: { 'x-dm-passphrase': DM_SECRET },
+    data: { name: 'Pushing Attack paralysis live test' },
+  });
+  expect(created.ok()).toBeTruthy();
+  const { code } = await created.json();
+  const socket = io(`http://localhost:${PORT}`, { transports: ['websocket'], forceNew: true });
+  connections.push(socket);
+  const frames = observeCombatDice(socket);
+  const snapshot = async (): Promise<StateSnapshot> => {
+    const result = await socket.timeout(5000).emitWithAck('join', { sessionCode: code, role: 'dm', dmPassphrase: DM_SECRET });
+    expect(result.ok).toBe(true);
+    return result.snapshot;
+  };
+  const character = (await snapshot()).characters.find((c) => c.name === 'Druk')!;
+  socket.emit('character:update', {
+    characterId: character.id,
+    className: 'Fighter',
+    level: 3,
+    armorClass: 1,
+    maxHp: 200,
+    curHp: 200,
+    stats: { STR: 18, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 },
+    weapons: [{ name: 'Owner greatsword', kind: 'melee', damage: '2d6', damageType: 'slashing', attackBonus: 100 }],
+  });
+  socket.emit('session:setManualDamage', { manual: true });
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 1000; canvas.height = 600;
+    const ctx = canvas.getContext('2d')!; ctx.fillStyle = '#273128'; ctx.fillRect(0, 0, 1000, 600);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  const map = await (await request.post(`/api/sessions/${code}/maps`, {
+    headers: { 'x-dm-passphrase': DM_SECRET },
+    multipart: { name: 'Paralysis fixture', image: { name: 'fixture.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') } },
+  })).json();
+  socket.emit('map:setGrid', { mapId: map.id, gridSizePx: 64, feetPerSquare: 5, widthFt: 95, locked: false });
+  socket.emit('map:setActive', { mapId: map.id });
+  socket.emit('fog:setLayer', { mapId: map.id, layer: 'map', enabled: false });
+  socket.emit('fog:setLayer', { mapId: map.id, layer: 'tokens', enabled: false });
+  socket.emit('token:spawn', { mapId: map.id, kind: 'pc', refId: character.id, x: 300, y: 240 });
+  socket.emit('monster:create', { name: 'Ownership target', disposition: 'enemy', maxHp: 200, armorClass: 1, weapons: [] });
+  const template = (await snapshot()).monsterTemplates.find((m) => m.name === 'Ownership target')!;
+  socket.emit('token:spawn', { mapId: map.id, kind: 'monster', refId: template.id, x: 340, y: 240 });
+  const ready = await snapshot();
+  const enemy = ready.tokens.find((t) => t.kind === 'monster')!;
+  socket.emit('condition:set', {
+    kind: 'monster',
+    refId: enemy.refId,
+    condition: { label: 'Paralyzed', aura: 'yellow' },
+  });
+  socket.emit('ability:set', {
+    kind: 'pc',
+    refId: character.id,
+    ability: {
+      id: 'push',
+      name: 'Pushing Attack',
+      type: 'maneuver',
+      description: 'Drive the target back on a failed Strength saving throw.',
+      maneuver: { active: false, addDieTo: 'damage', save: { ability: 'STR' }, note: 'push up to 15 ft on a failed save' },
+    },
+  });
+  await snapshot();
+
+  await page.addInitScript(() => sessionStorage.setItem('dnd.rendering-started', '1'));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(`/join?code=${code}`);
+  await page.getByRole('button', { name: 'Join', exact: true }).click();
+  await page.locator('.claim-row').filter({ hasText: 'Druk' }).click();
+  await expect(page.locator('.compact-player-combat')).toBeVisible({ timeout: LIVE_COMBAT_TIMEOUT });
+
+  // Wait for preloaded 3D dice boards to finish warming so all animations run smoothly.
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = document.documentElement.dataset.dicePreloadedThemes;
+    if (!raw) return false;
+    try { return (JSON.parse(raw) as string[]).length > 0 && !document.body.innerText.includes('Preparing Dice Boards'); }
+    catch { return false; }
+  }), { timeout: LIVE_COMBAT_TIMEOUT }).toBe(true);
+
+  let hit;
+  for (let i = 0; i < 6; i++) {
+    const previous = new Set((await snapshot()).rollLog.map((r) => r.id));
+    await page.locator('.compact-player-combat').getByRole('button', { name: /Owner greatsword/ }).click();
+    const entry = await waitForCombatRoll(snapshot, previous, (r) => r.label === 'Attack');
+    await dismissCommittedRoll(page, entry.id);
+    if (entry.pending && !entry.pending.done) {
+      hit = entry;
+      break;
+    }
+  }
+  expect(hit).toBeTruthy();
+
+  const cursor = frames.length;
+  const hpBefore = (await snapshot()).monsters.find((m) => m.id === enemy.refId)!.curHp;
+  await page.locator('.dp-maneuver-toggle').click();
+  await page.locator('.dp-maneuver-btn', { hasText: 'Pushing Attack' }).click();
+
+  await expect.poll(
+    () => frames.slice(cursor).some((f) => f.label === 'Pushing Attack — Superiority damage' && f.resultHoldMs === LIVE_DICE_RESULT_HOLD_MS),
+    { timeout: LIVE_COMBAT_TIMEOUT, intervals: [50, 100] },
+  ).toBe(true);
+
+  const autoFailNote = page.locator('.rr-autofail-note');
+  await expect(autoFailNote).toBeVisible({ timeout: LIVE_COMBAT_TIMEOUT });
+  await expect(autoFailNote).toContainText(/Auto-failed\s*\(paralyzed\)/i);
+  await expect(page.locator('.roll-reveal-outcome')).toHaveText('SAVE FAILED');
+  await expect(page.locator('[aria-label="Spell outcome"]')).toHaveText('Push succeeds - move the target up to 15 ft.');
+
+  // Must remain visible rather than being immediately cleared by queued fx:hp map impacts.
+  await page.waitForTimeout(1200);
+  await expect(autoFailNote).toBeVisible();
+
+  await page.locator('.roll-reveal').click({ position: { x: 10, y: 10 } });
+  await expect(autoFailNote).toHaveCount(0);
+
+  const after = await snapshot();
+  const committed = after.rollLog.find((r) => r.id === hit!.id)!;
+  expect(committed.pending?.done).toBe(true);
+  expect(hpBefore - after.monsters.find((m) => m.id === enemy.refId)!.curHp).toBe(committed.pending!.amount);
+  const saveLog = after.rollLog.find((r) => r.label === 'STR save');
+  expect(saveLog?.detail).toContain('auto-fails (paralyzed)');
+  expect(saveLog?.detail).toContain('Push succeeds — move the target up to 15 ft.');
 });
