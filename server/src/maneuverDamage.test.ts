@@ -135,15 +135,30 @@ it('auto-fails Pushing Attack STR save on a Paralyzed target with clear push rev
   setCondition('pc', f.target.id, { id: 'par', label: 'Paralyzed', aura: 'red', isConcentration: false });
 
   const requests: { sides: number[]; label?: string }[] = [];
+  const holds: { frame: LiveDiceFrame; ms: number }[] = [];
+  let frame: LiveDiceFrame;
+  const dice = async (sides: number[], publish: (f: LiveDiceFrame) => void, meta: any, _seed: any, info?: PhysicalDiceInfo) => {
+    requests.push({ sides, label: info?.label ?? meta.label });
+    const values = sides.map((s) => (s === 20 ? 14 : 4));
+    publish({
+      id: `throw-${requests.length}`, seq: 0, done: true, sides, values,
+      label: info?.label ?? meta.label, roller: 'Fighter', className: 'Fighter',
+      sets: sides.map(() => 0), critical: sides.map(() => false),
+      percentile: sides.map(() => null), poses: [], rerolls: sides.map(() => 0), radius: 1, elapsed: 1,
+    });
+    return values;
+  };
   const live = async (run: () => void) =>
     runLiveCommand(
       run,
-      () => {},
-      { label: 'Attack', roller: 'Fighter', className: 'Fighter', waitForPresentation: async () => {} },
-      async (sides, _p, _m, _seed, info) => {
-        requests.push({ sides, label: info?.label });
-        return sides.map((s) => (s === 20 ? 14 : 4));
+      (published) => { frame = published; },
+      {
+        label: 'Attack', roller: 'Fighter', className: 'Fighter',
+        waitForPresentation: async (_id, ms) => {
+          if (frame?.resultHoldMs !== undefined) holds.push({ frame, ms });
+        },
       },
+      dice,
     );
 
   await live(() => {
@@ -156,6 +171,11 @@ it('auto-fails Pushing Attack STR save on a Paralyzed target with clear push rev
 
   // Advantage ([20, 20]) from Paralyzed target, non-crit at 60 ft ([6], [8]), and NO saving-throw d20 rolled.
   expect(requests.map((r) => r.sides)).toEqual([[20, 20], [6], [8]]);
+  // Superiority damage still receives its full reading hold before the auto-fail text card appears.
+  expect(holds).toHaveLength(1);
+  expect(holds[0].frame.label).toBe('Pushing Attack — Superiority damage');
+  expect(holds[0].frame.resultHoldMs).toBe(LIVE_DICE_RESULT_HOLD_MS);
+  expect(holds[0].ms).toBe(LIVE_DICE_RESULT_HOLD_MS + LIVE_PRESENTATION_SYNC_MS);
   const saveLog = listRollLog(f.s.id).find((e) => e.label === 'STR save')!;
   expect(saveLog).toBeTruthy();
   expect(saveLog.detail).toContain('auto-fails (paralyzed)');
@@ -167,4 +187,5 @@ it('auto-fails Pushing Attack STR save on a Paralyzed target with clear push rev
     effectOutcome: 'Push succeeds - move the target up to 15 ft.',
     presentedLive: false,
   });
+  expect(saveLog.reveal?.physical).toBeUndefined();
 });
