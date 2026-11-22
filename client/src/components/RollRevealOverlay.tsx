@@ -247,7 +247,7 @@ const FullRollRevealOverlay = memo(function FullRollRevealOverlay() {
   const rollFx = useStore((s) => s.rollFx);
   const intermediate=!!liveDice?.calculation;
   const visibleRollFx=liveDice?.calculation?{id:liveDice.seq,rollId:liveDice.id,reveal:liveDice.calculation,tray:liveDice}:rollFx;
-  const staticReveal = reducedMotion || !!visibleRollFx?.reveal.physical;
+  const staticReveal = reducedMotion || !!visibleRollFx?.reveal.physical || !!visibleRollFx?.reveal.autoFailReason;
   const dismiss = useStore((s) => s.dismissRollFx);
   const rollTheme = useStore(s => {
     const frame = s.liveDice ?? s.rollFx?.tray;
@@ -387,7 +387,7 @@ function RollSequence({ rollFx, entrySide, player, staticReveal, animatePhysical
   const inlineResult=useRef<HTMLDivElement>(null);
   const reveal = rollFx?.reveal;
   const awaitingDamage=useStore(s=>!!s.snapshot?.rollLog.some(e=>e.id===rollFx.rollId&&e.pending&&!e.pending.done));
-  const resultHoldMs=reveal?.kind==='check' && ['pass','fail'].includes(reveal.outcome)?8000:awaitingDamage?1200:HOLD_MS;
+  const resultHoldMs=reveal?.autoFailReason ? 5000 : reveal?.kind==='check' && ['pass','fail'].includes(reveal.outcome)?8000:awaitingDamage?1200:HOLD_MS;
   const comparison = reveal?.comparison;
   // A 'check' is a single-d20 skill/save/check → total (no damage phase). A 'dice'
   // roll (`/roll`, dice-panel buttons) and a spell-damage 'damage' burst are both
@@ -467,8 +467,8 @@ function RollSequence({ rollFx, entrySide, player, staticReveal, animatePhysical
       return cleanup;
     }
     if (staticReveal) {
-      if(reveal.physical&&!earlyCritical&&!earlyNaturalTwenty){if(naturalTwenty||reveal.outcome==='crit')playCritical();else if(reveal.outcome==='miss'||reveal.outcome==='fumble'||reveal.outcome==='fail')playMiss();else if(isCheck||isDice)playSkill();else playHit();}
-      setStage({ phase: 'damage', dieFace: reveal.d20 ?? 0, toHitShown: toHit.length, diceLocked: visualDiceCount, diceStopping: visualDiceCount, modsShown: localMods.length });
+      if((reveal.physical||reveal.autoFailReason)&&!earlyCritical&&!earlyNaturalTwenty){if(naturalTwenty||reveal.outcome==='crit')playCritical();else if(reveal.outcome==='miss'||reveal.outcome==='fumble'||reveal.outcome==='fail')playMiss();else if(isCheck||isDice)playSkill();else playHit();}
+      setStage({ phase: isCheck ? 'outcome' : 'damage', dieFace: reveal.d20 ?? 0, toHitShown: toHit.length, diceLocked: visualDiceCount, diceStopping: visualDiceCount, modsShown: localMods.length });
       if(!intermediate){const hold=reveal.diceTrigger?DICE_TRIGGER_HOLD_MS:0;at(hold, () => releaseImpact(rollFx.rollId));at(hold+resultHoldMs, dismiss);}
       return cleanup;
     }
@@ -604,23 +604,30 @@ function RollSequence({ rollFx, entrySide, player, staticReveal, animatePhysical
         {/* The live tray owns the dice. This child only adds arithmetic/outcomes. */}
         {!isBurst && !inlineDamage && (staticReveal || stage.phase !== 'damage') && (
           <div className={`roll-reveal-tohit${comparison?.kind === 'd20' ? ' rr-tohit-compared' : ''}`}>
-            {!inlineTray && (!staticReveal ? <PhysicsDiceTray entrySide={entrySide} key="attack-tray" rollKey={rollFx.rollId+':attack'} comparison={comparison?.kind==='d20'?comparison:undefined} dice={attackTray} onSettled={(_,set)=>landings.current.d20?.(set)} /> : comparison?.kind === 'd20'
-              ? <ComparedDice comparison={comparison} stopping={stage.phase === 'rolling' ? 0 : 1}
-                locked={stage.phase === 'rolling' || stage.phase === 'landing' ? 0 : 1} tick={stage.dieFace}
-                onSettled={(_, set) => landings.current.d20?.(set)} />
-              : <DieShape sides={20} value={stage.dieFace || 0} big rolling={stage.phase === 'rolling'} onSettled={() => landings.current.d20?.(0)} />)}
-            {!reveal.hideModifiers&&<div className="rr-buildup rr-equation" aria-label="Roll calculation">
-              {stage.phase !== 'rolling' && stage.phase !== 'landing' && <>
-                <span className="rr-equation-base"><strong>{reveal.d20}</strong><small>{comparison?'Kept d20':'d20 roll'}</small></span>
-                {toHit.slice(0, stage.toHitShown).map((s, i) => (
-                  <span className={`rr-chip rr-adjustment ${s.value<0?'negative':'positive'}`} key={i}>
-                    <strong>{s.value >= 0 ? '+' : '-'}{Math.abs(s.value)}</strong><small>{s.label}</small>
-                  </span>
-                ))}
-                <span className="rr-equals">=</span>
-              </>}
-              <span className="rr-equation-total"><strong className="rr-total">{toHitShownNum}</strong><small>{stage.phase==='rolling'||stage.phase==='landing'?'Rolling...':stage.toHitShown<toHit.length?'Adding modifiers...':'Total'}</small></span>
-            </div>}
+            {reveal.autoFailReason ? (
+              <div className="rr-autofail-note" role="status">
+                <strong>Auto-failed ({reveal.autoFailReason})</strong>
+                <span>Automatic failure on {/\b(STR|DEX)\b/i.exec(reveal.title ?? '')?.[1]?.toUpperCase() ?? 'this'} saving throw — no roll</span>
+              </div>
+            ) : <>
+              {!inlineTray && (!staticReveal ? <PhysicsDiceTray entrySide={entrySide} key="attack-tray" rollKey={rollFx.rollId+':attack'} comparison={comparison?.kind==='d20'?comparison:undefined} dice={attackTray} onSettled={(_,set)=>landings.current.d20?.(set)} /> : comparison?.kind === 'd20'
+                ? <ComparedDice comparison={comparison} stopping={stage.phase === 'rolling' ? 0 : 1}
+                  locked={stage.phase === 'rolling' || stage.phase === 'landing' ? 0 : 1} tick={stage.dieFace}
+                  onSettled={(_, set) => landings.current.d20?.(set)} />
+                : <DieShape sides={20} value={stage.dieFace || 0} big rolling={stage.phase === 'rolling'} onSettled={() => landings.current.d20?.(0)} />)}
+              {!reveal.hideModifiers&&<div className="rr-buildup rr-equation" aria-label="Roll calculation">
+                {stage.phase !== 'rolling' && stage.phase !== 'landing' && <>
+                  <span className="rr-equation-base"><strong>{reveal.d20}</strong><small>{comparison?'Kept d20':'d20 roll'}</small></span>
+                  {toHit.slice(0, stage.toHitShown).map((s, i) => (
+                    <span className={`rr-chip rr-adjustment ${s.value<0?'negative':'positive'}`} key={i}>
+                      <strong>{s.value >= 0 ? '+' : '-'}{Math.abs(s.value)}</strong><small>{s.label}</small>
+                    </span>
+                  ))}
+                  <span className="rr-equals">=</span>
+                </>}
+                <span className="rr-equation-total"><strong className="rr-total">{toHitShownNum}</strong><small>{stage.phase==='rolling'||stage.phase==='landing'?'Rolling...':stage.toHitShown<toHit.length?'Adding modifiers...':'Total'}</small></span>
+              </div>}
+            </>}
           </div>
         )}
 

@@ -141,7 +141,10 @@ describe('Weapon Trigger Conditions & Effects', () => {
       { label: 'Sunblade', roller: 'Aldric', className: 'Paladin', waitForPresentation: async () => {} },
       (sides, publish, meta, _seed, info) => physicalFaces(sides, publish, meta, 4, info),
     );
-    const damageFrame = frames.filter((f) => !f.sides.every((s) => s === 20)).at(-1)!;
+    const damageFrames = frames.filter((f) => !f.sides.every((s) => s === 20));
+    expect(damageFrames.some((f) => f.trayBanner?.title === 'Savage Attacker')).toBe(false);
+    expect(damageFrames.some((f) => f.diceTrigger?.kind === 'savage-attacker')).toBe(false);
+    const damageFrame = damageFrames.at(-1)!;
     expect(damageFrame.sides).toEqual([8, 6, 6]);
     expect(damageFrame.dieRoles).toContain('rider');
     expect(damageFrame.dieLabels?.filter((l) => l === 'Undead Bane').length).toBe(2);

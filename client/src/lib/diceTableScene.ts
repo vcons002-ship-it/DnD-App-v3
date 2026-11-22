@@ -71,8 +71,8 @@ export function createDiceTableScene(scene:THREE.Scene,tray:THREE.Group,camera:T
    if(running&&started===undefined)started=now;
    progress=duration===0?1:started===undefined?0:Math.max(0,Math.min(1,(now-started)/duration));
    const point=diceTableCameraPose(from,active,progress);
-   camera.position.set(point.x,point.y-8,25+point.lift).multiplyScalar(scale);
-   camera.lookAt(point.x*scale,point.y*scale,.25);
+   camera.position.set(point.x,point.y-11.6,20.8+point.lift).multiplyScalar(scale);
+   camera.lookAt(point.x*scale,(point.y-.15)*scale,.35*scale);
   },
   dispose(){board.dispose();scene.remove(group);geometry.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());},
  };

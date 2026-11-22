@@ -124,13 +124,57 @@ describe('Custom Spell Dice Rules', () => {
       },
       (f) => frames.push(f),
       { label: 'Storm Crack', roller: 'Lyra', className: 'Sorcerer', waitForPresentation: async () => {} },
-      (sides, publish, meta, _seedVal, info) => physicalFaces(sides, publish, meta, 4, info),
+      (sides, publish, meta, _seedVal, info) => physicalFaces(sides, publish, meta, 1, info),
     );
     expect(frames.length).toBeGreaterThan(0);
+    expect(frames.some((f) => f.trayBanner?.title === 'Savage Attacker')).toBe(false);
+    expect(frames.some((f) => f.diceTrigger?.kind === 'savage-attacker')).toBe(false);
     const finalFrame = frames.at(-1)!;
     expect(finalFrame.burstLinks?.length).toBeGreaterThan(0);
     expect(finalFrame.dieRoles).toContain('exploded');
     expect(finalFrame.trayBanner?.tone).toBe('explode');
+  });
+
+  it('does not emit Savage Attacker banner or trigger on Wave 1 of custom exploding Storm Crack (6d4)', async () => {
+    const { session, map, spawnMonster } = setupCombat();
+    const storm6d4: SheetAbility = {
+      id: 'custom-storm-crack-6d4',
+      name: 'Storm Crack',
+      type: 'spell',
+      level: 0,
+      description: 'Hurls crackling lightning that leaps again on max rolls.',
+      source: 'custom',
+      executionProfile: 'manual',
+      roll: {
+        kind: 'damage',
+        dice: '6d4',
+        damageType: 'lightning',
+        castingAbility: 'CHA',
+        diceRules: { exploding: { on: 'max', limit: 6, recursive: true, label: 'Storm Surge' } },
+      },
+    };
+    const caster = createCharacter(session.id, {
+      name: 'Lyra',
+      className: 'Sorcerer',
+      level: 5,
+      stats: { CHA: 16 },
+      sheetAbilities: [storm6d4],
+    });
+    createToken({ mapId: map.id, kind: 'pc', refId: caster.id, x: 50, y: 100 });
+    const { token: target } = spawnMonster('Dummy', { ac: 10, hp: 100 });
+
+    const spellFrames: LiveDiceFrame[] = [];
+    await runLiveCommand(
+      () => {
+        resolveAbilityRoll(session.id, 'Lyra', caster, storm6d4, 0, undefined, target.id);
+      },
+      (f) => spellFrames.push(f),
+      { label: 'Storm Crack', roller: 'Lyra', className: 'Sorcerer', waitForPresentation: async () => {} },
+      (sides, publish, meta, _seedVal, info) => physicalFaces(sides, publish, meta, 7, info),
+    );
+    expect(spellFrames.length).toBeGreaterThan(0);
+    expect(spellFrames.some((f) => f.trayBanner?.title === 'Savage Attacker')).toBe(false);
+    expect(spellFrames.some((f) => f.diceTrigger?.kind === 'savage-attacker')).toBe(false);
   });
 
   it('supports custom bouncing spells (non-Chromatic Orb) with custom range and maxLeaps', () => {
@@ -490,7 +534,7 @@ describe('SRD Passives & Unified Visual Flow', () => {
       },
       (f) => candidate.push(f),
       { label: 'DEX Save', roller: 'Milo', className: 'Rogue', waitForPresentation: async () => {} },
-      (sides, publish, meta, _seed, info) => physicalFaces(sides, publish, meta, 23, info),
+      (sides, publish, meta, _seed, info) => physicalFaces(sides, publish, meta, 28, info),
     );
     const luckyFrame = candidate.at(-1);
     expect(luckyFrame).toBeTruthy();

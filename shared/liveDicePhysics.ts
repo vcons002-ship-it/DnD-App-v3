@@ -63,11 +63,11 @@ export function createLiveWorld(initialDice:TrayDie[],seed:number,entrySide:Dice
     if(n.dot(a)<0)n.negate(n);n.normalize();return n;
   }));
   const launchRadius=radius*Math.max(1,...dice.map(d=>diePhysicalScale(d.sides)));
-  const makeBody=(die:TrayDie,i:number,count:number)=>{
+  const makeBody=(die:TrayDie,i:number,count:number,opts?:{crossOffset?:number;aimAngle?:number})=>{
     const shape=diceCollider(die.sides,radius*diePhysicalScale(die.sides));
     const {vertices,faces}=shape;
     const body=new Body({mass:diceMassKg(vertices.map(v=>v.scale(metresPerUnit)),faces)*1000,material:dieMaterial,shape,linearDamping:.01,angularDamping:.01,allowSleep:true,sleepSpeedLimit:.3,sleepTimeLimit:.5});
-    releaseHandfulDie(body,i,count,launchRadius,trayScale,extent,crossExtent,metresPerUnit,TRAY_GRAVITY/metresPerUnit,direction,cross,random);
+    releaseHandfulDie(body,i,count,launchRadius,trayScale,extent,crossExtent,metresPerUnit,TRAY_GRAVITY/metresPerUnit,direction,cross,random,opts);
     body.collisionFilterMask=3;
     body.addEventListener('collide',(event:{body:Body})=>{if(walls.has(event.body))wallHits++;});
     return body;
@@ -101,10 +101,12 @@ export function createLiveWorld(initialDice:TrayDie[],seed:number,entrySide:Dice
   }
   function reroll(i:number) {
     const b=bodies[i],initial=launch[i];
-    b.position.copy(initial.position);b.position.z+=(random()*.3);
+    const nudge=cross.scale((random()-.5)*radius*2.2);
+    b.position.copy(initial.position.vadd(nudge));b.position.z+=(random()*.3);
     b.previousPosition.copy(b.position);b.interpolatedPosition.copy(b.position);
     b.quaternion.setFromEuler(random()*6.28,random()*6.28,random()*6.28);
-    b.velocity.copy(initial.velocity.scale(.9+random()*.2));b.angularVelocity.copy(initial.spin.scale(.8+random()*.4));
+    b.velocity.copy(initial.velocity.scale(.9+random()*.2).vadd(cross.scale((random()-.5)*radius*1.4)));
+    b.angularVelocity.copy(initial.spin.scale(.8+random()*.4));
     b.force.setZero();b.torque.setZero();b.collisionFilterMask=3;b.aabbNeedsUpdate=true;b.wakeUp();
     age[i]=0;values[i]=null;rerolls[i]++;
     stable[i].face=null;stable[i].since=0;
@@ -139,12 +141,17 @@ export function createLiveWorld(initialDice:TrayDie[],seed:number,entrySide:Dice
   function appendDice(extra:TrayDie[]){
     if(!snapshot().done)throw new Error('Finish the current throw before adding dice');
     if(dice.length+extra.length>capacity||extra.some(d=>![4,6,8,10,12,20].includes(d.sides)))throw new Error('Unsupported physical dice pool');
+    // Aim appended waves toward the emptier lateral side of the tray bed so
+    // new dice don't pile straight onto frozen static dice from earlier waves.
+    const occupiedCross=bodies.reduce((sum,b)=>sum+b.position.dot(cross),0)/Math.max(1,bodies.length);
+    const emptyDir=occupiedCross>=0?-1:1;
+    const waveOpts={crossOffset:emptyDir*crossExtent*.34,aimAngle:emptyDir*.16};
     // Keep the already-read faces fixed; new dice still collide with their bodies.
     bodies.forEach(b=>{b.type=Body.STATIC;b.mass=0;b.updateMassProperties();b.velocity.setZero();b.angularVelocity.setZero();});
     extra.forEach((die,j)=>{
       const mesh=faceForwardMesh(dieMesh(die.sides));dice.push(die);meshes.push(mesh);
       faceNormals.push(mesh.faces.map(ids=>{const [a,b,c]=ids.map(k=>new Vec3(...mesh.vertices[k])),n=b.vsub(a).cross(c.vsub(a));if(n.dot(a)<0)n.negate(n);n.normalize();return n;}));
-      const body=makeBody(die,j,extra.length);bodies.push(body);world.addBody(body);
+      const body=makeBody(die,j,extra.length,waveOpts);bodies.push(body);world.addBody(body);
       launch.push({position:body.position.clone(),velocity:body.velocity.clone(),spin:body.angularVelocity.clone()});
       age.push(0);rerolls.push(0);values.push(null);stable.push({position:body.position.clone(),rotation:body.quaternion.clone(),since:0,face:null});
     });

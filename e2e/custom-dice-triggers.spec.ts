@@ -354,6 +354,8 @@ test('Edits custom exploding spell in SpellEffectEditor and captures exploding b
     await castDialog.getByRole('button', { name: /Cast Storm Crack/i }).click();
 
     await expect(page.locator('[data-live-dice="true"]')).toBeVisible({ timeout: LIVE_COMBAT_TIMEOUT });
+    const stageBefore = await page.locator('.dice-tray-stage').boundingBox();
+    expect(stageBefore).toBeTruthy();
     let finalFrame: LiveDiceFrame | undefined;
     await expect
       .poll(
@@ -386,6 +388,10 @@ test('Edits custom exploding spell in SpellEffectEditor and captures exploding b
         '.tray-savage-banner[data-tray-banner="explode"]',
         '.tray-die-role-label.is-exploded',
       );
+      const stageAfter = await page.locator('.dice-tray-stage').boundingBox();
+      expect(stageAfter).toBeTruthy();
+      expect(Math.abs(stageAfter!.width - stageBefore!.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(stageAfter!.height - stageBefore!.height)).toBeLessThanOrEqual(1);
       captured = true;
     } else {
       const skipBtn = page.getByRole('button', { name: 'Skip roll animation' });

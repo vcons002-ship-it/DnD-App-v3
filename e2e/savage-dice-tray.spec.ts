@@ -118,7 +118,7 @@ async function attackAndStartDamage(
   page: Page,
   ctx: Awaited<ReturnType<typeof createArena>>,
   weaponName: RegExp,
-): Promise<{ hpBefore: number; attackId: string; dmgFrames: LiveDiceFrame[]; trayId: string }> {
+): Promise<{ hpBefore: number; attackId: string; dmgFrames: LiveDiceFrame[]; trayId: string; crit: boolean }> {
   let attackEntry;
   for (let attempt = 0; attempt < 5 && !attackEntry; attempt++) {
     const previous = new Set((await ctx.snapshot()).rollLog.map((r) => r.id));
@@ -148,6 +148,7 @@ async function attackAndStartDamage(
   return {
     hpBefore,
     attackId: attackEntry!.id,
+    crit: Boolean(attackEntry?.pending?.crit),
     get dmgFrames() {
       return ctx.frames.slice(frameCursor).filter((f) => f.id === trayId);
     },
@@ -165,9 +166,12 @@ test('Savage Attacker uses an interactive tray button (no stance toggle) and rer
   await expect(page.locator('.combat-toggle-row', { hasText: 'Savage Attacker' })).toHaveCount(0);
 
   const roll = await attackAndStartDamage(page, ctx, /Greatsword/);
+  const baseCount = roll.crit ? 4 : 2;
 
   const tray = page.locator(`.roll-reveal-backdrop[data-roll-id="${roll.trayId}"]`);
   await expect(tray).toBeVisible();
+  const stageBefore = await tray.locator('.dice-tray-stage').boundingBox();
+  expect(stageBefore).toBeTruthy();
 
   // Clicking the waiting offer bar while Wave 1 tumbles must NOT skip the roll animation.
   const waitingBar = tray.getByRole('region', { name: 'Savage Attacker reroll option' });
@@ -181,28 +185,32 @@ test('Savage Attacker uses an interactive tray button (no stance toggle) and rer
   await expect(rerollBtn).toBeVisible({ timeout: LIVE_COMBAT_TIMEOUT });
   await expect(rerollBtn).toBeEnabled({ timeout: LIVE_COMBAT_TIMEOUT });
   await expect(keepBtn).toBeVisible();
-  // Wait for initial 2d6 boxes to fill before triggering Wave 2
-  await expect(tray.locator('.tray-die-result')).toHaveCount(2);
+  // Wait for initial dice boxes to fill before triggering Wave 2
+  await expect(tray.locator('.tray-die-result')).toHaveCount(baseCount);
 
   const preRerollCount = roll.dmgFrames.length;
   await rerollBtn.click();
 
-  // Tray must stay alive and animate Wave 2 (`done === false` frames with 4 dice) — never skipping!
+  // Tray must stay alive and animate Wave 2 (`done === false` frames with 2 * baseCount dice) — never skipping!
   await expect(page.locator('[data-live-dice="true"]')).toBeVisible();
   await expect
-    .poll(() => roll.dmgFrames.slice(preRerollCount).some((f) => !f.done && f.sides.length === 4), { timeout: LIVE_COMBAT_TIMEOUT, intervals: [30, 50] })
+    .poll(() => roll.dmgFrames.slice(preRerollCount).some((f) => !f.done && f.sides.length === baseCount * 2), { timeout: LIVE_COMBAT_TIMEOUT, intervals: [30, 50] })
     .toBe(true);
 
-  await expect.poll(() => roll.dmgFrames.some((f) => f.done && f.sides.length === 4), { timeout: LIVE_COMBAT_TIMEOUT, intervals: [50, 80] }).toBe(true);
+  await expect.poll(() => roll.dmgFrames.some((f) => f.done && f.sides.length === baseCount * 2), { timeout: LIVE_COMBAT_TIMEOUT, intervals: [50, 80] }).toBe(true);
   await expect(tray.locator('.tray-savage-banner[data-tray-banner="savage-reroll"]')).toContainText('Savage Attacker');
-  await expect(tray.locator('.tray-die-result')).toHaveCount(4);
-  await expect(tray.locator('.tray-die-result[data-result="kept"]')).toHaveCount(2);
-  await expect(tray.locator('.tray-die-result[data-result="discarded"]')).toHaveCount(2);
+  await expect(tray.locator('.tray-die-result')).toHaveCount(baseCount * 2);
+  await expect(tray.locator('.tray-die-result[data-result="kept"]')).toHaveCount(baseCount);
+  await expect(tray.locator('.tray-die-result[data-result="discarded"]')).toHaveCount(baseCount);
+  const stageAfter = await tray.locator('.dice-tray-stage').boundingBox();
+  expect(stageAfter).toBeTruthy();
+  expect(Math.abs(stageAfter!.width - stageBefore!.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(stageAfter!.height - stageBefore!.height)).toBeLessThanOrEqual(1);
 
-  // Curved SVG reroll links from original 2d6 -> rerolled 2d6 inside the same tray.
-  await expect(tray.locator('svg.tray-trigger-links [data-reroll-parent]')).toHaveCount(2);
-  for (const [from, to] of [[0, 2], [1, 3]]) {
-    const core = tray.locator(`svg.tray-trigger-links path.tray-trigger-core[data-from="${from}"][data-to="${to}"]`);
+  // Curved SVG reroll links from original dice -> rerolled dice inside the same tray.
+  await expect(tray.locator('svg.tray-trigger-links [data-reroll-parent]')).toHaveCount(baseCount);
+  for (let i = 0; i < baseCount; i++) {
+    const core = tray.locator(`svg.tray-trigger-links path.tray-trigger-core[data-from="${i}"][data-to="${i + baseCount}"]`);
     await expect(core).toHaveAttribute('d', /^M\s+[-\d.]+\s+[-\d.]+\s+Q\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+$/);
   }
 
@@ -219,6 +227,7 @@ test('Clicking Keep on Savage Attacker tray button resolves with Wave 1 dice onl
     abilities: [SAVAGE_ATTACKER],
   });
   const roll = await attackAndStartDamage(page, ctx, /Greatsword/);
+  const baseCount = roll.crit ? 4 : 2;
   const tray = page.locator(`.roll-reveal-backdrop[data-roll-id="${roll.trayId}"]`);
   const keepBtn = tray.getByRole('button', { name: /^Keep \d+/i });
   await expect(keepBtn).toBeVisible({ timeout: LIVE_COMBAT_TIMEOUT });
@@ -226,7 +235,7 @@ test('Clicking Keep on Savage Attacker tray button resolves with Wave 1 dice onl
   await keepBtn.click();
 
   await expect.poll(async () => (await ctx.snapshot()).rollLog.find((r) => r.id === roll.attackId)?.pending?.done, { timeout: LIVE_COMBAT_TIMEOUT }).toBe(true);
-  expect(roll.dmgFrames.at(-1)?.sides).toHaveLength(2);
+  expect(roll.dmgFrames.at(-1)?.sides).toHaveLength(baseCount);
   const dmgEntry = (await ctx.snapshot()).rollLog.findLast((r) => r.label === 'Damage')!;
   expect(dmgEntry.detail).not.toContain('[SAVAGE');
 });

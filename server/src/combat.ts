@@ -302,16 +302,7 @@ function executePostHitWeaponTriggers(
   if (atkEnt) {
     for (const h of deferred.heals ?? []) {
       const hRoll = withDiceMetadata(
-        {
-          label: `${h.name} — ${h.mode === 'temporary' ? 'Temp HP' : 'Healing'}`,
-          trayBanner: {
-            title: h.name,
-            detail: `${h.dice} ${h.mode === 'temporary' ? 'temporary HP' : 'healing'} on ${deferred.weaponName}`,
-            tone: 'rider',
-          },
-          dieRole: 'rider',
-          dieLabel: h.name,
-        },
+        { label: `${h.name} — ${h.mode === 'temporary' ? 'Temp HP' : 'Healing'}` },
         () => rollDice(h.dice),
       );
       if (!hRoll) continue;
@@ -378,6 +369,14 @@ function executePostHitWeaponTriggers(
       if (autoFail) {
         applyNow = true;
         saveLine = `auto-failed (${autoFail}) vs DC ${fx.dc} ${ab}`;
+        saveReveal = {
+          kind: 'check',
+          attacker: tgtName,
+          title: `${fx.name} — ${ab} Saving Throw`,
+          outcome: 'fail',
+          autoFailReason: autoFail,
+          effectOutcome: `${fx.name}: suffers ${fx.effect.conditionLabel || 'effect'}.`,
+        };
       } else {
         const prof = tgtEnt!.saveProficiencies.some((s) => s.trim().toUpperCase() === ab);
         const adv = saveAdvantage(labels, ab, undefined, strFeatureAdv(targetRef.kind, targetRef.refId, ab));
@@ -858,9 +857,6 @@ export function resolveAttack(
   if(out.hit&&armedDamageDice.length&&maneuverFired){
     const rolls=withDiceMetadata({
       label:`${maneuverFired.ability.name} — Superiority damage`,
-      trayBanner:{title:maneuverFired.ability.name,detail:`+${armedDamageDice[0]}${out.crit?' (crit doubled)':''} superiority die`,tone:'rider'},
-      dieRole:'rider',
-      dieLabel:maneuverFired.ability.name,
     },()=>rollDicePool([{expr:armedDamageDice[0]},...(out.crit?[{expr:armedDamageDice[0],critical:true}]:[])]));
     rolls.forEach((r,i)=>{if(r){extra+=r.total;appendDamageBreakdownRoll(damageBreakdown,r,`${maneuverFired!.ability.name}${i?' CRIT':''}`);}});
     maneuverFired.die=rolls[0]?.total??0;
@@ -876,13 +872,10 @@ export function resolveAttack(
   // Roll a rider's damage dice, DOUBLING them on a crit — RAW: a critical hit
   // doubles ALL of the attack's damage dice, riders (Hunter's Mark, a dice-adding
   // mastery) included, not just the weapon's own dice. Returns 0 for no/zero roll.
-  const rollRiderDice = (expr: string, source: string, trayDetail?: string): number => {
+  const rollRiderDice = (expr: string, source: string, _trayDetail?: string): number => {
     const critDice=out.crit?damageParts(expr).dice:'';
     const [r,critical]=withDiceMetadata({
       label:`${source} — Damage`,
-      trayBanner:{title:source,detail:trayDetail||`+${expr}${out.crit?' (crit doubled)':''}`,tone:'rider'},
-      dieRole:'rider',
-      dieLabel:source,
     },()=>rollDicePool([{expr},...(critDice?[{expr:critDice,critical:true}]:[])]));
     if (!r) return 0;
     appendDamageBreakdownRoll(damageBreakdown, r, source);
@@ -1097,13 +1090,6 @@ export function resolveAttack(
             }
           : {
               label: `${tr.name} — ${exType || 'trigger'} damage`,
-              trayBanner: {
-                title: tr.name,
-                detail: `+${expr}${critExpr ? ' (crit doubled)' : ''}${exType ? ` ${exType}` : ''} on ${weapon.name}`,
-                tone: 'rider' as const,
-              },
-              dieRole: 'rider' as const,
-              dieLabel: tr.name,
             },
         () => rollDicePool(terms),
       );
@@ -1513,9 +1499,6 @@ export function resolveManeuver(sessionId: string, roller: string, rollId: strin
   if(p.live){materializeLiveDamage(sessionId,rollId);return resolveManeuver(sessionId,roller,rollId,abilityId);}
   const dice = withDiceMetadata({
     label:`${ability.name} — Superiority damage`,
-    trayBanner:{title:ability.name,detail:`+${ch.superiorityDie||'d8'}${p.crit?' (crit doubled)':''} superiority die`,tone:'rider'},
-    dieRole:'rider',
-    dieLabel:ability.name,
   },()=>rollDicePool(Array.from({length:p.crit?2:1},(_,i)=>({expr:ch.superiorityDie||'d8',critical:i>0}))));
   if (dice.some(d => !d)) return { ok: false, reason: 'Invalid Superiority Die.' };
   const rolled = dice.reduce((sum, d) => sum + d!.total, 0);
@@ -1615,9 +1598,6 @@ export function resolveSmite(
   let rolled = 0;
   const smiteRolls=withDiceMetadata({
     label:`${ability.name} — ${spec.damageType} damage`,
-    trayBanner:{title:ability.name,detail:`+${terms.join('+')}${sm.crit?' (crit doubled)':''} ${spec.damageType}`,tone:'rider'},
-    dieRole:'rider',
-    dieLabel:ability.name,
   },()=>rollDicePool(terms.flatMap(expr=>Array.from({length:sm.crit?2:1},(_,i)=>({expr,critical:i>0})))));
   let smiteIndex=0;
   for (const term of terms) {
@@ -2172,8 +2152,9 @@ export function resolveForcedSave(
   let dmg: number;
   let detail: string;
   let savePassed = false;
-  // A 'check' reveal for the save roll (the target's own d20) — only set when a
-  // save is actually rolled (not on auto-fail or a save-less auto-hit apply).
+  let autoFailed = false;
+  // A 'check' reveal for the save roll (the target's own d20), or an auto-fail
+  // summary when a condition (e.g. Paralyzed) skips the roll under 5e RAW.
   let saveReveal: RollReveal | undefined;
   if (apply.attacks && apply.attack) {
     const index = apply.consumedAttacks ?? 0;
@@ -2289,14 +2270,34 @@ export function resolveForcedSave(
   }
   if (apply.save) {
     const ability = apply.save;
+    const saveEffect = (pass: boolean) => {
+      if (apply.effect?.commandWord) return pass ? 'Command resisted.' : `Command: ${apply.effect.commandWord} takes effect next turn. ${commandInstruction(apply.effect.commandWord)}`;
+      if (apply.amount > 0) return `${pass ? 'Save passed' : 'Save failed'} - ${defended(pass)} ${apply.damageType ?? ''} damage${pass ? (apply.saveDamage === 'none' ? ' (avoided)' : ' (save for half)') : ''}.`;
+      if (src?.label.trim().toLowerCase() === 'pushing attack') return pass ? 'Push resisted - target stays in place.' : 'Push succeeds - move the target up to 15 ft.';
+      if (apply.effect) return pass ? `${apply.effect.spell} resisted - not ${apply.effect.condition}.` : `${apply.effect.spell} successful - ${apply.effect.condition}${apply.effect.repeatSave ? '; repeat the save at the end of each turn' : ''}.`;
+      if (apply.onFail) return pass ? `${src?.label ?? 'Effect'} resisted - no ${apply.onFail}.` : `${src?.label ?? 'Effect'} successful - ${apply.onFail}.`;
+      if (apply.customEffect?.conditionLabel) return pass ? `${src?.label ?? 'Effect'} resisted - not ${apply.customEffect.conditionLabel}.` : `${src?.label ?? 'Effect'} successful - ${apply.customEffect.conditionLabel}${apply.customEffect.repeatSave ? '; repeat the save at the end of each turn' : ''}.`;
+      return `${src?.label ?? 'Effect'} ${pass ? 'resisted' : 'successful'}!`;
+    };
     // Paralyzed/Stunned/Unconscious/Petrified auto-fail STR & DEX saves (no roll).
     const autoFail = saveAutoFail(r.conditionLabels, ability);
     if (autoFail) {
+      autoFailed = true;
       dmg = defended(false); // auto-fail → full damage
       const condTxt = apply.effect?.condition || apply.onFail ? ` · ${apply.effect?.condition ?? apply.onFail}` : '';
+      const pushNote = src?.label.trim().toLowerCase() === 'pushing attack' ? ' · Push succeeds — move the target up to 15 ft.' : '';
       applyFailedCondition();
       detail =
-        `${r.name}: auto-fails (${autoFail}) vs DC ${apply.dc} — FAIL${apply.amount ? ` · takes ${dmg}${typeTxt}` : ''}${condTxt}${!apply.effect ? appliedCustomText : ''}`;
+        `${r.name}: auto-fails (${autoFail}) vs DC ${apply.dc} — FAIL${apply.amount ? ` · takes ${dmg}${typeTxt}` : ''}${condTxt}${pushNote}${!apply.effect ? appliedCustomText : ''}`;
+      saveReveal = {
+        kind: 'check',
+        attacker: r.name,
+        title: `${apply.effect?.commandWord ? src?.expr : src?.label ?? 'Effect'} — ${ability.toUpperCase()} Saving Throw`,
+        outcome: 'fail',
+        autoFailReason: autoFail,
+        effectOutcome: saveEffect(false),
+        ...(apply.amount > 0 ? { damage: dmg, damageType: apply.damageType } : {}),
+      };
     } else {
       const proficient = r.saveProficiencies.some(
         (s) => s.trim().toUpperCase() === ability.trim().toUpperCase(),
@@ -2310,14 +2311,6 @@ export function resolveForcedSave(
       const cond = areaSave ? (areaSave.condRoll ?? { bonus: 0, notes: [] }) : (targetEnt ? rollBlessBaneBonus(targetEnt, 'save') : { bonus: 0, notes: [] });
       const extraTotal = sb.add + cond.bonus;
       const extraNote = `${sb.note}${cond.notes.length ? ` · ${cond.notes.join(', ')}` : ''}`;
-      const saveEffect=(pass:boolean)=>{
-        if(apply.effect?.commandWord)return pass?'Command resisted.':`Command: ${apply.effect.commandWord} takes effect next turn. ${commandInstruction(apply.effect.commandWord)}`;
-        if(apply.amount>0)return `${pass?'Save passed':'Save failed'} - ${defended(pass)} ${apply.damageType??''} damage${pass?(apply.saveDamage==='none'?' (avoided)':' (save for half)'):''}.`;
-        if(src?.label.trim().toLowerCase()==='pushing attack')return pass?'Push resisted - target stays in place.':'Push succeeds - move the target up to 15 ft.';
-        if(apply.effect)return pass?`${apply.effect.spell} resisted - not ${apply.effect.condition}.`:`${apply.effect.spell} successful - ${apply.effect.condition}${apply.effect.repeatSave ? '; repeat the save at the end of each turn' : ''}.`;
-        if(apply.onFail)return pass?`${src?.label??'Effect'} resisted - no ${apply.onFail}.`:`${src?.label??'Effect'} successful - ${apply.onFail}.`;
-        return `${src?.label??'Effect'} ${pass?'resisted':'successful'}!`;
-      };
       const runBatch = () => rollSaveBatch([{target:tok,c:r.c,ability,dc:apply.dc,mode:adv.state,proficient,extra:extraTotal,autoFail:false,passEffect:saveEffect(true),failEffect:saveEffect(false)}],`${apply.effect?.commandWord?src?.expr:src?.label??'Effect'} — ${ability.toUpperCase()} Saving Throw`);
       const [out] = areaSave ? withDiceSource(() => areaSave.faces, runBatch) : runBatch();
       const total = out.total + extraTotal;
@@ -2396,7 +2389,7 @@ export function resolveForcedSave(
     detail,
     hpNote: saveNote,
     hideMods: r.kind === 'monster' && getMonster(r.refId)?.disposition !== 'friendly',
-    ...(saveReveal ? { reveal: {...saveReveal,presentedLive:presentedLive||usingPhysicalDice(),visibilityTarget:{kind:tok.kind,refId:tok.refId}} } : {}),
+    ...(saveReveal ? { reveal: {...saveReveal,presentedLive:autoFailed?false:(presentedLive||usingPhysicalDice()),visibilityTarget:{kind:tok.kind,refId:tok.refId}} } : {}),
   }, resolutionRollId);
 }
 

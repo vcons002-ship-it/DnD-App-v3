@@ -1319,6 +1319,8 @@ export type RollReveal = {
   presentedLive?: boolean;
   /** Plain-language effect result alongside the target's save result. */
   effectOutcome?: string;
+  /** Condition causing an automatic save failure without rolling a d20 (e.g. 'paralyzed'). */
+  autoFailReason?: string;
   /** Automatic area saves are visible only to viewers who can see this creature. */
   visibilityTarget?: {kind: TokenKind; refId: string};
   /** Faces already rolled by authoritative live physics; do not replay a cosmetic throw. */

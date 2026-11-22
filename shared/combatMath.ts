@@ -381,7 +381,7 @@ export function rollRuledDamagePool(params: {
   const setPlan = (setIdx: number): WeaponTrayDiePlan[] => [
     ...baseSides.map((sides) => ({ sides, set: setIdx, critical: false })),
     ...critSides.map((sides) => ({ sides, set: setIdx, critical: true })),
-    ...extraWeaponCritSides.map((sides) => ({ sides, set: setIdx, critical: true })),
+    ...extraWeaponCritSides.map((sides) => ({ sides, set: setIdx, critical: false })),
   ];
   const plannedDice: WeaponTrayDiePlan[] = [
     ...setPlan(0),
@@ -462,7 +462,7 @@ export function rollRuledDamagePool(params: {
     const terms: { expr: string; critical?: boolean }[] = [
       { expr: diceExpr },
       ...(effectiveCritExpr ? [{ expr: effectiveCritExpr, critical: true }] : []),
-      ...(extraWeaponCritSides.length > 0 ? [{ expr: `${extraWeaponCritSides.length}d${weaponDieSides}`, critical: true }] : []),
+      ...(extraWeaponCritSides.length > 0 ? [{ expr: `${extraWeaponCritSides.length}d${weaponDieSides}`, critical: false }] : []),
     ];
     const rolls = withDiceMetadata(meta, () => rollDicePool(terms));
     const r1 = rolls[0];
@@ -527,7 +527,7 @@ export function rollRuledDamagePool(params: {
     const terms: { expr: string; critical?: boolean }[] = [
       { expr: diceExpr },
       ...(effectiveCritExpr ? [{ expr: effectiveCritExpr, critical: true }] : []),
-      ...(extraWeaponCritSides.length > 0 ? [{ expr: `${extraWeaponCritSides.length}d${weaponDieSides}`, critical: true }] : []),
+      ...(extraWeaponCritSides.length > 0 ? [{ expr: `${extraWeaponCritSides.length}d${weaponDieSides}`, critical: false }] : []),
       ...(customExtraCritExpr ? [{ expr: customExtraCritExpr, critical: true }] : []),
     ];
     const rolls = withDiceMetadata(

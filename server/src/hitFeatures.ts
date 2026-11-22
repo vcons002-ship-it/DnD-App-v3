@@ -122,9 +122,6 @@ export function resolveHitFeature(sid:string,roller:string,rollId:string,ability
     // Show the shared damage first, then all target saves in one labeled throw.
     const damage=withDiceMetadata({
       label:'Hail of Thorns — Piercing Damage',
-      trayBanner:{title:ab.name,detail:`${n}d10 piercing burst (5 ft · DEX save half)`,tone:'rider'},
-      dieRole:'rider',
-      dieLabel:ab.name,
     },()=>rollDice(`${n}d10`))!,impactId=newId();
     const prep=targets.map(t=>{
       const entity=markedEntity(t.kind,t.refId)!,labels=entity.conditions.map(c=>c.label),cond=rollBlessBaneBonus(entity);
@@ -164,9 +161,6 @@ export function resolveHitFeature(sid:string,roller:string,rollId:string,ability
   const type=key==='searing smite'?'fire':key==='thunderous smite'?'thunder':key==='wrathful smite'?'necrotic':key==='branding smite'?'radiant':key==='divine strike'?(ab.roll?.damageType||'radiant'):w.damageType;
   const rolls=expr?withDiceMetadata({
     label:`${ab.name} — ${type || 'extra'} damage`,
-    trayBanner:{title:ab.name,detail:`+${expr}${p.crit?' (crit doubled)':''}${type?` ${type}`:''} on hit`,tone:'rider'},
-    dieRole:'rider',
-    dieLabel:ab.name,
   },()=>rollDicePool(Array.from({length:p.crit?2:1},(_,i)=>({expr,critical:i>0})))).filter((r):r is NonNullable<typeof r>=>r!==null):[];
   const raw=rolls.reduce((sum,r)=>sum+r.total,0);
   const sameType=type===w.damageType;
