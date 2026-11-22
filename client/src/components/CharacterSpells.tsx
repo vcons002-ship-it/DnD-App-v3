@@ -1,5 +1,6 @@
 import {confirmAction} from '../lib/dialogs';
 import { hitFeature, markSpell, abilityKey } from '../../../shared/hitFeatures';
+import { isStandaloneSavageAttacker } from '../../../shared/diceRules';
 import { RechargeChip } from './RechargeChip';
 import { isOnHitManeuver } from '../../../shared/maneuvers';
 import { applyRulesUpdate, isOutdated } from '../../../shared/rulesUpdate';
@@ -97,7 +98,7 @@ const isManeuver = (a: SheetAbility): boolean =>
   a.type === 'maneuver' && !!a.maneuver;
 
 /** A stance gets an on/off toggle (a persistent attack modifier while active). */
-const isStance = (a: SheetAbility): boolean => a.type === 'stance' && !!a.stance && !hitFeature(a) && !markSpell(a);
+const isStance = (a: SheetAbility): boolean => a.type === 'stance' && !!a.stance && !hitFeature(a) && !markSpell(a) && !isStandaloneSavageAttacker(a);
 
 /**
  * A character's spells, abilities & weapon masteries. Each entry is collapsible

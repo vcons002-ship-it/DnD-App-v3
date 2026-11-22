@@ -30,11 +30,12 @@ export function resultTrayFor(frames:Iterable<LiveDiceFrame>,reveal:RollReveal):
   const diceFor=(frame:LiveDiceFrame)=>{
     const dice:{sides:number;value:number|null}[]=[];
     for(let i=0;i<frame.sides.length;i++){
+      if(frame.discardedDice?.[i])continue;
       if(frame.mode&&frame.kept!==undefined&&frame.sets[i]!==frame.kept)continue;
       if(frame.percentile[i]==='tens'){
         const tens=frame.values[i],ones=frame.values[++i];
         dice.push({sides:100,value:tens===null||ones===null?null:(tens-1)*10+ones-1||100});
-      }else dice.push({sides:frame.sides[i],value:frame.values[i]});
+      }else dice.push({sides:frame.sides[i],value:frame.dieAdjustedValues?.[i]??frame.values[i]});
     }
     return dice;
   };
@@ -57,5 +58,5 @@ export function resultTrayFor(frames:Iterable<LiveDiceFrame>,reveal:RollReveal):
 export function diceTriggerForTray(frame:LiveDiceFrame,reveal?:RollReveal){
  const trigger=reveal?.diceTrigger;if(!trigger||frame.sides.length!==trigger.diceCount)return undefined;
  const dice=flattenDamageDice(reveal.damageDice).slice(0,trigger.diceCount);
- return dice.length===frame.sides.length&&dice.every((d,i)=>d.sides===frame.sides[i]&&d.value===frame.values[i])?trigger:undefined;
+ return dice.length===frame.sides.length&&dice.every((d,i)=>d.sides===frame.sides[i]&&d.value===(frame.dieAdjustedValues?.[i]??frame.values[i]))?trigger:undefined;
 }

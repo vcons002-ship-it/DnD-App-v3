@@ -16,6 +16,7 @@ import {
 import {
   createSession,
   setCombatRound,
+  setActiveTurn,
   createMap,
   setActiveMap,
   createToken,
@@ -38,6 +39,7 @@ import {
 } from './sessions.js';
 import { buildSnapshot, lootVisibleToPlayers } from './visibility.js';
 import { getFeature, searchFeatures } from './features/srd.js';
+import { physicalFaces, runLiveCommand } from './liveRolls.js';
 import type { CreatureAbility, SheetAbility } from '../../shared/types.js';
 
 function arena() {
@@ -1898,9 +1900,144 @@ describe('Savage Attacker', () => {
   it('ships as a ready-to-add feat in the rules DB', () => {
     const feat = getFeature('Savage Attacker');
     expect(feat).toBeTruthy();
-    expect(feat!.type).toBe('stance');
+    expect(feat!.type).toBe('ability');
     expect(feat!.stance?.rerollDamageDice).toBe(true);
     expect(searchFeatures('savage').some((f) => f.name === 'Savage Attacker')).toBe(true);
+  });
+
+  it('includes Savage Attacks extra crit die inside the Savage Attacker reroll pool per 5e RAW', () => {
+    const { s, map } = arena();
+    const ch = createCharacter(s.id, {
+      name: 'OrcSavage',
+      className: 'Barbarian',
+      level: 1,
+      stats: { STR: 16 },
+      weapons: [{ name: 'Greataxe', kind: 'melee', damage: '1d12', attackBonus: 50 }],
+    });
+    setSheetAbility('pc', ch.id, {
+      id: 'sa-feat',
+      name: 'Savage Attacker',
+      type: 'stance',
+      description: '',
+      stance: { active: true, appliesTo: 'all', rerollDamageDice: true },
+    });
+    setSheetAbility('pc', ch.id, {
+      id: 'sa-racial',
+      name: 'Savage Attacks',
+      type: 'stance',
+      description: '',
+      stance: { active: true, appliesTo: 'melee', extraCritDie: true },
+    });
+    const atk = createToken({ mapId: map.id, kind: 'pc', refId: ch.id, x: 0, y: 0 });
+    const tmpl = createMonsterTemplate(s.id, { name: 'Dummy', maxHp: 999, armorClass: 1 });
+    const mon = instantiateMonster(tmpl.id)!;
+    const tgt = createToken({ mapId: map.id, kind: 'monster', refId: mon.id, x: 1, y: 1 });
+
+    // d20=20 crit, Wave 1 = [1, 1, 1] (sum 3), Wave 2 = [7, 7, 12] (sum 26 including Savage Attacks d12!)
+    vi.spyOn(Math, 'random')
+      .mockReturnValue(0.5)
+      .mockReturnValueOnce(0.999)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.5)
+      .mockReturnValueOnce(0.5)
+      .mockReturnValueOnce(0.999);
+
+    try {
+      resolveAttack(s.id, 'OrcSavage', atk.id, tgt.id, 0);
+      const entry = listRollLog(s.id).at(-1)!;
+      expect(entry.detail).toContain('[SAVAGE 26/3]');
+      expect(entry.detail).toContain('[SAVAGE CRIT]');
+      expect(entry.reveal?.damageDice?.map((d) => d.faces)).toEqual([[7], [7], [12]]);
+      expect(entry.reveal?.damage).toBe(29);
+      expect(getMonster(mon.id)!.curHp).toBe(999 - 29);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('offers Savage Attacker once per turn cleanly (Keep preserves it; Reroll sets hitUsedTurn and suppresses 2nd prompt)', async () => {
+    const { s, map } = arena();
+    const ch = createCharacter(s.id, {
+      name: 'TurnSavage',
+      className: 'Fighter',
+      level: 1,
+      stats: { STR: 16 },
+      weapons: [{ name: 'Greatsword', kind: 'melee', damage: '2d6', attackBonus: 50 }],
+    });
+    setSheetAbility('pc', ch.id, {
+      id: 'sa-interactive-turn',
+      name: 'Savage Attacker',
+      type: 'ability',
+      description: '',
+      stance: { active: false, appliesTo: 'all', rerollDamageDice: true },
+    });
+    const atk = createToken({ mapId: map.id, kind: 'pc', refId: ch.id, x: 0, y: 0 });
+    const tmpl = createMonsterTemplate(s.id, { name: 'Dummy', maxHp: 999, armorClass: 1 });
+    const mon = instantiateMonster(tmpl.id)!;
+    const tgt = createToken({ mapId: map.id, kind: 'monster', refId: mon.id, x: 1, y: 1 });
+
+    setCombatRound(s.id, 1);
+    setActiveTurn(s.id, atk.id);
+
+    let prompts = 0;
+    let seq = 0;
+    const stubDice: typeof physicalFaces = async (sides, publish, meta, _seed, info) => {
+      const values = sides.map((side) => (side === 20 ? 18 : info?.weaponTray?.phase === 'savage-reroll' ? 6 : 2));
+      publish({
+        id: info?.weaponTray ? `weapon-${atk.id}` : `atk-${seq}`,
+        seq: seq++,
+        done: true,
+        sides,
+        values,
+        label: meta.label,
+        roller: meta.roller,
+        className: meta.className,
+        sets: sides.map(() => 0),
+        critical: sides.map(() => false),
+        percentile: sides.map(() => null),
+        poses: [],
+        rerolls: sides.map(() => 0),
+        radius: 1,
+        elapsed: 1,
+      });
+      return values;
+    };
+
+    const runOneAttack = async (accept: boolean) => {
+      await runLiveCommand(
+        () => {
+          resolveAttack(s.id, 'TurnSavage', atk.id, tgt.id, 0);
+        },
+        () => {},
+        {
+          label: 'Greatsword',
+          roller: 'TurnSavage',
+          className: 'Fighter',
+          waitForPresentation: async () => {},
+          chooseReroll: async () => {
+            prompts++;
+            return accept;
+          },
+        },
+        stubDice,
+      );
+    };
+
+    // 1. Choosing Keep preserves Savage Attacker for another attack in the same turn.
+    await runOneAttack(false);
+    expect(prompts).toBe(1);
+    expect(getCharacter(ch.id)!.sheetAbilities.find((a) => a.id === 'sa-interactive-turn')!.hitUsedTurn).toBeUndefined();
+
+    // 2. Choosing Reroll marks hitUsedTurn on the ability.
+    await runOneAttack(true);
+    expect(prompts).toBe(2);
+    expect(getCharacter(ch.id)!.sheetAbilities.find((a) => a.id === 'sa-interactive-turn')!.hitUsedTurn).toBeTruthy();
+
+    // 3. A subsequent hit on the same turn does not offer Savage Attacker again.
+    await runOneAttack(true);
+    expect(prompts).toBe(2);
   });
 });
 

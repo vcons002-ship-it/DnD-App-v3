@@ -39,7 +39,7 @@ export function linkedSpellProfile(a: SheetAbility): Profile | undefined {
     const dice=(r.dice??'').replace(/\s/g,'').toLowerCase();
     if(dice && dice!==(p.roll?.dice??'').toLowerCase() && !(oldDice[key]??[]).includes(dice))return;
     if(r.save && r.save!==p.roll?.save)return;
-    if(r.instances || r.healingMode || r.healingBonus || r.damageBonus && r.damageBonus!==p.roll?.damageBonus)return;
+    if(r.instances || r.healingMode || r.healingBonus || r.diceRules || r.damageBonus && r.damageBonus!==p.roll?.damageBonus)return;
     const legacyScale=key==='chill touch'?['1d8']:key==='ice storm'?['1d8','1d10']:key==='flame strike'?['1d6']:[];
     if(r.scaleDice && r.scaleDice!==p.roll?.scaleDice && !legacyScale.includes(r.scaleDice))return;
     if(r.damageType && p.roll?.damageType && r.damageType!==p.roll.damageType && !['ice storm','flame strike','meteor swarm'].includes(key))return;

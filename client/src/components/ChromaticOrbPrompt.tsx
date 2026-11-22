@@ -36,7 +36,9 @@ export function ChromaticOrbPrompt() {
     return () => window.removeEventListener('keydown', cancel);
   }, [setTargeting]);
   if (!ready || !snapshot || !orb || !entry) return null;
-  const range = orb.initial ? 90 : 30;
+  const spellName = orb.spellName || 'Chromatic Orb';
+  const maxLeaps = orb.maxLeaps ?? orb.slotLevel;
+  const range = orb.initial ? 90 : (orb.leapRangeFt ?? 30);
   const caster = entry.apply?.attack?.attacker;
   const side = (kind: string, refId: string) => kind === 'pc' ? 'friendly'
     : snapshot.monsters.find(m => m.id === refId)?.disposition ?? 'neutral';
@@ -50,12 +52,12 @@ export function ChromaticOrbPrompt() {
   const choosing = targeting?.rollId === entry.id;
   const selected = choosing ? snapshot.tokens.find(t => t.id === targeting.targetId) : undefined;
   const valid = !!selected && targets.some(t => t.id === selected.id);
-  return <section className={`orb-prompt${choosing ? ' orb-picking' : ''}`} aria-label="Chromatic Orb" aria-live="polite">
-    <strong>{orb.initial ? 'Launch Chromatic Orb' : 'Matching dice — Orb can leap!'}</strong>
+  return <section className={`orb-prompt${choosing ? ' orb-picking' : ''}`} aria-label={spellName} aria-live="polite">
+    <strong>{orb.initial ? `Launch ${spellName}` : `Matching dice — ${spellName} can leap!`}</strong>
     {!orb.initial && <div className="orb-matches" aria-label="Matching damage dice">
       {orb.matches.map((face,i) => <span key={i}>{face}</span>)}
     </div>}
-    <p>{entry.apply?.damageType} · {orb.initial ? `Up to ${orb.slotLevel} leaps` : `Leap ${orb.leapsUsed + 1} of ${orb.slotLevel} · No extra spell slot`}</p>
+    <p>{entry.apply?.damageType} · {orb.initial ? `Up to ${maxLeaps} leaps` : `Leap ${orb.leapsUsed + 1} of ${maxLeaps} · No extra spell slot`}</p>
     <label style={{display:'block',fontSize:13,marginBottom:10}}>
       <input type="checkbox" checked={includeAllies} onChange={e => setIncludeAllies(e.target.checked)} /> Include allies
     </label>

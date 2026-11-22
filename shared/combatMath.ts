@@ -1,10 +1,11 @@
 // Derived 5e combat math: proficiency, attack/damage rolls, saves. Pure +
 // framework-free so the server resolves authoritatively and it's unit-tested.
-import type { Weapon } from './types.js';
+import type { DiceRulesSpec, Weapon } from './types.js';
 import { abilityMod, proficiencyBonus, signed } from './skills.js';
-import { rollDice, rollDicePool, withDiceMetadata } from './dice.js';
+import { rollDice, rollDicePool, withDiceMetadata, type WeaponTrayDiePlan } from './dice.js';
 import { DAMAGE_TYPES } from './damage.js';
 import type { Advantage } from './dice.js';
+import { resolveRuleCap } from './diceRules.js';
 
 // Single source of truth is the dice module; re-exported so combat callers can
 // keep importing `Advantage` from here.
@@ -19,18 +20,75 @@ export type Combatant = {
 
 
 /**
- * Roll a d20 honoring advantage/disadvantage, returning the chosen face plus a
- * display breakdown that shows BOTH dice: `d20[a,b]→adv face` (or `d20[a]` for a
- * straight roll). Shared by every server-side d20 roll so the log is uniform.
+ * Roll a d20 honoring advantage/disadvantage (and optional Halfling Lucky
+ * automatic natural-1 reroll in the same live tray), returning the chosen face
+ * plus a display breakdown: `d20[a,b]→adv face` or `d20[a]`.
  */
-export function rollD20Detail(advantage?: Advantage): { face: number; detail: string } {
-  const rolled=rollDice('1d20',advantage)!;
-  const pool=advantage?[...rolled.detail.matchAll(/1d20\[(\d+)\]/g)].map(m=>Number(m[1])):rolled.rolls;
-  const a=pool[0];
-  if (!advantage) return { face: a, detail: `d20[${a}]` };
-  const b = pool[1];
-  const face = advantage === 'adv' ? Math.max(a, b) : Math.min(a, b);
-  return { face, detail: `d20[${a},${b}]→${advantage} ${face}` };
+export function rollD20Detail(
+  advantage?: Advantage,
+  opts?: { halflingLucky?: boolean; luckyLabel?: string },
+): { face: number; detail: string; luckyRerolled?: { from: number; to: number } } {
+  if (!opts?.halflingLucky) {
+    const rolled = rollDice('1d20', advantage)!;
+    const pool = advantage
+      ? [...rolled.detail.matchAll(/1d20\[(\d+)\]/g)].map((m) => Number(m[1]))
+      : rolled.rolls;
+    const a = pool[0];
+    if (!advantage) return { face: a, detail: `d20[${a}]` };
+    const b = pool[1];
+    const face = advantage === 'adv' ? Math.max(a, b) : Math.min(a, b);
+    return { face, detail: `d20[${a},${b}]\u2192${advantage} ${face}` };
+  }
+  const luckyLabel = opts.luckyLabel || 'Halfling Lucky';
+  const plannedDice: WeaponTrayDiePlan[] = advantage
+    ? [{ sides: 20, set: 0 }, { sides: 20, set: 1 }, { sides: 20, set: 2 }]
+    : [{ sides: 20, set: 0 }, { sides: 20, set: 1 }];
+  const baseTray = {
+    phase: 'initial' as const,
+    weaponName: luckyLabel,
+    damageExpr: '1d20',
+    crit: false,
+    plannedDice,
+    setCount: advantage ? 2 : 1,
+    hasReroll: false,
+    hasExtraCrit: false,
+    luckyLabel,
+  };
+  const rolled = withDiceMetadata({ weaponTray: baseTray }, () => rollDice('1d20', advantage)!);
+  const pool = advantage
+    ? [...rolled.detail.matchAll(/1d20\[(\d+)\]/g)].map((m) => Number(m[1]))
+    : rolled.rolls.slice();
+  const oneIdx = pool.findIndex((v) => v === 1);
+  if (oneIdx < 0) {
+    if (!advantage) return { face: pool[0], detail: `d20[${pool[0]}]` };
+    const [a, b] = pool;
+    const face = advantage === 'adv' ? Math.max(a, b) : Math.min(a, b);
+    return { face, detail: `d20[${a},${b}]\u2192${advantage} ${face}` };
+  }
+  const reroll = withDiceMetadata(
+    {
+      label: `${luckyLabel} Reroll`,
+      weaponTray: { ...baseTray, phase: 'lucky-reroll' as const, luckySourceIndex: oneIdx },
+    },
+    () => rollDice('1d20')!,
+  );
+  const newFace = reroll.rolls[0];
+  if (!advantage) {
+    return {
+      face: newFace,
+      detail: `d20[1\u2192${newFace} Lucky]`,
+      luckyRerolled: { from: 1, to: newFace },
+    };
+  }
+  const updated = pool.slice();
+  updated[oneIdx] = newFace;
+  const face = advantage === 'adv' ? Math.max(updated[0], updated[1]) : Math.min(updated[0], updated[1]);
+  const poolStr = pool.map((v, i) => (i === oneIdx ? `1\u2192${newFace} Lucky` : `${v}`)).join(',');
+  return {
+    face,
+    detail: `d20[${poolStr}]\u2192${advantage} ${face}`,
+    luckyRerolled: { from: 1, to: newFace },
+  };
 }
 
 /** Monster proficiency bonus by challenge rating (CR 0–4 → +2, 5–8 → +3, …). */
@@ -113,9 +171,815 @@ export function damageParts(expr: string): { dice: string; flat: number } {
   return { dice: dice.replace(/^\+/, ''), flat };
 }
 
+/** Parse the die sizes from an expression such as "2d6+1d4+3" -> [6, 6, 4]. */
+export function parseDiceSides(expr: string): number[] {
+  const out: number[] = [];
+  for (const m of expr.replace(/\s+/g, '').matchAll(/(\d*)d(\d+)/gi)) {
+    const count = Number(m[1] || 1), sides = Number(m[2]);
+    for (let i = 0; i < count; i++) out.push(sides);
+  }
+  return out;
+}
+
 /** One labelled term in an attack's reveal breakdown (mirrors `RollReveal`'s
  *  `RevealStep`, kept local so `shared/combatMath` needn't import the big types). */
-export type AttackStep = { label: string; value: number; faces?: number[]; diceExpression?: string };
+export type AttackStep = {
+  label: string;
+  value: number;
+  faces?: number[];
+  diceExpression?: string;
+  critical?: boolean;
+  source?: string;
+  rawFaces?: number[];
+  floorLabel?: string;
+};
+
+export type RuledDicePoolResult = {
+  total: number;
+  steps: AttackStep[];
+  parts: string[];
+  notes: string[];
+  /** Kept primary + crit + exploded faces (excluding riders) for downstream match/max checks. */
+  keptFaces: number[];
+  keptSides: number[];
+  damageMaxHit: boolean;
+  damageHasMatch: boolean;
+  matchingFaces: number[];
+  /** Present when custom `extraCritDice` uses a different damage type than the weapon/spell. */
+  extraCritTyped?: { total: number; damageType: string; steps: AttackStep[]; parts: string[] };
+  /** Present when `matchingDice.action === 'bonus-dice'` fired. */
+  matchingBonus?: { total: number; damageType?: string; steps: AttackStep[]; parts: string[]; label: string; faces: number[] };
+  usedWeaponTray: boolean;
+  usedReroll?: boolean;
+  baseTrayInfo?: import('./dice.js').WeaponTrayInfo;
+};
+
+function findMatchingValues(faces: number[], minMatches = 2): number[] {
+  const counts = new Map<number, number>();
+  for (const f of faces) counts.set(f, (counts.get(f) ?? 0) + 1);
+  return [...counts].filter(([, c]) => c >= Math.max(2, minMatches)).map(([v]) => v);
+}
+
+/**
+ * Shared dice-pool executor supporting:
+ * - Savage Attacker (`full-pool` reroll) & custom pool rerolls
+ * - Individual low-die rerolls (`die-lte`, e.g. Empowered Spell)
+ * - Minimum face floors (Great Weapon Fighting `1,2→3`, Elemental Adept `1→2`)
+ * - Exploding dice (`exploding`, arbitrary face/size/cap/recursive)
+ * - Extra critical weapon dice (Savage Attacks, Brutal Critical, custom crit dice)
+ * - Matching-dice bonus dice (`matchingDice.action === 'bonus-dice'`)
+ * - Pre-planned downstream rider slots so weapon triggers continue in the SAME continuous tray!
+ */
+export function rollRuledDamagePool(params: {
+  title: string;
+  diceExpr: string;
+  critExpr?: string;
+  crit: boolean;
+  damageType?: string;
+  diceRules?: DiceRulesSpec;
+  rerollDamageDice?: boolean;
+  rerollDamageLabel?: string;
+  interactiveReroll?: boolean;
+  chooseReroll?: (info: { label: string; rollTotal: number; diceSummary: string }) => boolean;
+  extraCritWeaponDice?: number;
+  extraCritDieLabel?: string;
+  extraCritLabels?: string[];
+  castingMod?: number;
+  proficiency?: number;
+  extraPlannedDice?: WeaponTrayDiePlan[];
+  fastPathLabel?: string;
+}): RuledDicePoolResult {
+  const {
+    title,
+    diceExpr,
+    critExpr,
+    crit,
+    damageType,
+    diceRules,
+    castingMod,
+    proficiency,
+    extraPlannedDice,
+  } = params;
+  const baseSides = diceExpr ? parseDiceSides(diceExpr) : [];
+  const effectiveCritExpr = crit ? (critExpr ?? diceExpr) : '';
+  const critSides = effectiveCritExpr ? parseDiceSides(effectiveCritExpr) : [];
+  const weaponDieSides = baseSides[0] ?? 0;
+
+  const extraWeaponCritCount = crit
+    ? Math.max(0, (params.extraCritWeaponDice ?? 0) + (diceRules?.extraCritWeaponDice ?? 0))
+    : 0;
+  const extraWeaponCritSides = Array(extraWeaponCritCount)
+    .fill(weaponDieSides)
+    .filter((s) => s > 0);
+  const customExtraCritExpr = crit ? diceRules?.extraCritDice?.trim() || '' : '';
+  const customExtraCritSides = customExtraCritExpr ? parseDiceSides(customExtraCritExpr) : [];
+  const weaponPoolSides = [...baseSides, ...critSides, ...extraWeaponCritSides];
+  // Savage Attacker / weapon-pool rules operate across all weapon damage dice
+  // (base + critical doubled + Savage Attacks / Brutal Critical weapon dice).
+  const allInitialSides = weaponPoolSides;
+  const hasExtraCrit = extraWeaponCritSides.length > 0 || customExtraCritSides.length > 0;
+  const extraCritLabels: string[] = [
+    ...Array.from({ length: extraWeaponCritSides.length }, (_, i) =>
+      params.extraCritLabels?.[i] ?? diceRules?.extraCritLabel ?? params.extraCritDieLabel ?? 'Savage Attacks',
+    ),
+    ...customExtraCritSides.map(() => diceRules?.extraCritLabel || 'Critical Bonus'),
+  ];
+  const weaponExtraLabels = extraCritLabels.slice(0, extraWeaponCritSides.length);
+  const customExtraLabels = extraCritLabels.slice(extraWeaponCritSides.length);
+  const primaryExtraLabel =
+    weaponExtraLabels.length === 1
+      ? weaponExtraLabels[0]
+      : [...new Set(extraCritLabels)].join(' & ') || 'Extra Crit Dice';
+
+  const rerollRule =
+    diceRules?.reroll ??
+    (params.rerollDamageDice && baseSides.length > 0
+      ? { mode: 'full-pool' as const, keep: 'higher' as const, label: params.rerollDamageLabel || 'Savage Attacker' }
+      : undefined);
+  const fullPoolReroll = rerollRule?.mode === 'full-pool' && allInitialSides.length > 0;
+  const lowDieReroll = rerollRule?.mode === 'die-lte' && allInitialSides.length > 0;
+  const rerollLabel = rerollRule?.label || params.rerollDamageLabel || 'Savage Attacker';
+
+  const minFaceRule =
+    diceRules?.minFace &&
+    diceRules.minFace.value >= 2 &&
+    (!diceRules.minFace.damageType ||
+      !damageType ||
+      diceRules.minFace.damageType.toLowerCase() === damageType.toLowerCase())
+      ? diceRules.minFace
+      : undefined;
+  const explodingRule = diceRules?.exploding;
+  const matchRule = diceRules?.matchingDice;
+
+  const capCtx = { castingMod, proficiency };
+  const needsRulesTray = Boolean(
+    fullPoolReroll ||
+      lowDieReroll ||
+      hasExtraCrit ||
+      minFaceRule ||
+      explodingRule ||
+      matchRule?.action === 'bonus-dice' ||
+      (extraPlannedDice && extraPlannedDice.length > 0),
+  );
+
+  // Fast path: preserve identical single rollDicePool when no special rules or planned riders exist.
+  if (!needsRulesTray || !diceExpr) {
+    const fastLabel = params.fastPathLabel ?? `${title} — ${crit ? 'Critical Damage' : 'Damage'}`;
+    const [r1, r2] = diceExpr
+      ? withDiceMetadata({ label: fastLabel }, () =>
+          rollDicePool([{ expr: diceExpr }, ...(effectiveCritExpr ? [{ expr: effectiveCritExpr, critical: true }] : [])]),
+        )
+      : [];
+    const steps: AttackStep[] = [];
+    const parts: string[] = [];
+    let total = 0;
+    const rawFaces: number[] = [];
+    if (r1) {
+      total += r1.total;
+      parts.push(`${diceExpr}[${r1.rolls.join(',')}]`);
+      steps.push({ label: diceExpr, value: r1.total, faces: r1.rolls });
+      rawFaces.push(...r1.rolls);
+    }
+    if (crit && effectiveCritExpr && r2) {
+      total += r2.total;
+      parts.push(`+[${r2.rolls.join(',')}][CRIT]`);
+      steps.push({ label: 'CRIT', value: r2.total, faces: r2.rolls, diceExpression: effectiveCritExpr });
+      rawFaces.push(...r2.rolls);
+    }
+    const maxHit = rawFaces.some((f, i) => f === (allInitialSides[i] ?? 0) && allInitialSides[i] > 0);
+    const matches = findMatchingValues(rawFaces, matchRule?.minMatches ?? 2);
+    return {
+      total,
+      steps,
+      parts,
+      notes: [],
+      keptFaces: rawFaces,
+      keptSides: allInitialSides,
+      damageMaxHit: maxHit,
+      damageHasMatch: matches.length > 0,
+      matchingFaces: matches,
+      usedWeaponTray: false,
+    };
+  }
+
+  const uniformInitial = new Set(allInitialSides).size <= 1;
+  const setCount = allInitialSides.length;
+  const explodeCap = explodingRule ? Math.min(20, resolveRuleCap(explodingRule.limit, capCtx, 6)) : 0;
+  const explodeBonusSides = explodingRule
+    ? explodingRule.bonusDice
+      ? parseDiceSides(explodingRule.bonusDice)
+      : [allInitialSides[0] || 6]
+    : [];
+  const lowRerollCap = lowDieReroll
+    ? Math.min(setCount, resolveRuleCap(rerollRule!.maxDice, capCtx, setCount))
+    : 0;
+  const matchBonusSides =
+    matchRule?.action === 'bonus-dice' && matchRule.bonusDice
+      ? parseDiceSides(matchRule.bonusDice)
+      : [];
+
+  const setPlan = (setIdx: number): WeaponTrayDiePlan[] => [
+    ...baseSides.map((sides) => ({ sides, set: setIdx, critical: false })),
+    ...critSides.map((sides) => ({ sides, set: setIdx, critical: true })),
+    ...extraWeaponCritSides.map((sides) => ({ sides, set: setIdx, critical: true })),
+  ];
+  const plannedDice: WeaponTrayDiePlan[] = [
+    ...setPlan(0),
+    ...(fullPoolReroll ? setPlan(1) : []),
+    ...(lowDieReroll && uniformInitial
+      ? Array.from({ length: lowRerollCap }, () => ({ sides: allInitialSides[0], set: 1 }))
+      : []),
+    ...(explodingRule && (uniformInitial || !!explodingRule.bonusDice)
+      ? Array.from({ length: explodeCap }, () =>
+          explodeBonusSides.map((sides) => ({ sides, set: 2 })),
+        ).flat()
+      : []),
+    ...customExtraCritSides.map((sides) => ({ sides, set: 2, critical: true })),
+    ...matchBonusSides.map((sides) => ({ sides, set: 2 })),
+    ...(extraPlannedDice ?? []),
+  ].slice(0, 40);
+
+  const canCombineExtraCritWithInitial =
+    customExtraCritSides.length > 0 && !fullPoolReroll && !lowDieReroll && !explodingRule;
+  const baseTrayInfo: import('./dice.js').WeaponTrayInfo = {
+    phase: 'initial',
+    weaponName: title,
+    damageExpr: diceExpr,
+    crit,
+    plannedDice,
+    setCount,
+    baseCount: baseSides.length,
+    extraWeaponCritCount: extraWeaponCritSides.length,
+    hasReroll: fullPoolReroll,
+    ...(fullPoolReroll && params.interactiveReroll ? { interactiveReroll: true } : {}),
+    hasExtraCrit,
+    ...(fullPoolReroll || lowDieReroll ? { rerollLabel, rerollMode: rerollRule!.mode, rerollKeep: rerollRule!.keep, rerollMaxFace: rerollRule!.maxFace ?? 2 } : {}),
+    ...(hasExtraCrit
+      ? {
+          extraCritLabel: primaryExtraLabel,
+          extraCritSides: extraWeaponCritSides[0] ?? customExtraCritSides[0],
+          extraCritDiceSides: extraWeaponCritSides.length ? extraWeaponCritSides : customExtraCritSides,
+          extraCritLabels,
+        }
+      : {}),
+    ...(minFaceRule ? { minFace: { value: minFaceRule.value, label: minFaceRule.label || 'Minimum Face' } } : {}),
+  };
+
+  const applyFloorFaces = (raw: number[], sides: number[], exprLabel: string, expr?: string, isCrit?: boolean, source?: string): AttackStep => {
+    if (!minFaceRule) {
+      const val = raw.reduce((s, v) => s + v, 0);
+      return {
+        label: exprLabel,
+        value: val,
+        faces: raw,
+        ...(expr ? { diceExpression: expr } : {}),
+        ...(isCrit ? { critical: true } : {}),
+        ...(source ? { source } : {}),
+      };
+    }
+    const eff = raw.map((f, i) => (sides[i] >= minFaceRule.value && f < minFaceRule.value ? minFaceRule.value : f));
+    const floored = eff.some((v, i) => v !== raw[i]);
+    const val = eff.reduce((s, v) => s + v, 0);
+    return {
+      label: exprLabel,
+      value: val,
+      faces: eff,
+      ...(expr ? { diceExpression: expr } : {}),
+      ...(isCrit ? { critical: true } : {}),
+      ...(source ? { source } : {}),
+      ...(floored ? { rawFaces: raw, floorLabel: minFaceRule.label || `Min ${minFaceRule.value}` } : {}),
+    };
+  };
+
+  const formatFaces = (raw: number[], eff: number[]) =>
+    eff.map((v, i) => (raw[i] !== v ? `${raw[i]}\u2192${v}` : `${v}`)).join(',');
+
+  const rollSet = (phase: 'initial' | 'savage-reroll', hasNextAfterInitial = false) => {
+    const meta = {
+      label: `${title} — ${phase === 'savage-reroll' ? `${rerollLabel} Reroll` : crit ? 'Critical Damage' : 'Damage'}`,
+      weaponTray: { ...baseTrayInfo, phase, ...(hasNextAfterInitial ? { hasNextWave: true } : {}) },
+    };
+    const terms: { expr: string; critical?: boolean }[] = [
+      { expr: diceExpr },
+      ...(effectiveCritExpr ? [{ expr: effectiveCritExpr, critical: true }] : []),
+      ...(extraWeaponCritSides.length > 0 ? [{ expr: `${extraWeaponCritSides.length}d${weaponDieSides}`, critical: true }] : []),
+    ];
+    const rolls = withDiceMetadata(meta, () => rollDicePool(terms));
+    const r1 = rolls[0];
+    const r2 = effectiveCritExpr ? rolls[1] : undefined;
+    const rWeaponExtra = extraWeaponCritSides.length > 0 ? rolls[effectiveCritExpr ? 2 : 1] : undefined;
+    const s1 = r1 ? applyFloorFaces(r1.rolls, baseSides, diceExpr, undefined, false) : undefined;
+    const s2 = crit && effectiveCritExpr && r2
+      ? applyFloorFaces(r2.rolls, critSides, 'CRIT', effectiveCritExpr, true)
+      : undefined;
+    const sEx =
+      rWeaponExtra && extraWeaponCritSides.length > 0
+        ? applyFloorFaces(
+            rWeaponExtra.rolls,
+            extraWeaponCritSides,
+            `${extraWeaponCritSides.length}d${weaponDieSides}`,
+            `${extraWeaponCritSides.length}d${weaponDieSides}`,
+            true,
+            weaponExtraLabels[0],
+          )
+        : undefined;
+    const steps: AttackStep[] = [];
+    const parts: string[] = [];
+    let total = 0;
+    const effFaces: number[] = [];
+    const rawFaces: number[] = [];
+    if (s1 && r1) {
+      total += s1.value;
+      parts.push(`${diceExpr}[${formatFaces(r1.rolls, s1.faces!)}]`);
+      steps.push(s1);
+      effFaces.push(...s1.faces!);
+      rawFaces.push(...r1.rolls);
+    }
+    if (s2 && r2) {
+      total += s2.value;
+      parts.push(`+[${formatFaces(r2.rolls, s2.faces!)}][CRIT]`);
+      steps.push(s2);
+      effFaces.push(...s2.faces!);
+      rawFaces.push(...r2.rolls);
+    }
+    if (sEx && rWeaponExtra) {
+      total += sEx.value;
+      const tag = weaponExtraLabels[0] === 'Savage Attacks' ? 'SAVAGE CRIT' : weaponExtraLabels[0].toUpperCase();
+      parts.push(`+[${formatFaces(rWeaponExtra.rolls, sEx.faces!)}][${tag}]`);
+      steps.push(sEx);
+      effFaces.push(...sEx.faces!);
+      rawFaces.push(...rWeaponExtra.rolls);
+    }
+    return { total, steps, parts, effFaces, rawFaces };
+  };
+
+  let activeSet: { total: number; steps: AttackStep[]; parts: string[]; effFaces: number[]; rawFaces: number[] };
+  const notes: string[] = [];
+  const extraSteps: AttackStep[] = [];
+  const extraParts: string[] = [];
+  let extraCritTyped: RuledDicePoolResult['extraCritTyped'];
+  let waveCount = 0;
+  let currentTraySidesCount = 0;
+  let keptTrayIndices = allInitialSides.map((_, i) => i);
+  let usedReroll = false;
+
+  if (canCombineExtraCritWithInitial) {
+    const terms: { expr: string; critical?: boolean }[] = [
+      { expr: diceExpr },
+      ...(effectiveCritExpr ? [{ expr: effectiveCritExpr, critical: true }] : []),
+      ...(extraWeaponCritSides.length > 0 ? [{ expr: `${extraWeaponCritSides.length}d${weaponDieSides}`, critical: true }] : []),
+      ...(customExtraCritExpr ? [{ expr: customExtraCritExpr, critical: true }] : []),
+    ];
+    const rolls = withDiceMetadata(
+      {
+        label: `${title} — Critical Damage`,
+        weaponTray: { ...baseTrayInfo, phase: 'initial', ...(extraPlannedDice?.length ? { hasNextWave: true } : {}) },
+      },
+      () => rollDicePool(terms),
+    );
+    const r1 = rolls[0];
+    const r2 = effectiveCritExpr ? rolls[1] : undefined;
+    let idx = effectiveCritExpr ? 2 : 1;
+    const rWeaponExtra = extraWeaponCritSides.length > 0 ? rolls[idx++] : undefined;
+    const rCustomExtra = customExtraCritExpr ? rolls[idx++] : undefined;
+
+    activeSet = { total: 0, steps: [], parts: [], effFaces: [], rawFaces: [] };
+    if (r1) {
+      const s1 = applyFloorFaces(r1.rolls, baseSides, diceExpr);
+      activeSet.total += s1.value;
+      activeSet.parts.push(`${diceExpr}[${formatFaces(r1.rolls, s1.faces!)}]`);
+      activeSet.steps.push(s1);
+      activeSet.effFaces.push(...s1.faces!);
+      activeSet.rawFaces.push(...r1.rolls);
+    }
+    if (r2 && effectiveCritExpr) {
+      const s2 = applyFloorFaces(r2.rolls, critSides, 'CRIT', effectiveCritExpr, true);
+      activeSet.total += s2.value;
+      activeSet.parts.push(`+[${formatFaces(r2.rolls, s2.faces!)}][CRIT]`);
+      activeSet.steps.push(s2);
+      activeSet.effFaces.push(...s2.faces!);
+      activeSet.rawFaces.push(...r2.rolls);
+    }
+    if (rWeaponExtra && extraWeaponCritSides.length > 0) {
+      const sEx = applyFloorFaces(
+        rWeaponExtra.rolls,
+        extraWeaponCritSides,
+        `${extraWeaponCritSides.length}d${weaponDieSides}`,
+        `${extraWeaponCritSides.length}d${weaponDieSides}`,
+        true,
+        weaponExtraLabels[0],
+      );
+      activeSet.total += sEx.value;
+      const tag = weaponExtraLabels[0] === 'Savage Attacks' ? 'SAVAGE CRIT' : weaponExtraLabels[0].toUpperCase();
+      activeSet.parts.push(`+[${formatFaces(rWeaponExtra.rolls, sEx.faces!)}][${tag}]`);
+      activeSet.steps.push(sEx);
+      activeSet.effFaces.push(...sEx.faces!);
+      activeSet.rawFaces.push(...rWeaponExtra.rolls);
+    }
+    if (rCustomExtra) {
+      const customType = diceRules?.extraCritDamageType?.trim().toLowerCase();
+      const customLabel = customExtraLabels[0] || diceRules?.extraCritLabel || 'Critical Bonus';
+      const sCust: AttackStep = {
+        label: customExtraCritExpr,
+        value: rCustomExtra.total,
+        faces: rCustomExtra.rolls,
+        diceExpression: customExtraCritExpr,
+        critical: true,
+        source: customLabel,
+      };
+      if (customType && damageType && customType !== damageType.toLowerCase()) {
+        extraCritTyped = {
+          total: rCustomExtra.total,
+          damageType: customType,
+          steps: [sCust],
+          parts: [`+${customExtraCritExpr}[${rCustomExtra.rolls.join(',')}] (${customType})`],
+        };
+      } else {
+        activeSet.total += rCustomExtra.total;
+        activeSet.parts.push(`+[${rCustomExtra.rolls.join(',')}][${customLabel.toUpperCase()}]`);
+        activeSet.steps.push(sCust);
+      }
+      activeSet.effFaces.push(...rCustomExtra.rolls);
+      activeSet.rawFaces.push(...rCustomExtra.rolls);
+    }
+    currentTraySidesCount = setCount + customExtraCritSides.length;
+    waveCount = 1;
+  } else {
+    // Check ahead if a deterministic next wave follows initial (`fullPoolReroll` when auto).
+    activeSet = rollSet('initial', fullPoolReroll && !params.interactiveReroll);
+    currentTraySidesCount = setCount;
+    waveCount = 1;
+
+    if (fullPoolReroll) {
+      const diceSummary =
+        extraWeaponCritSides.length > 0
+          ? `${setCount}d${weaponDieSides} (incl. ${weaponExtraLabels[0]})`
+          : crit && effectiveCritExpr
+            ? `${diceExpr} + ${effectiveCritExpr} crit`
+            : diceExpr;
+      const shouldReroll = params.interactiveReroll
+        ? Boolean(params.chooseReroll?.({ label: rerollLabel, rollTotal: activeSet.total, diceSummary }))
+        : true;
+      if (shouldReroll) {
+        usedReroll = true;
+        const second = rollSet(
+          'savage-reroll',
+          customExtraCritSides.length > 0 || Boolean(extraPlannedDice?.length),
+        );
+        const keepNew = rerollRule!.keep === 'new';
+        const secondWins = keepNew || second.total > activeSet.total;
+        const kept = secondWins ? second : activeSet;
+        const dropped = secondWins ? activeSet : second;
+        const rerollTag = rerollLabel === 'Savage Attacker' ? 'SAVAGE' : rerollLabel.toUpperCase();
+        notes.push(`[${rerollTag} ${kept.total}/${dropped.total}]`);
+        activeSet = kept;
+        if (secondWins) keptTrayIndices = allInitialSides.map((_, i) => setCount + i);
+        currentTraySidesCount += setCount;
+        waveCount++;
+      }
+    } else if (lowDieReroll) {
+      const maxFace = rerollRule!.maxFace ?? 2;
+      const eligible = activeSet.effFaces
+        .map((face, idx) => ({ idx, face, side: allInitialSides[idx] ?? 0 }))
+        .filter((d) => d.face <= maxFace)
+        .sort((a, b) => a.face - b.face)
+        .slice(0, lowRerollCap);
+      if (eligible.length > 0) {
+        const sourceIndices = eligible.map((d) => d.idx);
+        const rerollExpr = eligible.map((d) => `1d${d.side}`);
+        const useSameTray = uniformInitial;
+        const rerollStart = currentTraySidesCount;
+        const rerollMeta = useSameTray
+          ? {
+              label: `${title} — ${rerollLabel}`,
+              weaponTray: {
+                ...baseTrayInfo,
+                phase: 'die-reroll' as const,
+                rerollSourceIndices: sourceIndices,
+                rerollLabel,
+                rerollMaxFace: maxFace,
+                rerollKeep: rerollRule!.keep,
+                hasNextWave: hasExtraCrit,
+              },
+            }
+          : {
+              label: `${title} — ${rerollLabel}`,
+              trayBanner: {
+                title: rerollLabel,
+                detail: `Rerolling ${eligible.length} ${eligible.length === 1 ? 'die' : 'dice'} \u2264${maxFace}`,
+                tone: 'reroll' as const,
+              },
+              dieRole: 'reroll' as const,
+              dieLabel: rerollLabel,
+            };
+        const replacements = withDiceMetadata(rerollMeta, () =>
+          rollDicePool(rerollExpr.map((expr) => ({ expr }))),
+        );
+        const updatedRaw = activeSet.rawFaces.slice();
+        const updatedEff = activeSet.effFaces.slice();
+        const changeLog: string[] = [];
+        eligible.forEach((d, k) => {
+          const newRaw = replacements[k]?.rolls[0] ?? d.face;
+          const newEff =
+            minFaceRule && d.side >= minFaceRule.value && newRaw < minFaceRule.value
+              ? minFaceRule.value
+              : newRaw;
+          const takeNew = rerollRule!.keep === 'new' || newEff > updatedEff[d.idx];
+          if (takeNew) {
+            changeLog.push(`${updatedEff[d.idx]}\u2192${newEff}`);
+            updatedRaw[d.idx] = newRaw;
+            updatedEff[d.idx] = newEff;
+            if (useSameTray) keptTrayIndices[d.idx] = rerollStart + k;
+          } else {
+            changeLog.push(`${updatedEff[d.idx]}\u2192${newEff}(kept ${updatedEff[d.idx]})`);
+          }
+        });
+        notes.push(`[${rerollLabel}: ${changeLog.join(', ')}]`);
+        const baseLen = baseSides.length;
+        const critEnd = baseLen + critSides.length;
+        const baseRaw = updatedRaw.slice(0, baseLen);
+        const baseEff = updatedEff.slice(0, baseLen);
+        const critRaw = updatedRaw.slice(baseLen, critEnd);
+        const critEff = updatedEff.slice(baseLen, critEnd);
+        const exRaw = updatedRaw.slice(critEnd);
+        const exEff = updatedEff.slice(critEnd);
+        const nextSteps: AttackStep[] = [];
+        const nextParts: string[] = [];
+        let nextTotal = 0;
+        const bStep: AttackStep = {
+          label: diceExpr,
+          value: baseEff.reduce((s, v) => s + v, 0),
+          faces: baseEff,
+          ...(baseEff.some((v, i) => v !== baseRaw[i]) ? { rawFaces: baseRaw, floorLabel: minFaceRule?.label } : {}),
+        };
+        nextSteps.push(bStep);
+        nextParts.push(`${diceExpr}[${baseEff.join(',')}]`);
+        nextTotal += bStep.value;
+        if (critLenCheck(critSides, critEff)) {
+          const cStep: AttackStep = {
+            label: 'CRIT',
+            value: critEff.reduce((s, v) => s + v, 0),
+            faces: critEff,
+            diceExpression: effectiveCritExpr,
+            critical: true,
+            ...(critEff.some((v, i) => v !== critRaw[i]) ? { rawFaces: critRaw, floorLabel: minFaceRule?.label } : {}),
+          };
+          nextSteps.push(cStep);
+          nextParts.push(`+[${critEff.join(',')}][CRIT]`);
+          nextTotal += cStep.value;
+        }
+        if (critLenCheck(extraWeaponCritSides, exEff)) {
+          const exStep: AttackStep = {
+            label: `${extraWeaponCritSides.length}d${weaponDieSides}`,
+            value: exEff.reduce((s, v) => s + v, 0),
+            faces: exEff,
+            diceExpression: `${extraWeaponCritSides.length}d${weaponDieSides}`,
+            critical: true,
+            source: weaponExtraLabels[0],
+            ...(exEff.some((v, i) => v !== exRaw[i]) ? { rawFaces: exRaw, floorLabel: minFaceRule?.label } : {}),
+          };
+          const tag = weaponExtraLabels[0] === 'Savage Attacks' ? 'SAVAGE CRIT' : weaponExtraLabels[0].toUpperCase();
+          nextSteps.push(exStep);
+          nextParts.push(`+[${exEff.join(',')}][${tag}]`);
+          nextTotal += exStep.value;
+        }
+        activeSet = {
+          total: nextTotal,
+          steps: nextSteps,
+          parts: nextParts,
+          effFaces: updatedEff,
+          rawFaces: updatedRaw,
+        };
+        if (useSameTray) currentTraySidesCount += eligible.length;
+      }
+    }
+  }
+
+  // Track kept damage faces & sides (base + crit + extra weapon crit dice).
+  let keptFaces = activeSet.effFaces.slice();
+  const keptRawFaces = activeSet.rawFaces.slice();
+  const keptSides = [
+    ...allInitialSides,
+    ...(canCombineExtraCritWithInitial ? customExtraCritSides : []),
+  ];
+
+  // Exploding dice wave(s)
+  if (explodingRule && explodeCap > 0) {
+    let usedExplosions = 0;
+    let frontierFaces = activeSet.rawFaces.slice(0, allInitialSides.length);
+    let frontierSides = allInitialSides.slice();
+    // Map each frontier entry to its actual index in the tray
+    let frontierTrayIndices = keptTrayIndices.slice();
+    for (;;) {
+      const remaining = explodeCap - usedExplosions;
+      if (remaining <= 0) break;
+      const triggers: { trayIdx: number; triggerVal: number; dieSide: number }[] = [];
+      frontierFaces.forEach((f, idx) => {
+        const want = explodingRule.on === 'max' ? (frontierSides[idx] ?? 0) : explodingRule.on;
+        if (want > 0 && f === want && triggers.length < remaining) {
+          triggers.push({ trayIdx: frontierTrayIndices[idx], triggerVal: f, dieSide: frontierSides[idx] });
+        }
+      });
+      if (!triggers.length) break;
+      const burstExpr = explodingRule.bonusDice?.trim() || `1d${triggers[0].dieSide || 6}`;
+      const waveTerms = triggers.map(() => ({ expr: explodingRule.bonusDice?.trim() || `1d${triggers[0].dieSide || 6}` }));
+      const waveSides = waveTerms.flatMap((t) => parseDiceSides(t.expr));
+      const canUseTray =
+        currentTraySidesCount + waveSides.length <= plannedDice.length &&
+        waveSides.every((s, k) => plannedDice[currentTraySidesCount + k]?.sides === s);
+      const explodeLabel = explodingRule.label || 'Exploding';
+      const parentIndices = triggers.flatMap((t) =>
+        parseDiceSides(explodingRule.bonusDice?.trim() || `1d${t.dieSide || 6}`).map(() => t.trayIdx),
+      );
+      const waveRolls = withDiceMetadata(
+        canUseTray
+          ? {
+              label: `${title} — ${explodeLabel}`,
+              weaponTray: {
+                ...baseTrayInfo,
+                phase: 'explode' as const,
+                explodeParentIndices: parentIndices,
+                explodeLabel,
+              },
+            }
+          : {
+              label: `${title} — ${explodeLabel}`,
+              trayBanner: {
+                title: explodeLabel,
+                detail: `Triggered by rolling ${triggers.map((t) => t.triggerVal).join(', ')}`,
+                tone: 'explode' as const,
+              },
+              dieRole: 'exploded' as const,
+              dieLabel: explodeLabel,
+            },
+        () => rollDicePool(waveTerms),
+      );
+      const waveFaces: number[] = [];
+      const waveStepSides: number[] = [];
+      let waveTotal = 0;
+      waveRolls.forEach((r) => {
+        if (!r) return;
+        waveTotal += r.total;
+        waveFaces.push(...r.rolls);
+        waveStepSides.push(...parseDiceSides(r.expr));
+      });
+      if (!waveFaces.length) break;
+      usedExplosions += triggers.length;
+      if (canUseTray) {
+        const waveStart = currentTraySidesCount;
+        frontierTrayIndices = waveFaces.map((_, i) => waveStart + i);
+        currentTraySidesCount += waveFaces.length;
+      } else {
+        frontierTrayIndices = waveFaces.map((_, i) => i);
+      }
+      activeSet.total += waveTotal;
+      activeSet.parts.push(`+[${waveFaces.join(',')}][${explodeLabel.toUpperCase()}]`);
+      activeSet.steps.push({
+        label: waveTerms.length === 1 ? burstExpr : `${waveFaces.length}d${waveStepSides[0] || 6}`,
+        value: waveTotal,
+        faces: waveFaces,
+        diceExpression: `${waveFaces.length}d${waveStepSides[0] || 6}`,
+        source: explodeLabel,
+      });
+      keptFaces.push(...waveFaces);
+      keptRawFaces.push(...waveFaces);
+      keptSides.push(...waveStepSides);
+      notes.push(`[${explodeLabel} +${waveTotal}]`);
+      if (explodingRule.recursive === false) break;
+      frontierFaces = waveFaces;
+      frontierSides = waveStepSides;
+    }
+  }
+
+  // Deferred non-weapon extra crit dice (e.g. Vicious Weapon +2d6 when Savage Attacker / reroll / exploding ran first)
+  if (!canCombineExtraCritWithInitial && customExtraCritSides.length > 0) {
+    const terms: { expr: string; critical?: boolean }[] = [
+      { expr: customExtraCritExpr, critical: true },
+    ];
+    const canUseTray =
+      currentTraySidesCount + customExtraCritSides.length <= plannedDice.length &&
+      customExtraCritSides.every((s, k) => plannedDice[currentTraySidesCount + k]?.sides === s);
+    const custLabel = customExtraLabels[0] || diceRules?.extraCritLabel || 'Critical Bonus';
+    const [rCustomExtra] = withDiceMetadata(
+      canUseTray
+        ? {
+            label: `${title} — ${custLabel}`,
+            weaponTray: {
+              ...baseTrayInfo,
+              phase: 'savage-crit' as const,
+            },
+          }
+        : {
+            label: `${title} — ${custLabel}`,
+            trayBanner: {
+              title: custLabel,
+              detail: `+${customExtraCritSides.length} extra critical ${customExtraCritSides.length === 1 ? 'die' : 'dice'}`,
+              tone: 'savage-crit' as const,
+            },
+            dieRole: 'savage-crit' as const,
+            dieLabel: custLabel,
+          },
+      () => rollDicePool(terms),
+    );
+    if (canUseTray) currentTraySidesCount += customExtraCritSides.length;
+    if (rCustomExtra) {
+      const customType = diceRules?.extraCritDamageType?.trim().toLowerCase();
+      const sCust: AttackStep = {
+        label: customExtraCritExpr,
+        value: rCustomExtra.total,
+        faces: rCustomExtra.rolls,
+        diceExpression: customExtraCritExpr,
+        critical: true,
+        source: custLabel,
+      };
+      if (customType && damageType && customType !== damageType.toLowerCase()) {
+        extraCritTyped = {
+          total: rCustomExtra.total,
+          damageType: customType,
+          steps: [sCust],
+          parts: [`+${customExtraCritExpr}[${rCustomExtra.rolls.join(',')}] (${customType})`],
+        };
+      } else {
+        activeSet.total += rCustomExtra.total;
+        activeSet.parts.push(`+[${rCustomExtra.rolls.join(',')}][${custLabel.toUpperCase()}]`);
+        activeSet.steps.push(sCust);
+      }
+      keptFaces.push(...rCustomExtra.rolls);
+      keptRawFaces.push(...rCustomExtra.rolls);
+      keptSides.push(...customExtraCritSides);
+    }
+  }
+
+  const damageMaxHit = keptRawFaces.some((f, i) => (keptSides[i] ?? 0) > 0 && f === keptSides[i]);
+  const matchingFaces = findMatchingValues(keptFaces, matchRule?.minMatches ?? 2);
+  let matchingBonus: RuledDicePoolResult['matchingBonus'];
+
+  if (matchRule?.action === 'bonus-dice' && matchingFaces.length > 0 && matchRule.bonusDice?.trim()) {
+    const bonusExpr = matchRule.bonusDice.trim();
+    const bonusSides = parseDiceSides(bonusExpr);
+    const label = matchRule.label || 'Matching Dice Bonus';
+    const canUseTray =
+      bonusSides.length > 0 &&
+      currentTraySidesCount + bonusSides.length <= plannedDice.length &&
+      bonusSides.every((s, k) => plannedDice[currentTraySidesCount + k]?.sides === s);
+    const [rolled] = withDiceMetadata(
+      canUseTray
+        ? {
+            label: `${title} — ${label}`,
+            weaponTray: {
+              ...baseTrayInfo,
+              phase: 'rider' as const,
+              riderLabel: label,
+              riderDetail: `Matched ${matchingFaces.join(', ')} \u2192 +${bonusExpr}`,
+            },
+          }
+        : {
+            label: `${title} — ${label}`,
+            trayBanner: {
+              title: label,
+              detail: `Matched ${matchingFaces.join(', ')} \u2192 +${bonusExpr}`,
+              tone: 'rider' as const,
+            },
+            dieRole: 'rider' as const,
+            dieLabel: label,
+          },
+      () => rollDicePool([{ expr: bonusExpr }]),
+    );
+    if (rolled) {
+      matchingBonus = {
+        total: rolled.total,
+        damageType: matchRule.bonusDamageType || damageType,
+        steps: [{ label: bonusExpr, value: rolled.total, faces: rolled.rolls, diceExpression: bonusExpr, source: label }],
+        parts: [`+${bonusExpr}[${rolled.rolls.join(',')}][${label.toUpperCase()}]`],
+        label,
+        faces: rolled.rolls,
+      };
+      notes.push(`[${label} +${rolled.total}]`);
+    }
+  }
+
+  return {
+    total: activeSet.total,
+    steps: [...activeSet.steps, ...extraSteps],
+    parts: [...activeSet.parts, ...extraParts],
+    notes,
+    keptFaces,
+    keptSides,
+    damageMaxHit,
+    damageHasMatch: matchingFaces.length > 0,
+    matchingFaces,
+    extraCritTyped,
+    matchingBonus,
+    usedWeaponTray: true,
+    usedReroll,
+    baseTrayInfo,
+  };
+}
+
+function critLenCheck(sides: number[], eff: number[]): boolean {
+  return sides.length > 0 && eff.length === sides.length;
+}
+
 export type AttackOutcome = {
   face: number;
   bonus: number;
@@ -135,6 +999,15 @@ export type AttackOutcome = {
   damageDiceSteps: AttackStep[];
   /** Flat damage modifiers (ability mod, magic, mastery) after the dice. */
   damageModSteps: AttackStep[];
+  /** Post-resolution weapon dice info for conditional triggers (`on-damage-max`, `on-damage-match`, typed extra crit dice). */
+  damageFaces?: number[];
+  damageMaxHit?: boolean;
+  damageHasMatch?: boolean;
+  extraCritTyped?: RuledDicePoolResult['extraCritTyped'];
+  matchingBonus?: RuledDicePoolResult['matchingBonus'];
+  usedWeaponTray?: boolean;
+  usedReroll?: boolean;
+  baseTrayInfo?: import('./dice.js').WeaponTrayInfo;
 };
 
 /** Resolve a weapon attack vs a target AC, including crit (double dice). */
@@ -158,18 +1031,47 @@ export function rollWeaponAttack(
      *  or unconscious target). Does not turn a miss into a hit. */
     forceCrit?: boolean;
     /** Savage Attacker (2024 feat): roll the weapon's damage dice TWICE and keep
-     *  the better total. Covers the crit's extra dice too — RAW rerolls "the
-     *  weapon's damage dice", which a critical hit doubles. */
+     *  the better total. Covers the crit's extra dice (including Savage Attacks / Brutal Critical). */
     rerollDamageDice?: boolean;
+    rerollDamageLabel?: string;
+    interactiveReroll?: boolean;
+    chooseReroll?: (info: { label: string; rollTotal: number; diceSummary: string }) => boolean;
     /** Savage Attacks (Half-Orc racial): on a CRIT only, roll ONE of the weapon's
-     *  damage dice one extra time and add it. Independent of `rerollDamageDice`
-     *  — a character can have both, and they compose. */
+     *  damage dice one extra time and add it. */
     extraCritDie?: boolean;
+    extraCritDieLabel?: string;
+    /** Total extra weapon crit dice (combines Savage Attacks + Brutal Critical + weapon.diceRules). */
+    extraCritWeaponDice?: number;
+    extraCritLabels?: string[];
+    critThreshold?: number;
+    halflingLucky?: boolean;
+    diceRules?: DiceRulesSpec;
+    castingMod?: number;
+    proficiency?: number;
+    extraPlannedDice?: WeaponTrayDiePlan[];
     advantageReasons?: string[];
     advantageState?: 'adv' | 'dis' | 'straight';
   },
 ): AttackOutcome {
-  const {face,detail:d20detail}=opts?.fixedAttack?{face:opts.fixedAttack.face,detail:opts.fixedAttack.detailToHit.match(/d20\[[^\]]+\](?:\u2192(?:adv|dis) \d+)?/)?.[0]??`d20[${opts.fixedAttack.face}]`}:withDiceMetadata({label:`${weapon.name} — Attack Roll`,...(opts?.advantageReasons?.length?{advantageReasons:opts.advantageReasons,advantageState:opts.advantageState??advantage??'straight'}:{})},()=>rollD20Detail(advantage));
+  const { face, detail: d20detail } = opts?.fixedAttack
+    ? {
+        face: opts.fixedAttack.face,
+        detail:
+          opts.fixedAttack.detailToHit.match(/d20\[[^\]]+\](?:\u2192(?:adv|dis) \d+)?/)?.[0] ??
+          `d20[${opts.fixedAttack.face}]`,
+      }
+    : withDiceMetadata(
+        {
+          label: `${weapon.name} — Attack Roll`,
+          ...(opts?.advantageReasons?.length
+            ? {
+                advantageReasons: opts.advantageReasons,
+                advantageState: opts.advantageState ?? advantage ?? 'straight',
+              }
+            : {}),
+        },
+        () => rollD20Detail(advantage, { halflingLucky: opts?.halflingLucky }),
+      );
   const { bonus, detail: bonusDetail, parts: bonusParts } = weaponAttackBonusDetail(attacker, weapon);
   const toHitExtra = opts?.attackRollBonus ?? 0;
   // Structured to-hit breakdown for the reveal animation (d20 + these).
@@ -178,7 +1080,11 @@ export function rollWeaponAttack(
     ...(toHitExtra ? [{ label: opts?.attackRollBonusLabel || 'maneuver', value: toHitExtra }] : []),
   ];
   const attackTotal = opts?.fixedAttack?.attackTotal ?? face + bonus + toHitExtra;
-  const natCrit = face === 20;
+  const critThreshold = Math.max(
+    2,
+    Math.min(20, opts?.critThreshold ?? weapon.critThreshold ?? weapon.diceRules?.critThreshold ?? 20),
+  );
+  const natCrit = face >= critThreshold;
   const fumble = face === 1;
   const hit = opts?.fixedAttack?.hit ?? (natCrit || (!fumble && attackTotal >= targetAC));
   const crit = opts?.fixedAttack?.crit ?? (hit && (natCrit || !!opts?.forceCrit)); // auto-crit only on a hit
@@ -191,67 +1097,62 @@ export function rollWeaponAttack(
   let dmgText = '';
   const damageDiceSteps: AttackStep[] = [];
   const damageModSteps: AttackStep[] = [];
+  let damageFaces: number[] | undefined;
+  let damageMaxHit: boolean | undefined;
+  let damageHasMatch: boolean | undefined;
+  let extraCritTyped: RuledDicePoolResult['extraCritTyped'];
+  let matchingBonus: RuledDicePoolResult['matchingBonus'];
+  let usedWeaponTray = false;
+  let usedReroll: boolean | undefined;
+  let baseTrayInfo: import('./dice.js').WeaponTrayInfo | undefined;
+
   if (hit && !opts?.attackOnly) {
     const { dice, flat } = damageParts(expr);
     const magic = weapon.magicBonus ?? 0;
-    // PCs add their ability modifier to damage at roll time (weapons store dice
-    // only); monster stat blocks already bake it in — EXCEPT weapons flagged
-    // `diceOnly` (e.g. a creature attack picked from the weapon/natural library),
-    // which behave like a PC weapon and pull the mod from live stats. Off-hand /
-    // Cleave omit it.
     const usesAbilityMod = !attacker.isMonster || !!weapon.diceOnly;
     const addAbilityMod = usesAbilityMod && !opts?.noAbilityMod;
     const abil = addAbilityMod ? weaponAbilityMod(attacker, weapon) : 0;
-    // A dice-only weapon's `damage` must carry NO baked flat modifier — the
-    // ability mod is added above, so honoring a stray flat too would double-count
-    // it (the classic "+DEX twice" bug). Ignore it for those; pre-baked monster
-    // damage keeps its flat.
     const usableFlat = usesAbilityMod ? 0 : flat;
     const bonus2 = opts?.bonusDamage ?? 0; // flat on-hit mastery damage (e.g. GWM), folded in
-    // One complete roll of the weapon's damage dice: the base set plus, on a crit,
-    // the doubled set. Wrapped in a function so Savage Attacker can roll it twice.
-    const rollDamageSet = (): { total: number; parts: string[]; steps: AttackStep[] } => {
-      const p: string[] = [];
-      const steps: AttackStep[] = [];
-      let total = 0;
-      const [r1,r2]=dice?withDiceMetadata({label:`${weapon.name} — ${crit?'Critical Weapon':'Weapon'} Damage`},()=>rollDicePool([{expr:dice},...(crit?[{expr:dice,critical:true}]:[])])):[];
-      if (r1) {
-        total += r1.total;
-        p.push(`${dice}[${r1.rolls.join(',')}]`);
-        steps.push({ label: dice, value: r1.total, faces: r1.rolls });
-      }
-      if (crit && dice && r2) {
-        total += r2.total;
-        p.push(`+[${r2.rolls.join(',')}][CRIT]`);
-        steps.push({ label: 'CRIT', value: r2.total, faces: r2.rolls, diceExpression: dice });
-      }
-      return { total, parts: p, steps };
-    };
-    let set = rollDamageSet();
-    let savageNote = '';
-    if (opts?.rerollDamageDice && dice) {
-      const second = rollDamageSet();
-      const better = second.total > set.total ? second : set;
-      const worse = second.total > set.total ? set : second;
-      savageNote = `[SAVAGE ${better.total}/${worse.total}]`;
-      set = better;
-    }
-    // Savage Attacks: one more die of the weapon's own size, crits only. `dice`
-    // is "2d6"/"1d12" — take its die size and roll a single one of them.
-    if (opts?.extraCritDie && crit && dice) {
-      const sides = /d(\d+)/i.exec(dice)?.[1];
-      const extra = sides ? rollDice(`1d${sides}`) : null;
-      if (extra) {
-        set.total += extra.total;
-        set.parts.push(`+[${extra.rolls.join(',')}][SAVAGE CRIT]`);
-        set.steps.push({ label: `1d${sides}`, value: extra.total, faces: extra.rolls });
-      }
-    }
-    let sum = usableFlat + magic + abil + bonus2; // magic/ability/bonus added once, not doubled on a crit
-    // Compact, labelled breakdown, e.g. "2d6[4,6]+[3,5][CRIT]+4[STR]+1[MAGIC]+3[GWM]".
-    const parts: string[] = [...set.parts];
-    sum += set.total;
-    damageDiceSteps.push(...set.steps);
+
+    const mergedExtraWeaponCrit = (opts?.extraCritDie ? 1 : 0) + (opts?.extraCritWeaponDice ?? 0);
+    const combinedExtraLabels = [
+      ...(opts?.extraCritDie ? [opts.extraCritDieLabel || 'Savage Attacks'] : []),
+      ...(opts?.extraCritLabels ?? []),
+    ];
+
+    const rolled = rollRuledDamagePool({
+      title: weapon.name,
+      diceExpr: dice,
+      critExpr: dice,
+      crit,
+      damageType: weapon.damageType,
+      diceRules: opts?.diceRules ?? weapon.diceRules,
+      rerollDamageDice: opts?.rerollDamageDice,
+      rerollDamageLabel: opts?.rerollDamageLabel,
+      interactiveReroll: opts?.interactiveReroll,
+      chooseReroll: opts?.chooseReroll,
+      extraCritWeaponDice: mergedExtraWeaponCrit,
+      extraCritDieLabel: opts?.extraCritDieLabel,
+      extraCritLabels: combinedExtraLabels.length ? combinedExtraLabels : undefined,
+      castingMod: opts?.castingMod,
+      proficiency: opts?.proficiency ?? profBonusFor(attacker),
+      extraPlannedDice: opts?.extraPlannedDice,
+      fastPathLabel: `${weapon.name} — ${crit ? 'Critical Weapon Damage' : 'Weapon Damage'}`,
+    });
+
+    damageFaces = rolled.keptFaces;
+    damageMaxHit = rolled.damageMaxHit;
+    damageHasMatch = rolled.damageHasMatch;
+    extraCritTyped = rolled.extraCritTyped;
+    matchingBonus = rolled.matchingBonus;
+    usedWeaponTray = rolled.usedWeaponTray;
+    usedReroll = rolled.usedReroll;
+    baseTrayInfo = rolled.baseTrayInfo;
+
+    let sum = usableFlat + magic + abil + bonus2 + rolled.total;
+    const parts: string[] = [...rolled.parts];
+    damageDiceSteps.push(...rolled.steps);
     if (usableFlat) parts.push(signed(usableFlat));
     if (abil) parts.push(`${signed(abil)}[${weaponAbility(attacker, weapon)}]`);
     if (magic) parts.push(`${signed(magic)}[MAGIC]`);
@@ -260,13 +1161,14 @@ export function rollWeaponAttack(
     if (abil) damageModSteps.push({ label: weaponAbility(attacker, weapon), value: abil });
     if (magic) damageModSteps.push({ label: 'MAGIC', value: magic });
     if (bonus2) damageModSteps.push({ label: opts?.bonusLabel || 'BONUS', value: bonus2 });
-    if (savageNote) parts.push(savageNote);
+    if (rolled.notes.length) parts.push(...rolled.notes);
     damage = Math.max(1, sum);
     dmgText = parts.join('') || `${damage}`;
   }
 
   const twoH = opts?.twoHanded && weapon.versatileDamage?.trim() ? ' (2H)' : '';
-  const result = crit ? 'CRIT' : fumble ? 'MISS (nat 1)' : hit ? 'HIT' : 'MISS';
+  const critRangeNote = natCrit && face < 20 ? ` (${critThreshold}\u201320)` : '';
+  const result = crit ? `CRIT${critRangeNote}` : fumble ? 'MISS (nat 1)' : hit ? 'HIT' : 'MISS';
   const detailToHit = `${weapon.name}${twoH}: ${d20detail} ${bonusDetail}${toHitExtra ? ` ${signed(toHitExtra)}[${opts?.attackRollBonusLabel || 'maneuver'}]` : ''} = ${attackTotal} vs AC ${targetAC} — ${result}`;
   const detail = detailToHit + (hit ? `, ${damage} dmg (${dmgText})` : '');
 
@@ -283,6 +1185,14 @@ export function rollWeaponAttack(
     toHitSteps,
     damageDiceSteps,
     damageModSteps,
+    damageFaces,
+    damageMaxHit,
+    damageHasMatch,
+    extraCritTyped,
+    matchingBonus,
+    usedWeaponTray,
+    ...(usedReroll !== undefined ? { usedReroll } : {}),
+    baseTrayInfo,
   };
 }
 
@@ -308,8 +1218,9 @@ export function rollSavingThrow(
   advantage?: Advantage,
   proficient = false,
   rollLabel = `${ability.toUpperCase()} Saving Throw`,
+  opts?: { halflingLucky?: boolean },
 ): SaveOutcome {
-  const { face, detail: d20Detail } = withDiceMetadata({label:rollLabel},()=>rollD20Detail(advantage));
+  const { face, detail: d20Detail } = withDiceMetadata({label:rollLabel},()=>rollD20Detail(advantage, opts));
   const mod = abilityMod(c.stats[ability.toUpperCase()]) + (proficient ? profBonusFor(c) : 0);
   const total = face + mod;
   return { face, mod, total, pass: total >= dc, proficient, d20Detail };

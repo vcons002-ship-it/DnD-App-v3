@@ -2,6 +2,7 @@ import {PlayerDamagePrompt} from '../components/PlayerDamagePrompt';
 import {MapLoadingBar} from '../components/MapLoadingBar';
 import { MarkTransferPrompt } from '../components/MarkTransferPrompt';
 import { ChromaticOrbPrompt } from '../components/ChromaticOrbPrompt';
+import { TriggeredSpellPrompt } from '../components/TriggeredSpellPrompt';
 import { CombatMoments } from '../components/CombatMoments';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../state/socket';
@@ -194,6 +195,7 @@ export function DmView() {
       <PlayerDamagePrompt />
       <CombatMoments />
       <ChromaticOrbPrompt />
+      <TriggeredSpellPrompt />
       <MarkTransferPrompt />
       <Toast />
     </div>

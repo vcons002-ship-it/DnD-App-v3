@@ -85,3 +85,55 @@ it('retains the full Burst tray and its parent links for the combined damage sum
  const reveal={...damage('1d8',[8]),damageDice:[{label:'1d8',value:8,faces:[8]},{label:'Sorcerous Burst bonus',diceExpression:'1d8',value:8,faces:[8]},{label:'Sorcerous Burst bonus',diceExpression:'1d8',value:5,faces:[5]}]};
  expect(resultTrayFor([frame('attack',[20],[15]),burst],reveal)).toBe(burst);
 });
+
+it('skips discarded Savage Attacker dice and retains unified Savage Attacker / Savage Attacks trays',()=>{
+ const savageOnly=frame('savage',[6,6,6,6],[2,1,5,6],{
+  sets:[0,0,1,1],
+  kept:1,
+  discardedDice:[true,true,false,false],
+  rerollLinks:[{from:0,to:2},{from:1,to:3}],
+ });
+ const revealOnly={...damage('2d6',[5,6]),damageDice:[{label:'2d6',value:11,faces:[5,6]}]};
+ expect(resultTrayFor([frame('attack',[20],[15]),savageOnly],revealOnly)).toBe(savageOnly);
+
+ const both=frame('savage-both',[12,12,12,12,12],[2,3,9,10,12],{
+  sets:[0,0,1,1,2],
+  critical:[false,true,false,true,true],
+  kept:1,
+  discardedDice:[true,true,false,false,false],
+  dieRoles:['base','crit','reroll','reroll-crit','savage-crit'],
+  rerollLinks:[{from:0,to:2},{from:1,to:3}],
+ });
+ const revealBoth={
+  ...damage('1d12',[9]),
+  outcome:'crit' as const,
+  damageDice:[
+   {label:'1d12',value:9,faces:[9]},
+   {label:'CRIT',value:10,faces:[10],diceExpression:'1d12',critical:true},
+   {label:'1d12',value:12,faces:[12],critical:true,source:'Savage Attacks'},
+  ],
+ };
+ expect(resultTrayFor([frame('attack',[20],[20]),both],revealBoth)).toBe(both);
+});
+
+it('matches GWF/Elemental Adept floored trays via dieAdjustedValues and Halfling Lucky rerolls',()=>{
+  const floored=frame('gwf',[6,6],[1,2],{
+    dieRoles:['floored','floored'],
+    dieAdjustedValues:[3,3],
+    dieLabels:['1→3 GWF','2→3 GWF'],
+  });
+  const revealFloored:RollReveal={
+    physical:true,kind:'damage',attacker:'Druk',outcome:'hit',
+    damageDice:[{label:'2d6',value:6,faces:[3,3],rawFaces:[1,2],floorLabel:'Great Weapon Fighting'}],
+  };
+  expect(resultTrayFor([frame('atk',[20],[15]),floored],revealFloored)).toBe(floored);
+  expect(diceTriggerForTray(floored,{...revealFloored,diceTrigger:{kind:'dice-floor',title:'GWF',detail:'1,2 → 3',diceCount:2,groups:[{value:3,indices:[0,1]}]}})).toBeTruthy();
+
+  const lucky=frame('lucky',[20,20],[1,18],{
+    discardedDice:[true,false],
+    rerollLinks:[{from:0,to:1}],
+    dieRoles:['base','lucky-reroll'],
+    dieLabels:['Lucky: Nat 1','Halfling Lucky'],
+  });
+  expect(resultTrayFor([lucky],{physical:true,kind:'check',attacker:'Milo',outcome:'none',d20:18})).toBe(lucky);
+});

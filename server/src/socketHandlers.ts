@@ -79,6 +79,7 @@ import {
   castSlotLevel,
   resolveAbilityRoll,
   resolveMonsterSheetAbility,
+  resolveTriggeredSpell,
   resolveForcedSave,
   resolveSkillRoll,
   useConsumable,
@@ -343,7 +344,13 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
     const trayStarts=new Map<string,(start:boolean)=>void>();
     let activeDiceId:string|undefined,skipDicePresentation=false;
     let finishDicePresentation:(()=>void)|undefined;
+    let pendingReroll:{id:string;finish:(reroll:boolean)=>void}|undefined;
     let hiddenReview:{id:string;sessionId:string;finish:(decision:import('../../shared/types.js').HiddenRollDecision)=>void}|undefined;
+    rawOn('dice:rerollChoice',(...args)=>{
+      const payload=args[0] as {id?:unknown;reroll?:unknown}|undefined;
+      if(!pendingReroll||payload?.id!==pendingReroll.id||typeof payload.reroll!=='boolean')return;
+      pendingReroll.finish(payload.reroll);
+    });
     rawOn('dice:confirmHidden',(...args)=>{
       const payload=args[0] as {id?:unknown;apply?:unknown;decision?:import('../../shared/types.js').HiddenRollDecision}|undefined,conn=getConn(socket.id);
       if(!hiddenReview||conn?.role!=='dm'||conn.sessionId!==hiddenReview.sessionId||payload?.id!==hiddenReview.id)return;
@@ -367,7 +374,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
     rawOn('dice:skip',(...args)=>{
       const id=(args[0] as {id?:unknown})?.id;
       if(typeof id!=='string'||id!==activeDiceId)return;
-      skipDicePresentation=true;trayReady.get(id)?.();finishDicePresentation?.();
+      skipDicePresentation=true;pendingReroll?.finish(false);trayReady.get(id)?.();finishDicePresentation?.();
     });
     rawOn('dice:ready',(...args)=>{const id=(args[0] as {id?:unknown})?.id;if(typeof id==='string')trayReady.get(id)?.();});
     rawOn('dice:begin',(...args)=>{const id=(args[0] as {id?:unknown})?.id;if(typeof id==='string'&&getConn(socket.id)?.role==='dm')trayStarts.get(id)?.(true);});
@@ -395,6 +402,12 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       const finish=()=>{clearTimeout(timer);finishDicePresentation=undefined;resolve();};
       const timer=setTimeout(finish,ms);finishDicePresentation=finish;
     });
+    const chooseReroll=(_frameId:string,_info:{label:string;rollTotal:number;diceSummary:string},promptId:string)=>new Promise<boolean>(resolve=>{
+      if(skipDicePresentation||!socket.connected){resolve(false);return;}
+      const finish=(reroll:boolean)=>{if(pendingReroll?.id!==promptId)return;clearTimeout(timer);pendingReroll=undefined;resolve(reroll);};
+      const timer=setTimeout(()=>finish(false),180000);
+      pendingReroll={id:promptId,finish};
+    });
     privateControllers.set(socket.id,{ready:prepareTray,waitForPresentation:waitForDicePresentation,review:reviewHidden,finished:()=>{socket.emit('dice:hiddenReview',null);activeDiceId=undefined;skipDicePresentation=false;}});
     const areaPreview=new SpellAreaPreviewController(io,socket.id);
     rawOn('spell:areaPreview',payload=>areaPreview.update(payload as import('../../shared/types.js').SpellAreaPreviewIntent|null));
@@ -403,7 +416,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
     const scheduleCastTimeout=(held:NonNullable<ReturnType<typeof deferCast>>)=>afterRollCommit(()=>{
       const timer=setTimeout(()=>commandDispatch.get('spell:counterspell')?.({castId:held.id,continueCast:true}),Math.max(0,held.expiresAt-Date.now())+150);timer.unref();
     });
-    const liveEvents=new Set(['spell:counterspell','spell:shield','spell:repeat','dice:roll','ability:roll','death:roll','skill:roll','save:roll','check:roll','save:resolve','combat:attack','combat:damage','combat:smite','combat:maneuver','combat:hitFeature','combat:orbLeap','combat:riposte','combat:save','trap:disarm','object:interact','item:use','hitDice:spend','character:levelRollHp','initiative:start','initiative:rollMine','initiative:rollAll','initiative:rollMissing','initiative:next','initiative:endTurn']);
+    const liveEvents=new Set(['spell:counterspell','spell:shield','spell:repeat','dice:roll','ability:roll','death:roll','skill:roll','save:roll','check:roll','save:resolve','combat:attack','combat:damage','combat:smite','combat:maneuver','combat:hitFeature','combat:orbLeap','combat:triggeredSpell','combat:riposte','combat:save','trap:disarm','object:interact','item:use','hitDice:spend','character:levelRollHp','initiative:start','initiative:rollMine','initiative:rollAll','initiative:rollMissing','initiative:next','initiative:endTurn']);
     liveEvents.add('character:rollStats');
     const on = ((event: string, handler: (...args: unknown[]) => void) => {
       const wrapped=(...args:unknown[]) => {
@@ -429,32 +442,35 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
             const payload=args[0] as any;
             const abilityOwner=payload?.refId && (payload.kind==='pc'?getCharacter(payload.refId):getMonster(payload.refId));
             const ability=abilityOwner?.sheetAbilities.find((a:import('../../shared/types.js').SheetAbility)=>a.id===payload?.abilityId);
+            const sourceEntry=payload?.rollId?getRollEntry(payload.rollId,sid):undefined;
+            const trigOffer=event==='combat:triggeredSpell'?sourceEntry?.triggeredSpells?.find(o=>o.id===payload?.offerId):undefined;
             const cancelKind:import('../../shared/types.js').HiddenRollCancelKind=event==='ability:roll'&&ability?.type==='spell'?'cast'
               :['combat:attack','combat:riposte'].includes(event)?'attack'
               :['combat:damage','combat:smite','combat:maneuver','combat:hitFeature'].includes(event)?'damage'
-              :['spell:repeat','save:resolve','combat:orbLeap'].includes(event)?'effect':'roll';
-            const sourceEntry=payload?.rollId?getRollEntry(payload.rollId,sid):undefined;
+              :['spell:repeat','save:resolve','combat:orbLeap','combat:triggeredSpell'].includes(event)?'effect':'roll';
             const pending=sourceEntry?.pending;
             const requestedToken=payload?.attackerTokenId?getToken(payload.attackerTokenId):undefined;
             const claimedActorId=!isDm()?getClaimedCharacterId(sid,commandSocketId()):null;
             const actor=pending?.attacker.kind==='pc'?getCharacter(pending.attacker.refId)
+              :trigOffer?.attacker.kind==='pc'?getCharacter(trigOffer.attacker.refId)
               :requestedToken?.kind==='pc'?getCharacter(requestedToken.refId)
               :payload?.characterId?getCharacter(payload.characterId)
               :payload?.kind==='pc'&&abilityOwner?getCharacter(abilityOwner.id)
               :claimedActorId?getCharacter(claimedActorId):undefined;
             const rolledToken=payload?.tokenId?getToken(payload.tokenId):undefined;
             const npc=pending?.attacker.kind==='monster'?getMonster(pending.attacker.refId)
+              :trigOffer?.attacker.kind==='monster'?getMonster(trigOffer.attacker.refId)
               :requestedToken?.kind==='monster'?getMonster(requestedToken.refId)
               :payload?.kind==='monster'&&abilityOwner?getMonster(abilityOwner.id)
               :rolledToken?.kind==='monster'?getMonster(rolledToken.refId):undefined;
             const dmDice=!!npc || isDm()&&!actor;
-            const attackerRefs:LiveTargetRef[]=pending?[pending.attacker]:requestedToken?[{id:requestedToken.id}]
+            const attackerRefs:LiveTargetRef[]=pending?[pending.attacker]:trigOffer?[{id:trigOffer.attacker.tokenId,kind:trigOffer.attacker.kind,refId:trigOffer.attacker.refId}]:requestedToken?[{id:requestedToken.id}]
               :actor?[{kind:'pc',refId:actor.id}]:npc?[{kind:'monster',refId:npc.id}]:[];
             const saveDiceArt=(target:import('../../shared/dice.js').SaveDieInfo['target'])=>{
               const character=target.kind==='pc'?getCharacter(target.refId):undefined;
               return diceArtForSaveOwner(target.kind,character,character?.claimedBy?getConn(character.claimedBy)?.role:undefined);
             };
-            const meta={saveDiceArt,diceTheme:undefined as 'gold'|undefined,dmDice,affinity:npc?.disposition,ready:prepareTray,waitForPresentation:waitForDicePresentation,onFacing:()=>broadcastSnapshots(io,sid),roller,attacker:actor?.name??npc?.name??roller,className:actor?.className??'',label:ability?.name??pending?.weapon??(sourceEntry?.apply?.orb?'Chromatic Orb':undefined)??(actor??npc)?.weapons[payload?.weaponIndex]?.name??payload?.label??payload?.skill??payload?.ability??event.split(':').join(' ')};
+            const meta={saveDiceArt,diceTheme:undefined as 'gold'|undefined,dmDice,affinity:npc?.disposition,ready:prepareTray,waitForPresentation:waitForDicePresentation,onFacing:()=>broadcastSnapshots(io,sid),roller,attacker:actor?.name??npc?.name??roller,className:actor?.className??'',label:trigOffer?.ability.name??ability?.name??pending?.weapon??(sourceEntry?.apply?.orb?sourceEntry.apply.orb.spellName??'Chromatic Orb':undefined)??(actor??npc)?.weapons[payload?.weaponIndex]?.name??payload?.label??payload?.skill??payload?.ability??event.split(':').join(' ')};
             if(event==='combat:hitFeature')meta.label=actor?.sheetAbilities.find(a=>a.id===payload?.abilityId)?.name??meta.label;
             if(event==='death:roll')meta.label='Death Saving Throw';
             else if(event==='hitDice:spend')meta.label='Hit Dice';
@@ -468,7 +484,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
             else if(ability?.roll?.kind==='heal')meta.label=`${ability.name} — Healing Roll`;
             else if(ability?.roll&&['save','damage'].includes(ability.roll.kind))meta.label=`${ability.name} — Damage Roll`;
             const riposte=event==='combat:riposte'?listRipostes(sid).find(o=>o.id===payload?.opportunityId):undefined;
-            const targetId=payload?.targetTokenId??(event==='save:resolve'?payload?.tokenId:undefined)??pending?.hitOptions?.targetTokenId??riposte?.attackerTokenId;
+            const targetId=payload?.targetTokenId??(event==='save:resolve'?payload?.tokenId:undefined)??pending?.hitOptions?.targetTokenId??riposte?.attackerTokenId??(trigOffer&&!Array.isArray(payload?.targetTokenIds)&&!payload?.area?(trigOffer.targetMode==='self'?trigOffer.attacker.tokenId:trigOffer.target.tokenId):undefined);
             const targetRefs:LiveTargetRef[]=typeof targetId==='string'?[{id:targetId}]:pending?.rayHits?.length?pending.rayHits.map(h=>({id:h.tokenId})):pending?[pending.target]:Array.isArray(payload?.targetTokenIds)?payload.targetTokenIds.map((id:string)=>({id})):Array.isArray(payload?.tokenIds)?payload.tokenIds.map((id:string)=>({id}))
               :event==='save:roll'&&abilityOwner?[{kind:payload.kind,refId:abilityOwner.id}]:[];
             const targetLabels=new Map<string,string|undefined>();
@@ -511,7 +527,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
               return {ready:saveController.ready,waitForPresentation:saveController.waitForPresentation,requireSaveStart:true};
             };
             const sourceToken=payload?.attackerTokenId?getToken(payload.attackerTokenId):undefined;
-            const sources=[sourceToken,abilityOwner&&{kind:payload.kind,refId:abilityOwner.id},pending?.attacker,
+            const sources=[sourceToken,abilityOwner&&{kind:payload.kind,refId:abilityOwner.id},pending?.attacker,trigOffer?.attacker,
               payload?.tokenId?getToken(payload.tokenId):undefined].filter(Boolean);
             const audienceCache=new Map<string,boolean>();
             const audience=()=>[...io.sockets.sockets.keys()].filter(id=>{
@@ -587,9 +603,11 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
                 const calculation=frame.calculation?{...frame.calculation,target}:undefined;
                 const safeCalculation=calculation&&getConn(id)?.role!=='dm'&&(frame.dmDice||isDm())
                   ?redactCreatureMods({id:frame.id,roller:frame.roller,label:frame.label,expr:'',total:0,detail:'',createdAt:0,reveal:calculation},true).reveal:calculation;
-                io.to(id).emit('dice:frame',{...frame,attacker:attackerFor(id),target,calculation:safeCalculation});lastDelivered.set(id,frame.id);
-              }},{...meta,configureDice,...(privateRoll?{deferFacing:true,requireSaveStart:true,review:(results:import('../../shared/types.js').HiddenRollResult[],dice:import('../../shared/types.js').HiddenRollDice[],manual:boolean)=>reviewHidden(sid,meta.label,results,dice,manual,cancelKind)}:delegateSaves?{configureDice,review:async(results,dice,manual)=>saveController?saveController.review(sid,meta.label,results.filter(r=>r.reveal?.kind==='check'),dice,manual,cancelKind):true}:{})});
-            }finally{if(areaCommand)areaPreview.clear();for(const [id,lastId] of lastDelivered)io.to(id).emit('dice:finished',{id:lastId});for(const id of resolving)io.to(id).emit('dice:resolving',{id:resolutionId,active:false});if(privateRoll)socket.emit('dice:hiddenReview',null);saveController?.finished();activeDiceId=undefined;skipDicePresentation=false;}
+                const shapedReroll=frame.rerollPrompt?(id===socket.id?frame.rerollPrompt:{...frame.rerollPrompt,readOnly:true}):undefined;
+                const shapedOffer=id===socket.id?frame.rerollOfferLabel:undefined;
+                io.to(id).emit('dice:frame',{...frame,rerollPrompt:shapedReroll,rerollOfferLabel:shapedOffer,attacker:attackerFor(id),target,calculation:safeCalculation});lastDelivered.set(id,frame.id);
+              }},{...meta,chooseReroll,configureDice,...(privateRoll?{deferFacing:true,requireSaveStart:true,review:(results:import('../../shared/types.js').HiddenRollResult[],dice:import('../../shared/types.js').HiddenRollDice[],manual:boolean)=>reviewHidden(sid,meta.label,results,dice,manual,cancelKind)}:delegateSaves?{configureDice,review:async(results,dice,manual)=>saveController?saveController.review(sid,meta.label,results.filter(r=>r.reveal?.kind==='check'),dice,manual,cancelKind):true}:{})});
+            }finally{pendingReroll?.finish(false);if(areaCommand)areaPreview.clear();for(const [id,lastId] of lastDelivered)io.to(id).emit('dice:finished',{id:lastId});for(const id of resolving)io.to(id).emit('dice:resolving',{id:resolutionId,active:false});if(privateRoll)socket.emit('dice:hiddenReview',null);saveController?.finished();activeDiceId=undefined;skipDicePresentation=false;}
           },failed);
           return;
         }
@@ -2972,6 +2990,36 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       if (!result.ok) socket.emit('notice',{message:result.reason});
       afterChange();
     });
+    on('combat:triggeredSpell', (payload) => {
+      const sid = sessionId();
+      if (!sid || !payload || typeof payload.rollId !== 'string' || typeof payload.offerId !== 'string') return;
+      const entry = getRollEntry(payload.rollId, sid);
+      const offer = entry?.triggeredSpells?.find((o) => o.id === payload.offerId);
+      if (!offer) {
+        socket.emit('notice', { message: 'That triggered spell prompt is no longer available.' });
+        return;
+      }
+      if (!isDm()) {
+        const ch = offer.owner ? getCharacter(offer.owner) : undefined;
+        if (!ch || ch.claimedBy !== commandSocketId()) {
+          socket.emit('notice', { message: 'Only the attacker or DM can resolve this triggered spell.' });
+          return;
+        }
+      }
+      if (!payload.dismiss) {
+        if (payload.targetTokenId && !canDirectlyTargetToken(payload.targetTokenId)) {
+          socket.emit('notice', { message: 'Choose a visible creature for the triggered spell.' });
+          return;
+        }
+        if (Array.isArray(payload.targetTokenIds) && payload.targetTokenIds.some((tid) => !canDirectlyTargetToken(tid))) {
+          socket.emit('notice', { message: 'Every chosen target must be visible.' });
+          return;
+        }
+      }
+      const result = resolveTriggeredSpell(sid, rollerName(sid, commandSocketId(), isDm()), payload);
+      if (!result.ok) socket.emit('notice', { message: result.reason });
+      else afterChange();
+    });
 
     on('combat:riposte', ({opportunityId, weaponIndex, pass}) => {
       const sid = sessionId();
@@ -3056,6 +3104,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       hiddenReview?.finish({action:'discard'});
       for(const finish of trayStarts.values())finish(false);
       for (const finish of trayReady.values()) finish();
+      pendingReroll?.finish(false);
       finishDicePresentation?.();
       const sid = sessionId();
       const playerId = commandConnection()?.playerId ?? null;

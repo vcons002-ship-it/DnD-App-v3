@@ -929,12 +929,12 @@ const FEATURES: FeatureEntry[] = [
   },
   {
     name: 'Savage Attacker',
-    type: 'stance',
+    type: 'ability',
     school: 'Feat',
-    tags: ['feat', 'damage', 'reroll', 'weapon', 'stance'],
+    tags: ['feat', 'damage', 'reroll', 'weapon'],
     meta: 'Feat · once per turn · reroll weapon damage dice',
     description:
-      'Once per turn when you hit with a weapon, you can reroll the weapon\'s damage dice and use either total. Switch this on and your weapon damage rolls twice and keeps the better set (a critical hit rerolls its doubled dice too). The once-per-turn limit is yours to keep — turn it off once you have used it.',
+      'Once per turn when you hit with a weapon, you can reroll the weapon\'s damage dice (including critical hit dice and Savage Attacks / Brutal Critical weapon dice) and use either total. Offered as an interactive Reroll button directly on the damage dice tray after the initial damage dice settle.',
     stance: { active: false, appliesTo: 'all', rerollDamageDice: true },
   },
   {

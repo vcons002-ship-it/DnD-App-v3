@@ -87,9 +87,9 @@ describe('upstream racial criticals and player HUD deferred damage', () => {
     enableSavageAttacks(f.character.id);
     const feat = getFeature('Savage Attacker')!;
     setSheetAbility('pc', f.character.id, { ...feat, id: 'feat-savage-attacker', stance: { ...feat.stance!, active: true } });
-    // Natural 20; first damage set 1+1, better set 7+7, racial extra die 12.
+    // Natural 20; first damage set 1+1+1, better set 7+7+12 (Savage Attacks extra weapon crit die included).
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
-      .mockReturnValueOnce(0.999).mockReturnValueOnce(0).mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.999).mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValueOnce(0)
       .mockReturnValueOnce(0.5).mockReturnValueOnce(0.5).mockReturnValueOnce(0.999);
 
     resolveAttack(f.session.id, 'Fighter', f.attacker.id, target.token.id, 0);

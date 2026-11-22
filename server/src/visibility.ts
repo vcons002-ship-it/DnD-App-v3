@@ -292,7 +292,7 @@ export function createSnapshotBuilder(
     const labels=targetMarks.get(key)??new Set<string>();labels.add(ab.name);targetMarks.set(key,labels);
   }
   const rawRollLog=preview?[]:listRollLog(sessionId);
-  const rollLog = rawRollLog.map(e=>e.pending?{...e,pending:{...e.pending,awaitingShield:!!e.pending.shield,shield:undefined,live:undefined,weaponFx:undefined,isMeleeAttack:undefined}}:e);
+  const rollLog = rawRollLog.map(e=>e.pending?{...e,pending:{...e.pending,awaitingShield:!!e.pending.shield,shield:undefined,live:undefined,deferredTriggers:undefined,weaponFx:undefined,isMeleeAttack:undefined}}:e);
   const chat = preview ? [] : listChat(sessionId);
   const charById = new Map(characters.map((c) => [c.id, c]));
   const monById = new Map(monsters.map((m) => [m.id, m]));
@@ -704,6 +704,7 @@ export function createSnapshotBuilder(
           apply: undefined,
           pending: undefined,
           smite: undefined,
+          triggeredSpells: undefined,
           hpNote: e.hpNote?.kind==='pc' && hpNoteVisible(e.hpNote) ? e.hpNote : undefined,
         }));
       // Visibility differs by viewer. Keep summaries out of the shared cache so
@@ -726,7 +727,10 @@ export function createSnapshotBuilder(
         !!owner && charById.get(owner)?.claimedBy === socketId;
       const mine = rollLog.filter(
         (e) =>
-          ownedByMe(e.apply?.owner) || ownedByMe(e.pending?.owner) || ownedByMe(e.smite?.owner),
+          ownedByMe(e.apply?.owner) ||
+          ownedByMe(e.pending?.owner) ||
+          ownedByMe(e.smite?.owner) ||
+          !!e.triggeredSpells?.some((o) => ownedByMe(o.owner)),
       );
       if (mine.length) {
         const keep = new Map(
@@ -735,6 +739,9 @@ export function createSnapshotBuilder(
             {
               ...(ownedByMe(e.apply?.owner) ? { apply: e.apply } : {}),
               ...(ownedByMe(e.smite?.owner) ? { smite: e.smite } : {}),
+              ...(e.triggeredSpells?.some((o) => ownedByMe(o.owner))
+                ? { triggeredSpells: e.triggeredSpells.filter((o) => ownedByMe(o.owner)) }
+                : {}),
               ...(ownedByMe(e.pending?.owner) ? { pending: e.hideMods && e.pending
                 // Pending data remains the existing owner's action payload;
                 // new named log-only detail is not needed before resolution.

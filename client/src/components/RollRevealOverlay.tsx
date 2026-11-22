@@ -308,7 +308,7 @@ const FullRollRevealOverlay = memo(function FullRollRevealOverlay() {
     rollId={completed?.rollId} revealKind={completed?.reveal.kind}
     resultHeader={completed?.reveal}
     explosionMs={completed&&hasDrukMaximum(tray)?physicalRollTimeline(completed.reveal,true,true).explosion:undefined}
-    diceTrigger={completed&&tray.burstProgress?undefined:tray.diceTrigger??diceTriggerForTray(tray,completed?.reveal)}
+    diceTrigger={completed&&(tray.burstProgress||tray.trayBanner)?undefined:tray.diceTrigger??diceTriggerForTray(tray,completed?.reveal)}
   /> : reviewingHiddenRoll?<div className="roll-reveal-backdrop"><div className="roll-reveal private-review-fallback"><HiddenRollReview/></div></div>:sequence;
   // Decided per roll, not once per mount: the guide or sheet may open or close
   // between rolls. Keyed so the top-layer modal dialog unmounts once empty.
@@ -625,7 +625,7 @@ function RollSequence({ rollFx, entrySide, player, staticReveal, animatePhysical
         )}
 
         {(inlineTray || !staticReveal) && comparison && ((comparison.kind==='d20' && stage.phase!=='rolling' && stage.phase!=='landing') || (comparison.kind==='dice' && stage.diceLocked>0)) && <div className="rr-comparison-title">{comparison.mode==='adv'?'Advantage':'Disadvantage'} / Kept roll {comparison.kept+1}{comparison.reasons?.length ? ` · ${comparison.reasons.join(', ')}` : ''}</div>}
-        {(inlineTray || !staticReveal) && !comparison && reveal.advantageReasons?.length && stage.phase!=='rolling' && stage.phase!=='landing' && <div className="rr-comparison-title">Straight roll (adv + dis): {reveal.advantageReasons.join(', ')}</div>}
+        {(inlineTray || !staticReveal) && !comparison && reveal.advantageReasons?.length && stage.phase!=='rolling' && stage.phase!=='landing' && <div className="rr-comparison-title">{reveal.advantageState==='adv'?'Advantage':reveal.advantageState==='dis'?'Disadvantage':'Straight roll (adv + dis)'}: {reveal.advantageReasons.join(', ')}</div>}
         {showOutcome && !earlyCritical && <div className="roll-reveal-outcome" role="status" aria-label="Roll result">
           {outcomeLabel}
         </div>}

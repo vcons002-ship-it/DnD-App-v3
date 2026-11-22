@@ -1686,6 +1686,8 @@ export function addRollLog(
     pending?: RollEntry['pending'];
     /** A smite this hit makes available. */
     smite?: RollEntry['smite'];
+    /** Prompted free spell casts offered by weapon triggers on this roll. */
+    triggeredSpells?: RollEntry['triggeredSpells'];
     /** HP accounting note ("Druk HP 42→38") + its target for visibility. */
     hpNote?: RollEntry['hpNote'];
     /** Cosmetic attack-roll reveal payload (the brief d20 animation). */
@@ -1711,8 +1713,8 @@ export function addRollLog(
   const dmOnly =
     (entry.roller === 'DM'||entry.reveal?.kind==='check'&&entry.reveal.visibilityTarget?.kind==='monster') && !!getSessionById(sessionId)?.hideDmRolls;
   db.prepare(
-    `INSERT OR REPLACE INTO roll_log (id, session_id, roller, label, expr, total, detail, description, apply, pending, smite, hp_note, reveal, hide_mods, dm_only, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO roll_log (id, session_id, roller, label, expr, total, detail, description, apply, pending, smite, triggered_spells, hp_note, reveal, hide_mods, dm_only, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     sessionId,
@@ -1725,6 +1727,7 @@ export function addRollLog(
     entry.apply ? JSON.stringify(entry.apply) : '',
     entry.pending ? JSON.stringify(entry.pending) : '',
     entry.smite ? JSON.stringify(entry.smite) : '',
+    entry.triggeredSpells?.length ? JSON.stringify(entry.triggeredSpells) : '',
     entry.hpNote ? JSON.stringify(entry.hpNote) : '',
     entry.reveal ? JSON.stringify(entry.reveal) : '',
     entry.hideMods ? 1 : 0,
@@ -1867,6 +1870,7 @@ type RollLogRow = {
   apply: string | null;
   pending: string | null;
   smite: string | null;
+  triggered_spells?: string | null;
   hp_note: string | null;
   reveal: string | null;
   hide_mods: number | null;
@@ -1898,6 +1902,7 @@ function rowToRollEntry(r: RollLogRow): RollEntry {
     ...(r.apply ? { apply: parseJsonColumn<RollEntry['apply']>(r.apply, undefined, 'roll_log.apply ' + r.id) } : {}),
     ...(r.pending ? { pending: parseJsonColumn<RollEntry['pending']>(r.pending, undefined, 'roll_log.pending ' + r.id) } : {}),
     ...(r.smite ? { smite: parseJsonColumn<RollEntry['smite']>(r.smite, undefined, 'roll_log.smite ' + r.id) } : {}),
+    ...(r.triggered_spells ? { triggeredSpells: parseJsonColumn<RollEntry['triggeredSpells']>(r.triggered_spells, undefined, 'roll_log.triggered_spells ' + r.id) } : {}),
     ...(r.hp_note ? { hpNote: parseHpNote(r.hp_note) } : {}),
     ...(r.reveal ? { reveal: parseJsonColumn<RollEntry['reveal']>(r.reveal, undefined, 'roll_log.reveal ' + r.id) } : {}),
     ...(r.hide_mods ? { hideMods: true } : {}),
@@ -1923,6 +1928,13 @@ export function getRollEntry(id: string, sessionId?: string): RollEntry | null {
 export function setRollSmite(id: string, smite: RollEntry['smite']): void {
   db.prepare('UPDATE roll_log SET smite = ? WHERE id = ?').run(
     smite ? JSON.stringify(smite) : '',
+    id,
+  );
+}
+
+export function setRollTriggeredSpells(id: string, triggeredSpells: RollEntry['triggeredSpells']): void {
+  db.prepare('UPDATE roll_log SET triggered_spells = ? WHERE id = ?').run(
+    triggeredSpells?.length ? JSON.stringify(triggeredSpells) : '',
     id,
   );
 }

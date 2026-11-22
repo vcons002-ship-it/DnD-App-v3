@@ -6,7 +6,9 @@ import { type ModSource, effectiveAc, effectiveStats } from '../../../shared/mod
 import { damageParts, weaponAttackBonusDetail } from '../../../shared/combatMath';
 import { DAMAGE_TYPES } from '../../../shared/damage';
 import { activeHasteCondition, effectiveSpeed, hasteAcBonus, speedIsZero } from '../../../shared/spellBuffs';
+import { formatDiceRulesSummary, formatWeaponTriggersSummary, hasActiveDiceRules } from '../../../shared/diceRules';
 import { NumberInput } from './NumberInput';
+import { WeaponAdvancedEditor } from './WeaponAdvancedEditor';
 
 /** Common 5e weapon tags, offered as add-suggestions in the tag editor. */
 const TAG_SUGGESTIONS = [
@@ -363,6 +365,7 @@ export function StatBlock({
         weapons={d.weapons}
         onChange={(weapons) => set({ weapons })}
         monster={monster}
+        sheetAbilities={creature.sheetAbilities}
       />
       {!deferActionsTraits && (
         <>
@@ -618,6 +621,15 @@ function ReadView({
                 {w.range ? ` (${w.range})` : ''}
                 {w.tags && w.tags.length > 0 && (
                   <span className="muted"> · {w.tags.map((t) => `[${t}]`).join(' ')}</span>
+                )}
+                {w.critThreshold && w.critThreshold < 20 && (
+                  <span className="muted"> · Crit {w.critThreshold}–20</span>
+                )}
+                {(hasActiveDiceRules(w.diceRules) || (w.triggers?.length ?? 0) > 0) && (
+                  <span className="muted">
+                    {' '}
+                    · {[...formatDiceRulesSummary(w.diceRules), ...formatWeaponTriggersSummary(w.triggers)].join(' · ')}
+                  </span>
                 )}
                 {mNames.length > 0 && (
                   <span className="weapon-masteries">
@@ -905,16 +917,19 @@ function WeaponEditor({
   weapons,
   onChange,
   monster = false,
+  sheetAbilities = [],
 }: {
   weapons: Weapon[];
   onChange: (w: Weapon[]) => void;
   /** Creature attacks: library picks are flagged `diceOnly` (mod/to-hit live). */
   monster?: boolean;
+  sheetAbilities?: SheetAbility[];
 }) {
   const setAt = (i: number, patch: Partial<Weapon>) =>
     onChange(weapons.map((w, j) => (j === i ? { ...w, ...patch } : w)));
 
   const [picking, setPicking] = useState(false);
+  const [advIdx, setAdvIdx] = useState<number | null>(null);
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<PickRow[]>([]);
   useEffect(() => {
@@ -1073,14 +1088,48 @@ function WeaponEditor({
           )}
           <TagInput tags={w.tags ?? []} onChange={(tags) => setAt(i, { tags })} />
           <button
+            type="button"
+            className={`btn tiny${
+              (w.critThreshold && w.critThreshold < 20) ||
+              hasActiveDiceRules(w.diceRules) ||
+              (w.triggers?.length ?? 0) > 0
+                ? ' on'
+                : ''
+            }`}
+            title="Advanced dice rules, critical range & conditional triggers"
+            aria-label={`Advanced rules for ${w.name || 'weapon'}`}
+            onClick={() => setAdvIdx(i)}
+          >
+            ⚙
+          </button>
+          <button
             className="btn tiny"
             onClick={() => onChange(weapons.filter((_, j) => j !== i))}
           >
             ✕
           </button>
+          {((w.critThreshold && w.critThreshold < 20) ||
+            hasActiveDiceRules(w.diceRules) ||
+            (w.triggers?.length ?? 0) > 0) && (
+            <div style={{ flexBasis: '100%', fontSize: 11, color: 'var(--muted)', paddingLeft: 4 }}>
+              {[
+                ...(w.critThreshold && w.critThreshold < 20 ? [`Crit ${w.critThreshold}–20`] : []),
+                ...formatDiceRulesSummary(w.diceRules),
+                ...formatWeaponTriggersSummary(w.triggers),
+              ].join(' · ')}
+            </div>
+          )}
         </div>
         );
       })}
+      {advIdx !== null && weapons[advIdx] && (
+        <WeaponAdvancedEditor
+          weapon={weapons[advIdx]}
+          sheetAbilities={sheetAbilities}
+          onSave={(updated) => setAt(advIdx, updated)}
+          onClose={() => setAdvIdx(null)}
+        />
+      )}
       <button
         className={`add-row-btn ${picking ? 'on' : ''}`}
         onClick={() => setPicking((p) => !p)}

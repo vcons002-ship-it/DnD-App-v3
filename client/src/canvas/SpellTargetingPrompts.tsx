@@ -326,13 +326,22 @@ export function SpellTargetingPrompts({
           )}
           <button
             className="btn tiny"
-            disabled={rayTargets.length < (rayCast.minTargets ?? rayCast.instances) || rayTargets.length > rayCast.instances || pendingSpellCost(rayCast.payload)?.unavailable}
+            disabled={rayTargets.length < (rayCast.minTargets ?? rayCast.instances) || rayTargets.length > rayCast.instances || (!rayCast.triggeredSpell && pendingSpellCost(rayCast.payload)?.unavailable)}
             onClick={() => {
-              useStore.getState().rollAbility({ ...rayCast.payload, targetTokenIds: rayTargets });
+              if (rayCast.triggeredSpell) {
+                useStore.getState().combatTriggeredSpell({
+                  rollId: rayCast.triggeredSpell.rollId,
+                  offerId: rayCast.triggeredSpell.offerId,
+                  targetTokenIds: rayTargets,
+                  damageType: rayCast.triggeredSpell.damageType,
+                });
+              } else {
+                useStore.getState().rollAbility({ ...rayCast.payload, targetTokenIds: rayTargets });
+              }
               clearRayCast();
             }}
           >
-            Cast {rayCast.name} · {pendingSpellCost(rayCast.payload)?.label ?? rayCast.name}
+            Cast {rayCast.name} · {rayCast.triggeredSpell ? 'Free trigger · no slot' : (pendingSpellCost(rayCast.payload)?.label ?? rayCast.name)}
           </button>
           <button
             className="btn tiny"
@@ -358,9 +367,11 @@ export function SpellTargetingPrompts({
             {['sphere', 'cylinder', 'emanation'].includes(areaCast.spec.kind) ? 'radius' : areaCast.spec.kind}
           </strong>
           <span>
-            {areaCast.repeat
-              ? 'Repeat use · no additional spell slot.'
-              : `${pendingSpellCost(areaCast.payload)?.label ?? 'Spell casting'} · no slot is spent until you confirm this area.`}
+            {areaCast.triggeredSpell
+              ? 'Free weapon trigger · no spell slot.'
+              : areaCast.repeat
+                ? 'Repeat use · no additional spell slot.'
+                : `${pendingSpellCost(areaCast.payload)?.label ?? 'Spell casting'} · no slot is spent until you confirm this area.`}
           </span>
           <span>
             {areaCast.name.toLowerCase() === 'pass without trace'
@@ -437,7 +448,7 @@ export function SpellTargetingPrompts({
           <button
             className="btn tiny"
             disabled={
-              (!areaCast.repeat && pendingSpellCost(areaCast.payload)?.unavailable) ||
+              (!areaCast.repeat && !areaCast.triggeredSpell && pendingSpellCost(areaCast.payload)?.unavailable) ||
               !areaPoints.length ||
               !!areaRangeError ||
               (!!areaCast.spec.maxTargets &&
@@ -451,13 +462,24 @@ export function SpellTargetingPrompts({
                   ? { selected: areaTargets.filter((t) => !areaExcluded.includes(t.id)).map((t) => t.id) }
                   : {}),
               };
-              if (areaCast.repeat) useStore.getState().repeatSpell({ ...areaCast.repeat, area: placement });
+              if (areaCast.triggeredSpell) {
+                useStore.getState().combatTriggeredSpell({
+                  rollId: areaCast.triggeredSpell.rollId,
+                  offerId: areaCast.triggeredSpell.offerId,
+                  area: placement,
+                  damageType: areaCast.triggeredSpell.damageType,
+                });
+              } else if (areaCast.repeat) useStore.getState().repeatSpell({ ...areaCast.repeat, area: placement });
               else useStore.getState().rollAbility({ ...areaCast.payload, area: placement });
               clearAreaCast();
             }}
           >
             Confirm area ·{' '}
-            {areaCast.repeat ? 'Repeat · no slot' : `Cast · ${pendingSpellCost(areaCast.payload)?.label ?? areaCast.name}`}
+            {areaCast.triggeredSpell
+              ? 'Free trigger · no slot'
+              : areaCast.repeat
+                ? 'Repeat · no slot'
+                : `Cast · ${pendingSpellCost(areaCast.payload)?.label ?? areaCast.name}`}
           </button>
           <button
             className="btn tiny"

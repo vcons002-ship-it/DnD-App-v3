@@ -16,11 +16,17 @@ import {
 } from '../../../shared/spellSupport';
 import type {
   AbilityRoll,
+  DiceRulesSpec,
   SheetAbility,
   SmiteSpec,
   SpellCustomEffect,
 } from '../../../shared/types';
+import {
+  canonicalDiceRulesForSpell,
+  cleanDiceRules,
+} from '../../../shared/diceRules';
 import { restoreAbilityToRulesDefault } from '../lib/spellEditorHelpers';
+import { DiceRulesEditor } from './DiceRulesEditor';
 import { NumberInput } from './NumberInput';
 import { SpellCombatSupportBadge } from './SpellCombatSupport';
 
@@ -323,6 +329,9 @@ export function SpellEffectEditor({
     (initRoll?.customEffect?.cureConditions ?? [])
       .filter((c) => !IMMUNITY_AND_CURE_CONDITIONS.some((p) => p.toLowerCase() === c.toLowerCase()))
       .join(', '),
+  );
+  const [diceRules, setDiceRules] = useState<DiceRulesSpec | undefined>(
+    () => initRoll?.diceRules ?? canonicalDiceRulesForSpell(effectiveInit),
   );
 
   // Smite Builder
@@ -635,6 +644,7 @@ export function SpellEffectEditor({
     }
 
     const cleanedCustom = buildCleanedCustomEffect();
+    const cleanedDiceRules = mode !== 'buff' ? cleanDiceRules(diceRules) : undefined;
     const resolvedRollKind: AbilityRoll['kind'] = mode === 'buff' ? 'damage' : mode;
     const roll: AbilityRoll = {
       kind: resolvedRollKind,
@@ -645,6 +655,7 @@ export function SpellEffectEditor({
       ...(scaleTargets !== undefined && scaleTargets >= 1 ? { scaleTargets } : {}),
       ...(area ? { area } : {}),
       ...(cleanedCustom ? { customEffect: cleanedCustom } : {}),
+      ...(cleanedDiceRules ? { diceRules: cleanedDiceRules } : {}),
     };
 
     if (mode === 'buff') {
@@ -717,6 +728,9 @@ export function SpellEffectEditor({
               ['Repeat turn damage', customEffect.repeatDamage ?? ''],
               ['Attack bonus dice', customEffect.attackBonusDice ?? ''],
               ['Save bonus dice', customEffect.saveBonusDice ?? ''],
+              ['Exploding bonus die', diceRules?.exploding?.bonusDice ?? ''],
+              ['Matching bonus dice', diceRules?.matchingDice?.bonusDice ?? ''],
+              ['Extra critical dice', diceRules?.extraCritDice ?? ''],
             ]
           : mode === 'buff'
             ? [
@@ -811,6 +825,7 @@ export function SpellEffectEditor({
       setCastingAbility(restoredRaw.roll?.castingAbility ?? eff.roll?.castingAbility ?? '');
       setCustomEffect(r?.customEffect ?? {});
       setExtraCureInput('');
+      setDiceRules(r?.diceRules ?? canonicalDiceRulesForSpell(eff));
       setSmiteDice(eff.smite?.dice ?? '2d8');
       setSmiteScaleDice(eff.smite?.scaleDice ?? '1d8');
       setSmiteDamageType(eff.smite?.damageType ?? 'radiant');
@@ -1616,6 +1631,18 @@ export function SpellEffectEditor({
                   </>
                 )}
               </section>
+
+              {mode !== 'buff' && (
+                <DiceRulesEditor
+                  context="spell"
+                  value={diceRules}
+                  onChange={(next) => {
+                    markMech();
+                    setDiceRules(next);
+                  }}
+                  defaultDamageType={damageType}
+                />
+              )}
 
               {/* Conditions, Buffs, Debuffs & Ongoing Effects */}
               <section className="see-section">

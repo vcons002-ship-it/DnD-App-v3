@@ -20,11 +20,12 @@ export function drukFinaleTimeline(modifiers:number){
   return {complete,explosion:complete+DRUK_EXPLOSION_AFTER_TOTAL_MS,impact:complete+LIVE_DICE_RESULT_HOLD_MS};
 }
 export function hasDrukMaximum(frame:LiveDiceFrame){
-  return frame.values.some((value,i)=>{
+  return frame.values.some((rawValue,i)=>{
     const art=frame.diceArt?.[i];
     if(diceThemeForRoll(art?.className??frame.className,art?.dmDice??frame.dmDice,frame.affinity,frame.diceTheme).id!=='fighter')return false;
+    const value=frame.dieAdjustedValues?.[i]??rawValue;
     const maximum=frame.percentile?.[i]?liveDieResult(frame,i).percentileValue===100:value===frame.sides[i];
-    return maximum && (!frame.mode || frame.kept!==undefined && frame.sets[i]===frame.kept);
+    return maximum && !frame.discardedDice?.[i] && (!frame.mode || frame.kept!==undefined && frame.sets[i]===frame.kept);
   });
 }
 /** One arithmetic + reading schedule for intermediate and final cards. */
