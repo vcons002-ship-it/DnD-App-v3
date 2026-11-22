@@ -469,7 +469,17 @@ function RollSequence({ rollFx, entrySide, player, staticReveal, animatePhysical
     if (staticReveal) {
       if((reveal.physical||reveal.autoFailReason)&&!earlyCritical&&!earlyNaturalTwenty){if(naturalTwenty||reveal.outcome==='crit')playCritical();else if(reveal.outcome==='miss'||reveal.outcome==='fumble'||reveal.outcome==='fail')playMiss();else if(isCheck||isDice)playSkill();else playHit();}
       setStage({ phase: isCheck ? 'outcome' : 'damage', dieFace: reveal.d20 ?? 0, toHitShown: toHit.length, diceLocked: visualDiceCount, diceStopping: visualDiceCount, modsShown: localMods.length });
-      if(!intermediate){const hold=reveal.diceTrigger?DICE_TRIGGER_HOLD_MS:0;at(hold, () => releaseImpact(rollFx.rollId));at(hold+resultHoldMs, dismiss);}
+      if(!intermediate){
+        if (reveal.autoFailReason) {
+          // Keep auto-fail save cards visible for their full reading hold before
+          // releasing queued map HP impacts (which immediately hide the overlay).
+          at(resultHoldMs, () => { releaseImpact(rollFx.rollId); dismiss(); });
+        } else {
+          const hold=reveal.diceTrigger?DICE_TRIGGER_HOLD_MS:0;
+          at(hold, () => releaseImpact(rollFx.rollId));
+          at(hold+resultHoldMs, dismiss);
+        }
+      }
       return cleanup;
     }
     if (!staticReveal) {
