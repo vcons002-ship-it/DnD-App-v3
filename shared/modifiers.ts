@@ -4,8 +4,20 @@
 // base + matching ability modifiers; flat save/skill/attack/AC bonuses layer on
 // at roll time. Pure + unit-tested; the server computes the authoritative math.
 
-import type { Condition, InventoryItem, ModTarget, SheetModifier, Weapon } from './types.js';
+import type {
+  Condition,
+  DiceRulesSpec,
+  InventoryItem,
+  ModTarget,
+  SheetModifier,
+  SpellCustomEffect,
+  Weapon,
+  WeaponTrigger,
+  WeaponTriggerSpell,
+  WeaponTriggerWhen,
+} from './types.js';
 import type { AbilityKey } from './skills.js';
+import { cleanDiceRules } from './diceRules.js';
 import { rollDice } from './dice.js';
 import { hasteAcBonus, hasMageArmor, shieldAcBonus, shieldOfFaithAcBonus, slowSpellPenalty } from './spellBuffs.js';
 
@@ -298,6 +310,73 @@ const validDice = (s: unknown): s is string =>
  * to-hit / magic bonuses are clamped and rounded, the attack ability is checked
  * against the six scores, and strings are length-capped. Nameless entries drop.
  */
+const VALID_TRIGGER_WHEN = new Set<WeaponTriggerWhen>([
+  'on-hit',
+  'on-crit',
+  'on-nat-20',
+  'on-d20-at-least',
+  'on-damage-max',
+  'on-damage-match',
+  'on-miss',
+]);
+
+function sanitizeTriggerEffect(raw: unknown): SpellCustomEffect | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: SpellCustomEffect = {};
+  if (typeof r.conditionLabel === 'string' && r.conditionLabel.trim()) out.conditionLabel = r.conditionLabel.trim().slice(0, 60);
+  if (r.target === 'self' || r.target === 'affected' || r.target === 'ally') out.target = r.target;
+  if (r.aura === 'red' || r.aura === 'blue' || r.aura === 'green') out.aura = r.aura;
+  if (typeof r.note === 'string' && r.note.trim()) out.note = r.note.trim().slice(0, 120);
+  if (Number.isFinite(Number(r.durationRounds)) && Number(r.durationRounds) >= 1) out.durationRounds = Math.min(100, Math.round(Number(r.durationRounds)));
+  if (r.untilTargetStart === true) out.untilTargetStart = true;
+  if (r.untilCasterEnd === true) out.untilCasterEnd = true;
+  if (typeof r.repeatSave === 'string' && ABILITIES.includes(r.repeatSave.trim().toUpperCase() as AbilityKey)) out.repeatSave = r.repeatSave.trim().toUpperCase();
+  if (r.repeatPhase === 'start' || r.repeatPhase === 'end') out.repeatPhase = r.repeatPhase;
+  if (validDice(r.repeatDamage)) out.repeatDamage = (r.repeatDamage as string).trim();
+  if (typeof r.repeatDamageType === 'string' && r.repeatDamageType.trim()) out.repeatDamageType = r.repeatDamageType.trim().slice(0, 30);
+  if (r.saveBeforeDamage === true) out.saveBeforeDamage = true;
+  if (Number.isFinite(Number(r.acBonus))) out.acBonus = Math.max(-10, Math.min(10, Math.round(Number(r.acBonus))));
+  if (r.grantsAdvantageToAttackers === true) out.grantsAdvantageToAttackers = true;
+  if (r.nextAttackAdvantage === true) out.nextAttackAdvantage = true;
+  if (r.attackDisadvantage === true) out.attackDisadvantage = true;
+  if (r.nextAttackDisadvantage === true) out.nextAttackDisadvantage = true;
+  if (r.checkDisadvantage === true) out.checkDisadvantage = true;
+  if (r.zeroSpeed === true) out.zeroSpeed = true;
+  if (r.slow === true) out.slow = true;
+  if (r.preventsHealing === true) out.preventsHealing = true;
+  if (r.noOpportunityAttacks === true) out.noOpportunityAttacks = true;
+  if (r.suppressesInvisibility === true) out.suppressesInvisibility = true;
+  return Object.keys(out).length ? out : undefined;
+}
+
+function sanitizeWeaponDiceRules(raw: unknown): DiceRulesSpec | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as DiceRulesSpec;
+  const patched: DiceRulesSpec = {
+    ...r,
+    ...(r.exploding
+      ? {
+          exploding: {
+            ...r.exploding,
+            bonusDice: validDice(r.exploding.bonusDice) ? r.exploding.bonusDice!.trim() : undefined,
+          },
+        }
+      : {}),
+    ...(r.matchingDice
+      ? {
+          matchingDice: {
+            ...r.matchingDice,
+            bonusDice: validDice(r.matchingDice.bonusDice) ? r.matchingDice.bonusDice!.trim() : undefined,
+            effect: sanitizeTriggerEffect(r.matchingDice.effect),
+          },
+        }
+      : {}),
+    ...(validDice(r.extraCritDice) ? { extraCritDice: r.extraCritDice!.trim() } : { extraCritDice: undefined }),
+  };
+  return cleanDiceRules(patched);
+}
+
 export function sanitizeWeapons(raw: unknown): Weapon[] {
   if (!Array.isArray(raw)) return [];
   const out: Weapon[] = [];
@@ -335,6 +414,75 @@ export function sanitizeWeapons(raw: unknown): Weapon[] {
     // resistances apply, so only a real `true` is kept.
     if (e.magical === true) w.magical = true;
     if (e.silvered === true) w.silvered = true;
+    const ct = Number(e.critThreshold);
+    if (Number.isFinite(ct) && Math.round(ct) >= 2 && Math.round(ct) < 20) {
+      w.critThreshold = Math.round(ct);
+    }
+    const diceRules = sanitizeWeaponDiceRules(e.diceRules);
+    if (diceRules) w.diceRules = diceRules;
+    if (Array.isArray(e.triggers)) {
+      const triggers: WeaponTrigger[] = [];
+      for (let i = 0; i < e.triggers.length && triggers.length < 12; i++) {
+        const rawT = e.triggers[i];
+        if (!rawT || typeof rawT !== 'object') continue;
+        const tr = rawT as Record<string, unknown>;
+        if (!VALID_TRIGGER_WHEN.has(tr.when as WeaponTriggerWhen)) continue;
+        const t: WeaponTrigger = {
+          id: typeof tr.id === 'string' && tr.id.trim() ? tr.id.trim().slice(0, 60) : `trig-${i}`,
+          name: String(tr.name ?? 'Weapon Trigger').trim().slice(0, 80) || 'Weapon Trigger',
+          when: tr.when as WeaponTriggerWhen,
+        };
+        if (tr.enabled === false) t.enabled = false;
+        const d20T = Number(tr.d20Threshold);
+        if (t.when === 'on-d20-at-least' && Number.isFinite(d20T)) {
+          t.d20Threshold = Math.max(2, Math.min(20, Math.round(d20T)));
+        }
+        if (Array.isArray(tr.targetCreatureTypes)) {
+          const types = tr.targetCreatureTypes
+            .filter((s): s is string => typeof s === 'string')
+            .map((s) => s.trim().toLowerCase().slice(0, 30))
+            .filter(Boolean)
+            .slice(0, 12);
+          if (types.length) t.targetCreatureTypes = types;
+        }
+        if (validDice(tr.extraDamageDice)) t.extraDamageDice = (tr.extraDamageDice as string).trim();
+        if (typeof tr.extraDamageType === 'string' && tr.extraDamageType.trim()) {
+          t.extraDamageType = tr.extraDamageType.trim().slice(0, 30);
+        }
+        if (typeof tr.doubleOnCrit === 'boolean') t.doubleOnCrit = tr.doubleOnCrit;
+        if (validDice(tr.healDice)) {
+          t.healDice = (tr.healDice as string).trim();
+          if (tr.healMode === 'temporary' || tr.healMode === 'hitPoints') t.healMode = tr.healMode;
+        }
+        const fx = sanitizeTriggerEffect(tr.effect);
+        if (fx) t.effect = fx;
+        const eSave = String(tr.effectSave ?? '').trim().toUpperCase();
+        if (ABILITIES.includes(eSave as AbilityKey)) {
+          t.effectSave = eSave as WeaponTrigger['effectSave'];
+          const eDc = Number(tr.effectDc);
+          if (Number.isFinite(eDc)) t.effectDc = Math.max(1, Math.min(35, Math.round(eDc)));
+        }
+        if (tr.castSpell && typeof tr.castSpell === 'object') {
+          const cs = tr.castSpell as Record<string, unknown>;
+          const sName = String(cs.spellName ?? '').trim().slice(0, 80);
+          if (sName) {
+            const spell: WeaponTriggerSpell = { spellName: sName };
+            if (typeof cs.abilityId === 'string' && cs.abilityId.trim()) spell.abilityId = cs.abilityId.trim().slice(0, 80);
+            const cl = Number(cs.castLevel);
+            if (Number.isFinite(cl)) spell.castLevel = Math.max(0, Math.min(9, Math.round(cl)));
+            const dcOv = Number(cs.dcOverride);
+            if (Number.isFinite(dcOv)) spell.dcOverride = Math.max(1, Math.min(35, Math.round(dcOv)));
+            if (typeof cs.damageType === 'string' && cs.damageType.trim()) spell.damageType = cs.damageType.trim().slice(0, 30);
+            if (cs.targetMode === 'target' || cs.targetMode === 'self') spell.targetMode = cs.targetMode;
+            if (cs.castMode === 'auto' || cs.castMode === 'prompt') spell.castMode = cs.castMode;
+            t.castSpell = spell;
+          }
+        }
+        if (typeof tr.note === 'string' && tr.note.trim()) t.note = tr.note.trim().slice(0, 160);
+        if (t.extraDamageDice || t.healDice || t.effect || t.castSpell) triggers.push(t);
+      }
+      if (triggers.length) w.triggers = triggers;
+    }
     out.push(w);
   }
   return out;

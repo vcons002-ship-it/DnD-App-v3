@@ -1,3 +1,25 @@
+export type LiveDieRole =
+  | 'base'
+  | 'crit'
+  | 'reroll'
+  | 'reroll-crit'
+  | 'savage-crit'
+  | 'lucky-reroll'
+  | 'floored'
+  | 'exploded'
+  | 'rider';
+export type LiveTrayBanner = {
+  title: string;
+  detail: string;
+  tone: 'savage-reroll' | 'savage-crit' | 'savage-both' | 'lucky' | 'floor' | 'explode' | 'rider' | 'reroll';
+};
+export type LiveRerollPrompt = {
+  id: string;
+  label: string;
+  rollTotal: number;
+  diceSummary: string;
+  readOnly?: boolean;
+};
 export type LiveDiceFrame = {
  /** Confirmed dice-dependent effect, published on the first settled frame. */
  diceTrigger?:import('./types.js').RollReveal['diceTrigger'];
@@ -5,6 +27,19 @@ export type LiveDiceFrame = {
  /** Reserved capacity and parent-to-child indices for one continuous Burst tray. */
  burstCapacity?:number;burstLinks?:{from:number;to:number}[];
  burstProgress?:{used:number;limit:number};
+ /** Pre-planned continuous weapon/rule tray metadata (Savage Attacker, Savage Attacks, Halfling Lucky, floors, rerolls, explosions, riders). */
+ plannedDice?:{sides:number;set:number;critical?:boolean}[];
+ rerollLinks?:{from:number;to:number}[];
+ dieRoles?:LiveDieRole[];
+ dieLabels?:(string|null)[];
+ /** Effective post-floor die face when a minimum face rule raised a rolled die (e.g. GWF 1→3). */
+ dieAdjustedValues?:(number|null)[];
+ discardedDice?:boolean[];
+ trayBanner?:LiveTrayBanner;
+ /** Interactive tray decision (e.g. Savage Attacker reroll button after Wave 1 settles). */
+ rerollPrompt?:LiveRerollPrompt;
+ /** Label shown in disabled tray action bar while eligible Wave 1 dice are still tumbling. */
+ rerollOfferLabel?:string;
  /** Calculation presented on this settled throw before the next throw starts. */
  calculation?:import('./types.js').RollReveal;
  /** Server-held reading/effects phase for a throw with no calculation card. */

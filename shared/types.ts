@@ -87,6 +87,145 @@ export type Disposition = 'friendly' | 'neutral' | 'enemy';
 export type CombatRole = 'melee' | 'ranged' | 'caster';
 
 export type WeaponAttackKind = 'slash'|'blunt'|'thrust'|'arrow'|'bolt'|'stone'|'thrown'|'axe'|'knife'|'spear'|'trident'|'hammer'|'dart'|'bullet'|'whip'|'claw'|'bite';
+export type ExplodingDiceRule = {
+  /** Trigger explosion on the die's maximum face (`'max'`) or a specific face number. */
+  on: 'max' | number;
+  /** Optional custom bonus die expression (e.g. `'1d6'`); defaults to matching the triggering die's size. */
+  bonusDice?: string;
+  /** Cap on total exploded dice per cast/attack (`'castingMod'`, `'proficiency'`, or fixed number). */
+  limit?: 'castingMod' | 'proficiency' | number;
+  /** Whether exploded bonus dice can themselves trigger further explosions (default true). */
+  recursive?: boolean;
+  /** Optional tray label (e.g. `'Sorcerous Burst'`, `'Arcane Surge'`). */
+  label?: string;
+};
+
+export type RerollDiceRule = {
+  /** Reroll individual low dice (`'die-lte'`) or the entire damage pool (`'full-pool'`). */
+  mode: 'die-lte' | 'full-pool';
+  /** Maximum die face eligible for individual reroll (`mode === 'die-lte'`, e.g. 2 for 1s & 2s). */
+  maxFace?: number;
+  /** Keep the higher total/face (`'higher'`) or force keeping the new roll (`'new'`). */
+  keep: 'higher' | 'new';
+  /** Optional max dice count for `'die-lte'` rerolls (e.g. Empowered Spell casting mod). */
+  maxDice?: 'castingMod' | 'proficiency' | number;
+  /** Optional tray label. */
+  label?: string;
+};
+
+export type MinFaceDiceRule = {
+  /** Minimum effective face value (e.g. 3 for Great Weapon Fighting, 2 for Elemental Adept). */
+  value: number;
+  /** Optional damage type filter; omit to apply to all qualifying dice. */
+  damageType?: string;
+  /** Optional tray label (e.g. `'Great Weapon Fighting'`, `'Elemental Adept'`). */
+  label?: string;
+};
+
+export type MatchingDiceRule = {
+  /** Minimum count of matching faces to trigger (defaults to 2). */
+  minMatches?: number;
+  /** Action triggered when dice share a number. */
+  action: 'leap' | 'bonus-dice' | 'effect';
+  /** For `'leap'`: max jump distance in feet (defaults to 30). */
+  leapRangeFt?: number;
+  /** For `'leap'`: max jumps per cast (`'slotLevel'` or fixed number). */
+  maxLeaps?: 'slotLevel' | number;
+  /** For `'bonus-dice'`: extra damage dice rolled in the same tray. */
+  bonusDice?: string;
+  bonusDamageType?: string;
+  /** For `'effect'`: condition/effect applied on matching dice. */
+  effect?: SpellCustomEffect;
+  /** Optional saving throw ability required before applying `effect` on matching dice. */
+  effectSave?: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA';
+  /** Optional tray label. */
+  label?: string;
+};
+
+export type DiceRulesSpec = {
+  exploding?: ExplodingDiceRule;
+  reroll?: RerollDiceRule;
+  minFace?: MinFaceDiceRule;
+  matchingDice?: MatchingDiceRule;
+  /** Natural d20 critical threshold (e.g. 19 for 19–20, 18 for 18–20). */
+  critThreshold?: number;
+  /** Extra weapon-sized dice added on a critical hit (Savage Attacks / Brutal Critical). */
+  extraCritWeaponDice?: number;
+  /** Custom extra damage dice added on a critical hit (e.g. Vicious `'2d6'`). */
+  extraCritDice?: string;
+  extraCritDamageType?: string;
+  extraCritLabel?: string;
+};
+
+export type WeaponTriggerWhen =
+  | 'on-hit'
+  | 'on-crit'
+  | 'on-nat-20'
+  | 'on-d20-at-least'
+  | 'on-damage-max'
+  | 'on-damage-match'
+  | 'on-miss';
+
+export type WeaponTriggerSpell = {
+  spellName: string;
+  abilityId?: string;
+  castLevel?: number;
+  dcOverride?: number;
+  damageType?: string;
+  targetMode?: 'target' | 'self';
+  castMode?: 'auto' | 'prompt';
+};
+
+export type WeaponTrigger = {
+  id: string;
+  name: string;
+  enabled?: boolean;
+  when: WeaponTriggerWhen;
+  /** Natural d20 threshold when `when === 'on-d20-at-least'`. */
+  d20Threshold?: number;
+  /** Optional creature type filter (e.g. `['undead', 'fiend']`). */
+  targetCreatureTypes?: string[];
+  extraDamageDice?: string;
+  extraDamageType?: string;
+  /** Defaults true when `when === 'on-hit'`, false for crit-only triggers. */
+  doubleOnCrit?: boolean;
+  effect?: SpellCustomEffect;
+  /** Optional initial saving throw ability required before applying `effect` (omit for automatic). */
+  effectSave?: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA';
+  effectDc?: number;
+  healDice?: string;
+  healMode?: 'hitPoints' | 'temporary';
+  castSpell?: WeaponTriggerSpell;
+  note?: string;
+};
+
+export type TriggeredSpellOffer = {
+  id: string;
+  sourceName: string;
+  weaponName: string;
+  attacker: { kind: TokenKind; refId: string; name: string; tokenId: string };
+  target: { kind: TokenKind; refId: string; name: string; tokenId: string };
+  ability: SheetAbility;
+  castLevel?: number;
+  dcOverride?: number;
+  damageType?: string;
+  targetMode?: 'target' | 'self';
+  owner?: string;
+  used?: boolean;
+  dismissed?: boolean;
+};
+
+export type TriggeredSpellPayload = {
+  rollId: string;
+  offerId: string;
+  dismiss?: boolean;
+  targetTokenId?: string;
+  targetTokenIds?: string[];
+  area?: import('./spellAreas.js').SpellAreaPlacement;
+  damageType?: string;
+  commandWord?: string;
+};
+
 /**
  * A tagged weapon entry — structured so missing fields are obvious to fill and
  * reusable by later features (combat-role detection now; attack rolls in WP11).
@@ -153,6 +292,12 @@ export type Weapon = {
    * its current stats. (Monster stat-block damage is otherwise pre-baked.)
    */
   diceOnly?: boolean;
+  /** Natural d20 critical threshold (e.g. 19 for 19–20, 18 for 18–20). */
+  critThreshold?: number;
+  /** Composable dice roll rules (exploding, low-die reroll, min-face floor, matching dice, extra crit dice). */
+  diceRules?: DiceRulesSpec;
+  /** Conditional triggers evaluated on attack resolution (extra dice, saves/conditions, healing, or free spell casts). */
+  triggers?: WeaponTrigger[];
 };
 
 /**
@@ -445,6 +590,8 @@ export type AbilityRoll = {
   instanceScaling?: 'cantrip';
   /** Manual condition, stat modifier, turn effect, or cure applied by this roll. */
   customEffect?: SpellCustomEffect;
+  /** Composable dice roll rules & triggers (exploding, reroll, floor, matching bounce/bonus, crit range). */
+  diceRules?: DiceRulesSpec;
 };
 
 /**
@@ -550,6 +697,8 @@ export type StanceSpec = {
    *  `rerollDamageDice` — this one only fires on a crit, and it adds rather than
    *  replaces. Racial passives are left switched on; the chip is the control. */
   extraCritDie?: boolean;
+  /** Number of extra weapon dice added on a crit when greater than 1 (e.g. Brutal Critical 2/3). */
+  extraCritDiceCount?: number;
   /** This stance marks a single target (e.g. Hunter's Mark): its effect applies
    *  only to attacks against the marked token. Drives a target picker in the UI. */
   targeted?: boolean;
@@ -1138,6 +1287,12 @@ export type RevealStep = {
   diceExpression?: string;
   /** Only dice added by a critical hit receive the gold treatment. */
   critical?: boolean;
+  /** Optional feature/trait source name (e.g. "Savage Attacks"). */
+  source?: string;
+  /** Original pre-floor faces when a min-face floor (e.g. GWF 1→3) raised one or more dice. */
+  rawFaces?: number[];
+  /** Optional label explaining why faces were raised. */
+  floorLabel?: string;
 };
 /** Client-only presentation of both candidates already recorded by the server.
  * Optional so older persisted roll reveals remain fully compatible. */
@@ -1159,7 +1314,7 @@ export type RollReveal = {
   healing?: number;
   temporaryHp?: number;
   /** Confirmed rule trigger; indices identify exact flattened damage dice. */
-  diceTrigger?:{kind?:'burst'|'burst-limit';title:string;detail:string;diceCount:number;groups:{value:number;indices:number[]}[]};
+  diceTrigger?:{kind?:'burst'|'burst-limit'|'savage-attacker'|'savage-attacks'|'matching-dice'|'sorcerous-burst'|'halfling-lucky'|'dice-floor'|'die-reroll'|'exploding-dice'|'weapon-trigger';title:string;detail:string;diceCount:number;groups:{value:number;indices:number[]}[]};
   /** This result (including bonuses) was already presented in the live group tray. */
   presentedLive?: boolean;
   /** Plain-language effect result alongside the target's save result. */
@@ -1267,6 +1422,23 @@ export type PendingDamage = {
   owner?: string;
   /** Already applied — the guard against a double-click applying twice. */
   done?: boolean;
+  /** Server-only deferred post-damage weapon triggers resolved when damage commits (stripped in visibility). */
+  deferredTriggers?: {
+    attackerTokenId: string;
+    targetTokenId: string;
+    weaponName: string;
+    heals?: { name: string; dice: string; mode: 'hitPoints' | 'temporary' }[];
+    effects?: { name: string; effect: SpellCustomEffect; save?: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA'; dc: number }[];
+    autoSpells?: {
+      name: string;
+      ability: SheetAbility;
+      castLevel?: number;
+      dcOverride?: number;
+      damageType?: string;
+      targetTokenId?: string;
+    }[];
+    promptOffers?: TriggeredSpellOffer[];
+  };
 };
 
 /** Persistent continuation of one Chromatic Orb casting. Visited entries identify creatures, not token copies. */
@@ -1274,6 +1446,11 @@ export type OrbChain = {
   slotLevel: number; leapsUsed: number; visited: string[];
   origin: { mapId: string; x: number; y: number; widthFt: number; miniatureWidthFt?: number };
   matches: number[]; available: boolean; initial?: boolean;
+  /** Custom spell name when generalized beyond Chromatic Orb. */
+  spellName?: string;
+  maxLeaps?: number;
+  leapRangeFt?: number;
+  diceRules?: DiceRulesSpec;
 };
 
 export type RollEntry = {
@@ -1335,6 +1512,8 @@ export type RollEntry = {
     saveDamage?: 'none' | 'half';
     targetMode?: 'single' | 'multiple';
     damageType?: string;
+    /** Damage type whose resistance is ignored by Elemental Adept on this cast. */
+    ignoreResistanceType?: string;
     /** Condition applied to a target that FAILS the save (Battle Master riders). */
     onFail?: string;
     /**
@@ -1380,6 +1559,8 @@ export type RollEntry = {
   pending?: PendingDamage;
   /** A smite this hit lets the attacker cast (see `SmiteOpportunity`). */
   smite?: SmiteOpportunity;
+  /** Prompted free spell casts offered by weapon triggers on this attack. */
+  triggeredSpells?: TriggeredSpellOffer[];
   createdAt: number;
 };
 
@@ -1886,6 +2067,7 @@ export interface ClientToServerEvents {
   'dice:ready': (payload:{id:string}) => void;
   'dice:begin': (payload:{id:string}) => void;
   'dice:skip': (payload:{id:string}) => void;
+  'dice:rerollChoice': (payload:{id:string;reroll:boolean}) => void;
   join: (payload: JoinPayload, ack: (res: JoinAck) => void) => void;
   'map:select': (payload: MapSelectPayload) => void;
   'dm:partyView': (enabled: boolean) => void;
@@ -2073,6 +2255,7 @@ export interface ClientToServerEvents {
   'combat:hitFeature': (payload: {rollId: string; abilityId: string; level?: number; slotPool?: 'pact' | 'spellcasting'}) => void;
   'combat:moveMark': (payload: {kind: TokenKind; refId: string; abilityId: string; targetTokenId: string}) => void;
   'combat:orbLeap': (payload: {rollId: string; targetTokenId?: string; end?: boolean}) => void;
+  'combat:triggeredSpell': (payload: TriggeredSpellPayload) => void;
   'combat:damage': (payload: { rollId: string }) => void;
   /** Cast the smite a hit made available, with a spell slot of `level` or the
    *  free once-per-Long-Rest casting. The DM or the attacking player. */

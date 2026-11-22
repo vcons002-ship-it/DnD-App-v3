@@ -106,3 +106,19 @@ it('shows an upcast pool once and keeps its saving throw context', () => {
  expect(damageRollBreakdown(r)).toBe(`Damage: 14d6 [${Array(14).fill(3).join(' + ')}] = 42 fire`);
  expect(rollLogDetail(entry())).toBe('Existing detail remains unchanged');
 });
+
+it('keeps Savage Attacks separated from weapon crit dice in the damage breakdown', () => {
+ const r = entry({
+  kind: 'attack',
+  outcome: 'crit',
+  damage: 34,
+  damageType: 'slashing',
+  damageDice: [
+   { label: '1d12', value: 8, faces: [8] },
+   { label: 'CRIT', value: 11, faces: [11], diceExpression: '1d12', critical: true },
+   { label: '1d12', value: 12, faces: [12], critical: true, source: 'Savage Attacks' },
+  ],
+  damageMods: [{ label: 'STR', value: 3 }],
+ });
+ expect(damageRollBreakdown(r)).toBe('Damage: 2d12 [8 + 11] + 1d12 Savage Attacks [12] + 3 STR = 34 slashing');
+});

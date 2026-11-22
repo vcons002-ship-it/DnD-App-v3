@@ -1,5 +1,6 @@
 // Only populated during a synchronous, rollback-safe command pass.
 import type {RollReveal,HiddenRollResult} from '../../shared/types.js';
+export type LiveRerollPromptRequest = { label: string; rollTotal: number; diceSummary: string };
 let calculationPresenter:((key:string,reveal:RollReveal)=>boolean)|undefined;
 export function withLiveCalculationPresenter<T>(present:(key:string,reveal:RollReveal)=>boolean,run:()=>T):T {
  const previous=calculationPresenter;calculationPresenter=present;
@@ -10,6 +11,16 @@ export function presentLiveCalculation(key:string,reveal:RollReveal){
  if(!active||!calculationPresenter)return false;
  return calculationPresenter(key,reveal);
 }
+let rerollChoiceProvider:((key:string,info:LiveRerollPromptRequest)=>boolean)|undefined;
+export function withLiveRerollChoice<T>(choose:(key:string,info:LiveRerollPromptRequest)=>boolean,run:()=>T):T {
+ const previous=rerollChoiceProvider;rerollChoiceProvider=choose;
+ try{return run();}finally{rerollChoiceProvider=previous;}
+}
+export function requestLiveRerollChoice(key:string,info:LiveRerollPromptRequest):boolean {
+ if(!active||!rerollChoiceProvider)return false;
+ return rerollChoiceProvider(key,info);
+}
+export const hasLiveRerollChoice=()=>active&&!!rerollChoiceProvider;
 export type RollFacing={sessionId:string;attackerTokenId:string;targetTokenId:string};
 let facing:RollFacing[]=[];
 export const stagedRollFacing=()=>facing.slice();

@@ -13,7 +13,7 @@ function modifierLabel(label: string): string {
 
 /** Group normal and critical dice by their original source, retaining all faces. */
 function diceTerms(steps: RevealStep[]): string[] {
-  const groups: {source:string;sides:number;faces:number[];value:number;plain?:RevealStep}[]=[];
+  const groups: {source:string;sides:number;faces:number[];rawFaces:(number|undefined)[];floorLabel?:string;value:number;plain?:RevealStep}[]=[];
   const first=steps[0];
   for(const step of steps) {
     const label=(step.label==='CRIT'?first?.label??'Dice':step.label).replace(/\bCRIT\b/gi,'').replace(/\s+\)/g,')').trim();
@@ -26,17 +26,27 @@ function diceTerms(steps: RevealStep[]): string[] {
     if(!term && sameDice.length && sameDice.every(t=>t[2]===sameDice[0][2]))
       term=/^(\d*)d(\d+)$/.exec(`${sameDice.reduce((n,t)=>n+Number(t[1]||1),0)}d${sameDice[0][2]}`);
     if(!term||!step.faces?.length||step.faces.reduce((n,v)=>n+v,0)!==step.value) {
-      groups.push({source:label,sides:0,faces:[],value:step.value,plain:step}); continue;
+      groups.push({source:label,sides:0,faces:[],rawFaces:[],value:step.value,plain:step}); continue;
     }
-    const source=sameDice.length && term ? '' : label.replace(/^\d*d\d+\s*/, '').trim();
+    const source=step.source?.trim() || (sameDice.length && term ? '' : label.replace(/^\d*d\d+\s*/, '').trim());
     const sides=Number(term[2]);
+    const rawList=step.rawFaces?.length===step.faces.length?step.rawFaces:step.faces.map(()=>undefined);
     const group=groups.find(g=>!g.plain&&g.source===source&&g.sides===sides);
-    if(group) {group.faces.push(...step.faces);group.value+=step.value;}
-    else groups.push({source,sides,faces:[...step.faces],value:step.value});
+    if(group) {
+      group.faces.push(...step.faces);
+      group.rawFaces.push(...rawList);
+      group.floorLabel??=step.floorLabel;
+      group.value+=step.value;
+    }
+    else groups.push({source,sides,faces:[...step.faces],rawFaces:[...rawList],floorLabel:step.floorLabel,value:step.value});
   }
-  return groups.map(g=>g.plain
-    ? `${g.value} (${g.source}${g.plain.faces?.length?`; rolls ${g.plain.faces.join(', ')}`:''})`
-    : `${g.faces.length}d${g.sides}${g.source?` ${g.source}`:''} [${g.faces.join(' + ')}]`);
+  return groups.map(g=>{
+    if(g.plain)return `${g.value} (${g.source}${g.plain.faces?.length?`; rolls ${g.plain.faces.join(', ')}`:''})`;
+    const hasAdjusted=g.faces.some((v,i)=>g.rawFaces[i]!==undefined&&g.rawFaces[i]!==v);
+    const faceStr=g.faces.map((v,i)=>hasAdjusted&&g.rawFaces[i]!==undefined&&g.rawFaces[i]!==v?`${g.rawFaces[i]}\u2192${v}`:`${v}`).join(' + ');
+    const note=hasAdjusted&&g.floorLabel&&g.floorLabel!==g.source?` (${g.floorLabel})`:'';
+    return `${g.faces.length}d${g.sides}${g.source?` ${g.source}`:''}${note} [${faceStr}]`;
+  });
 }
 
 /** A visible, read-only account of damage already resolved by the server.

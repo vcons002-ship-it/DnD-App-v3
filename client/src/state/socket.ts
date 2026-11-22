@@ -130,15 +130,18 @@ type Store = {
   resolvingDice: string | null;
   skippedLiveDiceId: string | null;
   skipLiveDice: () => void;
+  chooseDiceReroll: (id: string, reroll: boolean) => void;
   teleportCast:AbilityRollPayload|null;
   clearTeleportCast:()=>void;
   teleportingTokenIds:string[];
   setTeleportingTokens:(ids:string[])=>void;
   spellAreaPreviews:Record<string,import('../../../shared/types').SpellAreaPreview>;
   shareSpellArea:(payload:import('../../../shared/types').SpellAreaPreviewIntent|null)=>void;
-  areaCast:{payload:AbilityRollPayload;spec:SpellArea;name:string;repeat?:import('../../../shared/types').SpellRepeatPayload}|null;
+  areaCast:{payload:AbilityRollPayload;spec:SpellArea;name:string;repeat?:import('../../../shared/types').SpellRepeatPayload;triggeredSpell?:{rollId:string;offerId:string;damageType?:string}}|null;
+  startAreaCast:(cast:NonNullable<Store['areaCast']>)=>void;
   clearAreaCast:()=>void;
-  rayCast:{payload:AbilityRollPayload;name:string;instances:number;minTargets?:number;distinct?:boolean;allowSelf?:boolean;humanoidOnly?:boolean;rangeFt:number;kind:'rays'|'missiles'|'targets'|'allies';damageType?:string}|null;
+  rayCast:{payload:AbilityRollPayload;name:string;instances:number;minTargets?:number;distinct?:boolean;allowSelf?:boolean;humanoidOnly?:boolean;rangeFt:number;kind:'rays'|'missiles'|'targets'|'allies';damageType?:string;triggeredSpell?:{rollId:string;offerId:string;damageType?:string}}|null;
+  startRayCast:(cast:NonNullable<Store['rayCast']>)=>void;
   clearRayCast:()=>void;
   socket: TypedSocket | null;
   status: Status;
@@ -491,6 +494,7 @@ type Store = {
   combatHitFeature: (rollId:string,abilityId:string,level?:number,slotPool?:'pact'|'spellcasting') => void;
   combatMoveMark: (kind:TokenKind,refId:string,abilityId:string,targetTokenId:string) => void;
   combatOrbLeap: (rollId: string, targetTokenId?: string, end?: boolean) => void;
+  combatTriggeredSpell: (payload: import('../../../shared/types').TriggeredSpellPayload) => void;
   combatRiposte: (opportunityId: string, weaponIndex?: number, pass?: boolean) => void;
   combatManeuver: (rollId: string, abilityId: string) => void;
   combatSmite: (rollId: string, level: SmiteChoice) => void;
@@ -589,13 +593,16 @@ export const useStore = create<Store>((set, get) => ({
   skippedLiveDiceId: null,
   skipLiveDice: () => {
     const frame = get().liveDice;
-    if (!frame || get().hiddenRollReview || frame.awaitingStart&&frame.elapsed===0) return;
+    if (!frame || get().hiddenRollReview || (frame.awaitingStart && frame.elapsed === 0) || (frame.rerollPrompt && !frame.rerollPrompt.readOnly)) return;
     set({ liveDice: null, skippedLiveDiceId: frame.id });
     // Clear cosmetic cards too. The real roll/HP still resolves on the server.
     for (const fx of queuedRollFx.splice(0)) get().releaseRollImpact(fx.rollId);
     get().dismissRollFx();
     get().socket?.emit('dice:skip', {id: frame.id});
     get().socket?.emit('dice:ready', {id: frame.id});
+  },
+  chooseDiceReroll: (id, reroll) => {
+    get().socket?.emit('dice:rerollChoice', { id, reroll });
   },
   teleportCast:null,
   clearTeleportCast:()=>set({teleportCast:null}),
@@ -604,8 +611,10 @@ export const useStore = create<Store>((set, get) => ({
   spellAreaPreviews:{},
   shareSpellArea:payload=>get().socket?.emit('spell:areaPreview',payload),
   areaCast:null,
+  startAreaCast:(cast)=>set({areaCast:cast,rayCast:null,teleportCast:null,saveResolve:null,orbTarget:null}),
   clearAreaCast:()=>{get().socket?.emit('spell:areaPreview',null);set({areaCast:null});},
   rayCast:null,
+  startRayCast:(cast)=>set({rayCast:cast,areaCast:null,teleportCast:null,saveResolve:null,orbTarget:null}),
   clearRayCast:()=>set({rayCast:null}),
   socket: null,
   status: 'idle',
@@ -947,12 +956,16 @@ export const useStore = create<Store>((set, get) => ({
     socket.on('dice:frame',frame=>{
       if(frame.awaitingStart)set({skippedLiveDiceId:null});
       if(get().skippedLiveDiceId){
+        if(frame.rerollPrompt&&!frame.rerollPrompt.readOnly)socket.emit('dice:rerollChoice',{id:frame.rerollPrompt.id,reroll:false});
         set({skippedLiveDiceId:frame.id});socket.emit('dice:ready',{id:frame.id});return;
       }
-      if(!get().showRollAnim&&!frame.awaitingStart){socket.emit('dice:ready',{id:frame.id});return;}
+      if(!get().showRollAnim&&!frame.awaitingStart){
+        if(frame.rerollPrompt&&!frame.rerollPrompt.readOnly)socket.emit('dice:rerollChoice',{id:frame.rerollPrompt.id,reroll:true});
+        socket.emit('dice:ready',{id:frame.id});return;
+      }
       const previous=get().liveDice;
       if(previous?.id===frame.id && previous.seq>=frame.seq)return;
-      if(readDiceRenderingMode()==='2d'&&previous?.id===frame.id&&!frame.done&&!frame.calculation&&frame.awaitingStart===previous.awaitingStart)return;
+      if(readDiceRenderingMode()==='2d'&&previous?.id===frame.id&&!frame.done&&!frame.calculation&&frame.awaitingStart===previous.awaitingStart&&frame.sides.length===previous.sides.length)return;
       if(previous?.id!==frame.id)get().dismissRollFx();
       if(frame.done)completedLiveTrays.set(frame.id,frame);
       set({liveDice:frame});
@@ -1700,6 +1713,7 @@ export const useStore = create<Store>((set, get) => ({
   combatHitFeature: (rollId,abilityId,level,slotPool) => get().socket?.emit('combat:hitFeature',{rollId,abilityId,level,slotPool}),
   combatMoveMark: (kind,refId,abilityId,targetTokenId) => get().socket?.emit('combat:moveMark',{kind,refId,abilityId,targetTokenId}),
   combatOrbLeap: (rollId, targetTokenId, end) => get().socket?.emit('combat:orbLeap', {rollId,targetTokenId,end}),
+  combatTriggeredSpell: (payload) => get().socket?.emit('combat:triggeredSpell', payload),
   combatRiposte: (opportunityId, weaponIndex, pass) => get().socket?.emit('combat:riposte', {opportunityId, weaponIndex, pass}),
   combatManeuver: (rollId, abilityId) => get().socket?.emit('combat:maneuver', {rollId, abilityId}),
   combatSmite: (rollId, level) => get().socket?.emit('combat:smite', { rollId, level }),

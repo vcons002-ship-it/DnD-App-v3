@@ -144,11 +144,11 @@ export function getPrewarmedBoardCanvas(themeId: string): HTMLCanvasElement | un
 }
 
 function themeFrameColors(themeId: string): { rim: string; trim: string } {
-  if (themeId.startsWith('dm-')) return { rim: '#171b23', trim: '#9ba5b1' };
-  if (themeId === 'fighter') return { rim: '#111116', trim: '#a27632' };
-  if (themeId === 'ranger') return { rim: '#241207', trim: '#784825' };
-  if (themeId === 'sorcerer') return { rim: '#22080e', trim: '#454956' };
-  return { rim: '#160904', trim: '#49413a' };
+  if (themeId.startsWith('dm-')) return { rim: '#232936', trim: '#a8b5c4' };
+  if (themeId === 'fighter') return { rim: '#28211d', trim: '#c49545' };
+  if (themeId === 'ranger') return { rim: '#4b2b18', trim: '#8c5a32' };
+  if (themeId === 'sorcerer') return { rim: '#3b131d', trim: '#9aa2b2' };
+  return { rim: '#4a2c1d', trim: '#b38a4c' };
 }
 
 /**

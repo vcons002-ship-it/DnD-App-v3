@@ -1,4 +1,5 @@
 import { hitFeature, markSpell } from '../../../shared/hitFeatures';
+import { isStandaloneSavageAttacker } from '../../../shared/diceRules';
 import { isOnHitManeuver } from '../../../shared/maneuvers';
 import { partySpell } from '../../../shared/partySpells';
 import { activeShieldCondition } from '../../../shared/spellBuffs';
@@ -16,7 +17,7 @@ import { useStore } from '../state/socket';
 
 /** Entries with a play-time damage/attack-altering toggle: effect-bearing
  *  masteries, maneuvers (arm for the next attack), and stances. */
-export const hasToggle = (a: SheetAbility): boolean => !hitFeature(a) && !markSpell(a) && (
+export const hasToggle = (a: SheetAbility): boolean => !hitFeature(a) && !markSpell(a) && !isStandaloneSavageAttacker(a) && (
   (a.type === 'mastery' && !!a.mastery?.effect) ||
   (a.type === 'maneuver' && !!a.maneuver && !isOnHitManeuver(a) && a.name.trim().toLowerCase() !== 'riposte') ||
   (a.type === 'stance' && !!a.stance));

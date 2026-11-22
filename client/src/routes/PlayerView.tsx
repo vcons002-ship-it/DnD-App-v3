@@ -1,6 +1,7 @@
 import { MarkTransferPrompt } from '../components/MarkTransferPrompt';
 import { MapLoadingBar } from '../components/MapLoadingBar';
 import { ChromaticOrbPrompt } from '../components/ChromaticOrbPrompt';
+import { TriggeredSpellPrompt } from '../components/TriggeredSpellPrompt';
 import { CombatMoments } from '../components/CombatMoments';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
@@ -272,6 +273,7 @@ export function PlayerView() {
       <RollRevealOverlay />
       <CombatMoments />
       <ChromaticOrbPrompt />
+      <TriggeredSpellPrompt />
       <MarkTransferPrompt />
       <Toast />
       {/* Red screen-edge flash when YOUR claimed PC takes damage (one-shot CSS

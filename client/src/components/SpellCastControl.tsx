@@ -40,7 +40,7 @@ export function SpellCastControl({ability,caster,kind='pc',onMapRequest}:{abilit
       close();
       const state=useStore.getState();
       const needsBattlefield=Boolean(state.areaCast||state.teleportCast||state.rayCast) ||
-        (!manual&&(abilityKey(spell)==='chromatic orb'||isMultiTargetSpell(spell,cost.level)||(execution.roll?.kind==='attack'&&(state.snapshot?.manualDamage??true))));
+        (!manual&&(abilityKey(spell)==='chromatic orb'||execution.roll?.diceRules?.matchingDice?.action==='leap'||isMultiTargetSpell(spell,cost.level)||(execution.roll?.kind==='attack'&&(state.snapshot?.manualDamage??true))));
       if(needsBattlefield)onMapRequest?.();
     }}/>
    </>}

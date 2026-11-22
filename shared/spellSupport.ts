@@ -343,7 +343,7 @@ export function spellCombatSupport(input: SpellInput): SpellCombatSupport | null
   }
   const effective = effectiveSheetAbility(ability);
   const revised = matchesRevisedSpell2024(effective);
-  const authored = ability.source === 'custom' || ability.executionProfile === 'manual' ||
+  const authored = ability.source === 'custom' || ability.executionProfile === 'manual' || Boolean(ability.roll?.diceRules) ||
     (!revised && (isEditedUnsafeRoll(ability, key) || !!(ability.roll && spellRevision2024For(ability))));
   const automated = ['Cast record and spell-slot bookkeeping.'];
   if(spellAreaFor(ability))automated.push('Measured area placement and combat-footprint targeting; supported initial effects use one labelled group of saving throws.');

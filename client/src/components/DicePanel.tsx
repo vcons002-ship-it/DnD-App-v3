@@ -573,6 +573,18 @@ export function DicePanel({
                   </button>
                   );
                 })()}
+                {r.triggeredSpells?.filter((o) => !o.used && !o.dismissed).map((o) => (
+                  <span key={o.id} className="muted" style={{ marginLeft: 6, fontSize: 11 }}>
+                    ✨ {o.ability.name} ready (free){' '}
+                    <button
+                      type="button"
+                      className="btn tiny"
+                      onClick={() => useStore.getState().combatTriggeredSpell({ rollId: r.id, offerId: o.id, dismiss: true })}
+                    >
+                      Skip
+                    </button>
+                  </span>
+                ))}
               </span>
             </div>
           );

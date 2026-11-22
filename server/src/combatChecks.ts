@@ -1,4 +1,5 @@
 import { rollD20Detail, rollSavingThrow, type Advantage, type Combatant } from '../../shared/combatMath.js';
+import { hasHalflingLucky } from '../../shared/diceRules.js';
 import { checkAdvantage, saveAdvantage, saveAutoFail } from '../../shared/conditionEffects.js';
 import { parseConsumable } from '../../shared/consumables.js';
 import { rollDice, withDiceMetadata } from '../../shared/dice.js';
@@ -64,7 +65,7 @@ export function resolveSaves(
     );
     const condEnt = r.kind === 'pc' ? getCharacter(r.refId) : getMonster(r.refId);
     const cond = condEnt ? rollBlessBaneBonus(condEnt, 'save') : { bonus: 0, notes: [] };
-    const out = rollSavingThrow(r.c, ability, dc, adv.state, proficient);
+    const out = rollSavingThrow(r.c, ability, dc, adv.state, proficient, undefined, { halflingLucky: hasHalflingLucky(condEnt ?? undefined) });
     const sb = saveBonus(r, ability);
     const total = out.total + sb.add + cond.bonus;
     const condNote = cond.notes.length ? ` · ${cond.notes.join(', ')}` : '';
@@ -126,7 +127,7 @@ export function resolveSave(
     strFeatureAdv(kind, refId, ab),
   );
   const cond = rollBlessBaneBonus(ent, 'save');
-  const out = rollSavingThrow(c, ab, 0, adv.state, proficient); // dc 0 → pass unused
+  const out = rollSavingThrow(c, ab, 0, adv.state, proficient, undefined, { halflingLucky: hasHalflingLucky(ent) }); // dc 0 → pass unused
   const e = saveExtra(ent, ab);
   const total = out.total + e.total + cond.bonus;
   const note = [...e.parts.map((p) => `${signed(p.value)} ${p.source}`), ...cond.notes].join(', ');
@@ -186,7 +187,7 @@ export function resolveCheck(
     ],
   );
   // dc 0 → unused; `proficient: false` makes it a plain ability check.
-  const out = rollSavingThrow(c, ab, 0, adv.state, false, `${ab} Check`);
+  const out = rollSavingThrow(c, ab, 0, adv.state, false, `${ab} Check`, { halflingLucky: hasHalflingLucky(ent) });
   addRollLog(sessionId, {
     roller,
     label: `${ab} check`,
@@ -236,7 +237,7 @@ export function resolveDeathSave(sessionId: string, characterId: string): boolea
   if (!ch || ch.curHp > 0 || ch.deathSaves.successes >= 3 || ch.deathSaves.failures >= 3)
     return false;
   const cond = rollBlessBaneBonus(ch, 'save');
-  const face = rollDice('1d20')!.total;
+  const face = rollD20Detail(undefined, { halflingLucky: hasHalflingLucky(ch) }).face;
   // A death save IS a saving throw, so all-saves modifiers (Cloak of Protection
   // etc.) apply to the 10+ check; an ability-specific save bonus doesn't (a
   // death save has no ability), and nat 20 / nat 1 stay face-based per RAW.
@@ -346,7 +347,7 @@ export function resolveObjectCheck(
     `${signed(abil)}[DEX]` +
     (prof ? ` ${signed(prof)}[PROF]` : '') +
     extra.parts.map((p) => ` ${signed(p.value)}[${p.source}]`).join('');
-  const { face, detail: d20detail } = rollD20Detail(advantage);
+  const { face, detail: d20detail } = rollD20Detail(advantage, { halflingLucky: hasHalflingLucky(character) });
   const total = face + bonus;
   const success = total >= dc;
   const verb = kind === 'disarm' ? 'disarm' : 'pick the lock on';
@@ -421,7 +422,7 @@ export function resolveSkillRoll(
       label: `${skill.name} Check`,
       ...(adv.reasons.length ? { advantageReasons: adv.reasons, advantageState: adv.state ?? 'straight' } : {}),
     },
-    () => rollD20Detail(adv.state),
+    () => rollD20Detail(adv.state, { halflingLucky: hasHalflingLucky(character) }),
   );
   const total = face + bonus;
   addRollLog(sessionId, {

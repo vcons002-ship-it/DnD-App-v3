@@ -28,9 +28,21 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
 }){
  const {mode:diceMode}=useDiceRendering(),legacy=useLegacyMode(),twoDimensional=diceMode==='2d';
  const pendingStart=!!frame.awaitingStart&&frame.elapsed===0;
+ const pendingReroll=!!frame.rerollPrompt&&!frame.rerollPrompt.readOnly;
+ const waitingRerollOffer=!frame.rerollPrompt&&!!frame.rerollOfferLabel&&!result&&!compact;
  const hiddenPrivate=useStore(s=>s.snapshot?.role==='dm'&&s.snapshot.hideDmRolls);
  const reviewRef=useRef(hiddenReview);reviewRef.current=hiddenReview;
- const skip=()=>{if(!reviewRef.current&&!pendingStart)onSkip();};
+ const pendingRerollRef=useRef(pendingReroll);pendingRerollRef.current=pendingReroll;
+ const rerollClickGuardUntil=useRef(0);
+ const [submittedRerollId,setSubmittedRerollId]=useState<string|null>(null);
+ const skip=()=>{if(!reviewRef.current&&!pendingStart&&!pendingRerollRef.current&&performance.now()>=rerollClickGuardUntil.current)onSkip();};
+ const handleRerollChoice=(reroll:boolean)=>{
+  const prompt=frame.rerollPrompt;
+  if(!prompt||prompt.readOnly||submittedRerollId===prompt.id)return;
+  setSubmittedRerollId(prompt.id);
+  rerollClickGuardUntil.current=performance.now()+500;
+  useStore.getState().chooseDiceReroll(prompt.id,reroll);
+ };
  const [started,setStarted]=useState('');
  const naturalCritical=liveNaturalCritical(frame),naturalTwenty=liveNaturalTwenty(frame),criticalPlayed=useRef<string>();
  useEffect(()=>{if((naturalCritical||naturalTwenty)&&criticalPlayed.current!==frame.id){criticalPlayed.current=frame.id;playCritical();}},[naturalCritical,naturalTwenty,frame.id]);
@@ -40,9 +52,19 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
  if(explosionMs!==undefined&&finale.current.deadline===null)finale.current.deadline=performance.now()+explosionMs;
  const links=useRef<SVGSVGElement>(null),triggerRef=useRef(diceTrigger);
  triggerRef.current=diceTrigger;
- const triggerColors=diceTrigger?.kind?['#e3b0ff']:['#89f3ff','#e3b0ff','#ffe296','#b0ffcf'];
+ const hasSavageResolution=!!frame.discardedDice?.some(Boolean);
+ const rolePillRoles=new Set(['savage-crit','floored','exploded','lucky-reroll','rider']);
+ const roleLabelFallback=(role?:string)=>role==='savage-crit'?'Savage Attacks':role==='floored'?'Floored':role==='exploded'?'Exploded':role==='lucky-reroll'?'Lucky Reroll':role==='rider'?'Bonus Die':'';
+ const triggerColors=diceTrigger?.kind==='savage-attacker'?['#ffbe55']:diceTrigger?.kind==='savage-attacks'?['#ff9e2c']:diceTrigger?.kind==='halfling-lucky'?['#5cf29c']:diceTrigger?.kind==='dice-floor'?['#38e2d8']:diceTrigger?.kind==='weapon-trigger'?['#ff7d45']:diceTrigger?.kind?['#e3b0ff']:['#89f3ff','#e3b0ff','#ffe296','#b0ffcf'];
  const burstSources=[...new Set([...(diceTrigger?.kind==='burst'?diceTrigger.groups.flatMap(g=>g.indices):[]),...(frame.burstLinks??[]).map(link=>link.from)])];
- const triggerGroup=(i:number)=>diceTrigger?.groups.findIndex(group=>group.indices.includes(i))??-1;
+ const rerollSources=[...new Set([...(diceTrigger?.kind==='savage-attacker'&&!hasSavageResolution?diceTrigger.groups.flatMap(g=>g.indices):[]),...(frame.rerollLinks??[]).map(link=>link.from)])];
+ const rerollAccent=frame.trayBanner?.tone==='lucky'?'#5cf29c':'#ffbe55';
+ const savageCritIndices=frame.dieRoles?frame.dieRoles.flatMap((role,i)=>role==='savage-crit'&&!frame.discardedDice?.[i]&&frame.values[i]!==null?[i]:[]):[];
+ const hasTriggerRings=!!frame.done&&!!diceTrigger&&diceTrigger.kind!=='savage-attacks'&&!(diceTrigger.kind==='savage-attacker'&&hasSavageResolution);
+ const triggerGroup=(i:number)=>{
+  if(diceTrigger?.kind==='savage-attacker'&&hasSavageResolution)return -1;
+  return diceTrigger?.groups.findIndex(group=>group.indices.includes(i))??-1;
+ };
  useEffect(()=>{
   const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')skip();};
   window.addEventListener('keydown',onKey);
@@ -61,9 +83,10 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
  },[]);
  const resultCount=Math.max(1,frame.sides.length);
  const denseResults=resultCount>20;
- const resultColumns=Math.min(resultCount,Math.max(1,Math.floor(resultSpace.width/(frame.saveDice?118:denseResults?44:58))));
+ const hasDieBadges=!!frame.dieLabels?.some(Boolean)||!!frame.dieRoles?.some(r=>rolePillRoles.has(r))||hasSavageResolution;
+ const resultColumns=Math.min(resultCount,Math.max(1,Math.floor(resultSpace.width/(frame.saveDice?118:hasDieBadges?112:denseResults?44:58))));
  const resultRows=Math.ceil(resultCount/resultColumns);
- const resultsHeight=Math.min(Math.max(80,resultRows*72),Math.max(64,resultSpace.height*.42));
+ const resultsHeight=Math.min(Math.max(hasDieBadges?94:80,resultRows*(hasDieBadges?86:72)),Math.max(64,resultSpace.height*.42));
  const resultCellHeight=(resultsHeight-8-(resultRows-1)*4)/resultRows;
  const resultLayout={'--dice-result-columns':resultColumns,'--dice-result-rows':resultRows,
   '--dice-results-height':`${resultsHeight}px`,'--dice-result-number-size':`${Math.max(10,Math.min(30,resultCellHeight-(denseResults?16:32)))}px`,
@@ -99,6 +122,7 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
  },[frame.id,compact,!!result,reduced,twoDimensional,legacy]);
  const boxes=useRef<(HTMLSpanElement|null)[]>([]),flights=useRef<(HTMLSpanElement|null)[]>([]);
  const saveLabels=useRef<(HTMLSpanElement|null)[]>([]);
+ const roleLabels=useRef<(HTMLSpanElement|null)[]>([]);
  const [arrived,setArrived]=useState<number[]>([]),[failed,setFailed]=useState(false),[prepared,setPrepared]=useState(false);
  const [bonusesShown,setBonusesShown]=useState(false);
  if(frame.saveDice&&frame.done&&bonusesShown&&finale.current.deadline===null)finale.current.deadline=performance.now()+DRUK_EXPLOSION_AFTER_TOTAL_MS;
@@ -138,7 +162,7 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
  },[frame]);
  useEffect(()=>{
   if(!twoDimensional)return;
-  if(!frame.done){setArrived([]);return;}
+  if(!frame.done){setArrived(frame.values.flatMap((v,i)=>v!==null?[i]:[]));return;}
   const timer=setTimeout(()=>setArrived(frame.sides.map((_,i)=>i)),reduced?0:360);
   return()=>clearTimeout(timer);
  },[twoDimensional,frame.id,frame.done,frame.sides.length,reduced]);
@@ -155,7 +179,7 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
     const offset=i-i%7;
     return i%7===0||i%7===1?-v:i%7===3?-poses[offset+4]:i%7===4?poses[offset+3]:i%7===5?poses[offset+6]:i%7===6?-poses[offset+5]:v;
   });
-  const capacity=frame.burstCapacity??frame.sides.length;
+  const capacity=frame.plannedDice?.length??frame.burstCapacity??frame.sides.length;
   const toss:Toss={settleTimes:[],wallHits:0,frames:new Float32Array(capacity*14),frameCount:2,step:1,radius:frame.radius,trayScale:frame.trayScale,topFaces:Array(capacity).fill(0),duration:1};
   void (async()=>{
    const module=await import('../lib/diceTrayRenderer');
@@ -171,7 +195,7 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
    const art=await module.loadTrayTexture(theme.id);
    if(stopped){art?.dispose();return;}
    const context=JSON.stringify(['crossfade',viewer.snapshot?.sessionCode,viewer.snapshot?.map?.id,viewer.snapshot?.role,viewer.socket?.id]);
-   lease=module.acquireLiveTrayRenderer(context,Array.from({length:capacity},(_,index)=>({sides:frame.sides[index]??8,value:1,index,set:frame.sets[index],crit:frame.critical[index],tens:frame.percentile[index]==='tens',ones:frame.percentile[index]==='ones'})),toss,theme,art,dieThemes);
+   lease=module.acquireLiveTrayRenderer(context,Array.from({length:capacity},(_,index)=>{const planned=frame.plannedDice?.[index];return {sides:planned?.sides??frame.sides[index]??8,value:1,index,set:planned?.set??frame.sets[index]??0,crit:planned?.critical??frame.critical[index]??false,tens:frame.percentile[index]==='tens',ones:frame.percentile[index]==='ones'};}),toss,theme,art,dieThemes);
    renderer=lease.value;root.current!.dataset.rendererReused=String(lease.reused);
    const node=canvas.current!,ctx=node.getContext('2d')!;
    node.dataset.trayFootprint=JSON.stringify(renderer.trayFootprint());
@@ -207,7 +231,33 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
      const alpha=reset||a===b?1:Math.max(0,Math.min(1,(target-a.at)/(b.at-a.at)));
      const width=node.clientWidth||600,height=width*10.2/15.2,dpr=legacy?1:Math.min(2,devicePixelRatio||1);
      if(node.width!==Math.round(width*dpr)){node.width=Math.round(width*dpr);node.height=Math.round(height*dpr);}
-     renderer!.setKeptSet(b.frame.done?b.frame.kept:undefined);
+     const activeTrigger=triggerRef.current;
+     const hasCustomRings=!!b.frame.dieRoles?.some(r=>rolePillRoles.has(r))||!!b.frame.discardedDice?.some(Boolean);
+     const hasActiveTriggerRings=!!b.frame.done&&!!activeTrigger?.groups.length&&activeTrigger.kind!=='savage-attacks'&&!(activeTrigger.kind==='savage-attacker'&&!!b.frame.discardedDice?.some(Boolean));
+     if(hasCustomRings||hasActiveTriggerRings){
+      const hasDiscarded=!!b.frame.discardedDice?.some(Boolean);
+      const ringColors=b.frame.sides.map((_,i)=>{
+       if(b.frame.values[i]===null)return null;
+       if(b.frame.discardedDice?.[i]||(b.frame.done&&b.frame.mode&&b.frame.kept!==undefined&&b.frame.sets[i]!==b.frame.kept))return 0xff5365;
+       const role=b.frame.dieRoles?.[i];
+       if(role==='savage-crit')return 0xff9e2c;
+       if(role==='floored')return 0x38e2d8;
+       if(role==='exploded')return 0xd47eff;
+       if(role==='lucky-reroll')return 0x5cf29c;
+       if(role==='rider')return 0xff7d45;
+       if(hasDiscarded||(b.frame.done&&b.frame.mode))return 0x39ef87;
+       if(hasActiveTriggerRings){
+        const g=activeTrigger!.groups.findIndex(grp=>grp.indices.includes(i));
+        if(g>=0)return Number.parseInt(triggerColors[g%triggerColors.length].slice(1),16);
+       }
+       return null;
+      });
+      renderer!.setDieRings(ringColors);
+      renderer!.setKeptSet(undefined);
+     }else{
+      renderer!.setDieRings(undefined);
+      renderer!.setKeptSet(b.frame.done?b.frame.kept:undefined);
+     }
      const finalWasDrawn=finalTrayDrawn;
      if(!reduced){
        // Settled poses stay fixed, but resin, lightning, motes and lava remain
@@ -218,17 +268,23 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
        node.dataset.renderTime=String(now);
        node.dataset.explosionAt=String(finale.current.deadline??'');
        finalTrayDrawn=b.frame.done&&alpha===1;
-       const svg=links.current,trigger=triggerRef.current;
+       const svg=links.current;
        if(svg){
-         const indices=new Set([...(b.frame.done?trigger?.groups.flatMap(g=>g.indices)??[]:[]),...(b.frame.burstLinks??[]).flatMap(link=>[link.from,link.to])]);
+         const valid=(i:number)=>i>=0&&i<b.frame.sides.length;
+         const indices=new Set([
+          ...(b.frame.done&&!diceTrigger?.kind?activeTrigger?.groups.flatMap(g=>g.indices)??[]:[]),
+          ...(b.frame.burstLinks??[]).flatMap(link=>[link.from,link.to]),
+          ...(b.frame.rerollLinks??[]).flatMap(link=>[link.from,link.to]),
+          ...(b.frame.dieRoles?b.frame.dieRoles.flatMap((role,i)=>rolePillRoles.has(role)&&!b.frame.discardedDice?.[i]&&b.frame.values[i]!==null?[i]:[]):[]),
+         ].filter(valid));
          const points=new Map([...indices].map(i=>{const p=renderer!.numberPosition(i);return [i,{x:p.x*1000,y:p.y*1000*10.2/15.2}] as const;}));
          // Do not draw a tether outside the box: it appears as the child enters the bed.
-         svg.querySelectorAll<SVGGElement>('[data-burst-child]').forEach(el=>{const i=Number(el.dataset.burstChild),scale=b.frame.trayScale??1,inside=Math.abs(b.frame.poses[i*7])<=7*scale&&Math.abs(b.frame.poses[i*7+1])<=4.5*scale;el.style.opacity=inside?'1':'0';el.dataset.childEntered=String(inside);});
+         svg.querySelectorAll<SVGGElement>('[data-burst-child],[data-reroll-child]').forEach(el=>{const i=Number(el.dataset.burstChild??el.dataset.rerollChild),scale=b.frame.trayScale??1,inside=valid(i)&&Math.abs(b.frame.poses[i*7])<=7*scale&&Math.abs(b.frame.poses[i*7+1])<=4.5*scale;el.style.opacity=inside?'1':'0';el.dataset.childEntered=String(inside);});
          const geometry=[...points.values()].map(p=>`${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(';');
-         const layoutKey=geometry+'|'+svg.querySelectorAll('[data-burst-source],[data-trigger-die],[data-from]').length;
+         const layoutKey=geometry+'|'+svg.querySelectorAll('[data-burst-source],[data-reroll-source],[data-savage-crit-source],[data-trigger-die],[data-from]').length;
          if(svg.dataset.layoutKey!==layoutKey){
            svg.dataset.layoutKey=layoutKey;svg.dataset.geometry=geometry;svg.style.visibility=points.size?'visible':'hidden';
-           svg.querySelectorAll<SVGGElement>('[data-burst-source]').forEach(el=>{const p=points.get(Number(el.dataset.burstSource));if(p)el.setAttribute('transform',`translate(${p.x} ${p.y})`);});
+           svg.querySelectorAll<SVGGElement>('[data-burst-source],[data-reroll-source],[data-savage-crit-source]').forEach(el=>{const p=points.get(Number(el.dataset.burstSource??el.dataset.rerollSource??el.dataset.savageCritSource));if(p)el.setAttribute('transform',`translate(${p.x} ${p.y})`);});
            svg.querySelectorAll<SVGCircleElement>('[data-trigger-die]').forEach(el=>{const p=points.get(Number(el.dataset.triggerDie));if(p){el.setAttribute('cx',String(p.x));el.setAttribute('cy',String(p.y));}});
            svg.querySelectorAll<SVGPathElement>('[data-from]').forEach(el=>{const a=points.get(Number(el.dataset.from)),b=points.get(Number(el.dataset.to));if(a&&b){const midX=(a.x+b.x)/2,midY=(a.y+b.y)/2-Math.min(80,Math.hypot(a.x-b.x,a.y-b.y)*.2);el.setAttribute('d',`M ${a.x} ${a.y} Q ${midX} ${midY} ${b.x} ${b.y}`);}});
          }
@@ -237,6 +293,19 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
      if(b.frame.saveDice){
        const rect=root.current!.getBoundingClientRect(),c=node.getBoundingClientRect();
        saveLabels.current.forEach((el,i)=>{if(!el)return;const p=renderer!.numberPosition(i),pos=diceFlightPoint(rect,root.current!.clientWidth,c.left+p.x*c.width,c.top+p.y*c.height);el.style.left=`${pos.x}px`;el.style.top=`${pos.y-25}px`;});
+     }
+     if(roleLabels.current.some(Boolean)){
+       const rect=root.current!.getBoundingClientRect(),c=node.getBoundingClientRect(),scale=b.frame.trayScale??1;
+       roleLabels.current.forEach((el,i)=>{
+        if(!el)return;
+        const settled=i<b.frame.sides.length&&b.frame.values[i]!==null;
+        const inside=settled&&Math.abs(b.frame.poses[i*7])<=7*scale&&Math.abs(b.frame.poses[i*7+1])<=4.5*scale;
+        if(!inside){el.dataset.positioned='false';return;}
+        const p=renderer!.numberPosition(i),pos=diceFlightPoint(rect,root.current!.clientWidth,c.left+p.x*c.width,c.top+p.y*c.height);
+        el.style.left=`${Math.max(48,Math.min(root.current!.clientWidth-48,pos.x))}px`;
+        el.style.top=`${Math.max(26,pos.y-26)}px`;
+        el.dataset.positioned='true';
+       });
      }
      if(!handoffPainted){
       handoffPainted=true;
@@ -331,44 +400,108 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
   const strength=dieResultEmphasis(liveDieResult(frame,i));
   return {'--roll-strength':strength,'--arrival-scale':1.12+strength*.5,'--arrival-glow':`${5+Math.pow(strength,3)*28}px`} as CSSProperties;
  };
+ const dieBoxResult=(i:number)=>{
+  if(hasSavageResolution&&frame.discardedDice?.[i])return 'discarded';
+  if(frame.done&&frame.mode&&frame.kept!==undefined&&frame.sets[i]!==frame.kept)return 'discarded';
+  if(frame.dieRoles?.[i]==='savage-crit')return frame.values[i]!==null?'savage-crit':'rolling';
+  if(hasSavageResolution&&frame.discardedDice)return 'kept';
+  if(frame.done&&frame.mode)return 'kept';
+  return 'rolling';
+ };
+ const dieBoxBadge=(i:number):{text:string;tone:'kept'|'discarded'|'savage-crit'|'floored'|'exploded'|'lucky-reroll'|'rider'|'info'}|null=>{
+  if(!hasDieBadges)return null;
+  const role=frame.dieRoles?.[i];
+  const customLabel=frame.dieLabels?.[i];
+  if(hasSavageResolution&&frame.discardedDice?.[i])return {text:customLabel||'Discarded',tone:'discarded'};
+  if(frame.done&&frame.mode&&frame.kept!==undefined&&frame.sets[i]!==frame.kept)return {text:customLabel?`${customLabel} (dropped)`:'Discarded',tone:'discarded'};
+  if(role&&rolePillRoles.has(role))return {text:customLabel||roleLabelFallback(role),tone:role as 'savage-crit'|'floored'|'exploded'|'lucky-reroll'|'rider'};
+  if(hasSavageResolution&&frame.discardedDice)return {text:customLabel||'Kept',tone:'kept'};
+  if(customLabel)return {text:customLabel,tone:'info'};
+  return null;
+ };
+ const dieBoxHeader=(side:number,i:number)=>frame.percentile[i]?`d100 ${frame.percentile[i]}`:frame.critical[i]&&frame.dieRoles?.[i]!=='savage-crit'?`d${side} \u00b7 CRIT`:`d${side}`;
+ const flyingTone=(i:number)=>{
+  if(hasSavageResolution&&frame.discardedDice?.[i])return 'discarded';
+  if(frame.done&&frame.mode&&frame.kept!==undefined&&frame.sets[i]!==frame.kept)return 'discarded';
+  if(frame.dieRoles?.[i]==='savage-crit')return 'savage-crit';
+  if(frame.critical[i])return 'critical';
+  if(hasSavageResolution&&frame.discardedDice)return 'kept';
+  if(frame.done&&frame.mode)return 'kept';
+  return 'normal';
+ };
+ const hasSvgOverlay=(hasTriggerRings&&!diceTrigger?.kind&&(diceTrigger?.groups.length??0)>0)||!!frame.burstLinks?.length||!!frame.rerollLinks?.length||savageCritIndices.length>0;
+ const isSavageTrigger=diceTrigger?.kind==='savage-attacker'||diceTrigger?.kind==='savage-attacks'||diceTrigger?.kind==='halfling-lucky'||diceTrigger?.kind==='die-reroll'||diceTrigger?.kind==='dice-floor'||diceTrigger?.kind==='weapon-trigger'||(diceTrigger?.groups.length===0);
  const target=resultHeader?resultHeader.target:frame.target;
  const heading=saveRollHeading(frame,title??frame.label,resultHeader?.attacker);
  const prewarmedWoodBg=!twoDimensional?diceTableBackgroundSync():'';
- return <div className={`roll-reveal-backdrop${compact?' is-impact':''}`} data-live-dice={result||compact?undefined:'true'} data-live-calculation={frame.calculation?'true':undefined} data-result-hold-ms={frame.resultHoldMs} data-private-roll={hiddenPrivate||undefined} data-reviewing={!!hiddenReview} data-awaiting-start={pendingStart||undefined} data-dice-presentation={result?'result':'live'} data-roll-id={frame.id}><div ref={card} className={`roll-reveal${naturalCritical?' roll-reveal-crit':''}`} data-roll-id={rollId??frame.id} data-reveal-kind={revealKind} data-dice-theme={theme.id} data-impact-ready={impactReady} role="status" aria-label="Live dice roll" onClick={skip} title={hiddenReview||pendingStart?undefined:"Click or tap to skip animation"}>
+ return <div className={`roll-reveal-backdrop${compact?' is-impact':''}`} data-live-dice={result||compact?undefined:'true'} data-live-calculation={frame.calculation?'true':undefined} data-result-hold-ms={frame.resultHoldMs} data-private-roll={hiddenPrivate||undefined} data-reviewing={!!hiddenReview} data-awaiting-start={pendingStart||undefined} data-dice-presentation={result?'result':'live'} data-roll-id={frame.id}><div ref={card} className={`roll-reveal${naturalCritical?' roll-reveal-crit':''}`} data-roll-id={rollId??frame.id} data-reveal-kind={revealKind} data-dice-theme={theme.id} data-impact-ready={impactReady} role="status" aria-label="Live dice roll" onClick={skip} title={hiddenReview||pendingStart||pendingReroll?undefined:"Click or tap to skip animation"}>
   <div className="roll-reveal-title" role="heading" aria-level={2} title={heading}>{heading}</div>
   <div className="roll-reveal-who">{frame.saveDice&&!frame.saveDice[0]?.rollKind?'Triggered by ':''}{frame.attacker??resultHeader?.attacker??frame.roller}{target&&<span className="rr-arrow"> &rarr; {target}</span>}{!!frame.advantageReasons?.length&&<span className={`rr-adv-reason is-${frame.advantageState??frame.mode??'straight'}`}> &middot; {(frame.advantageState??frame.mode)==='adv'?'Advantage':(frame.advantageState??frame.mode)==='dis'?'Disadvantage':'Straight (adv + dis)'}: {frame.advantageReasons.join(', ')}</span>}</div>
   {naturalTwenty&&!compact&&!hiddenReview&&<NaturalTwentyCelebration key={frame.id}/>}
   {naturalCritical&&!compact&&!hiddenReview&&<div className="roll-reveal-outcome tray-natural-critical" role="status" aria-label="Roll result">CRITICAL HIT!</div>}
   <div ref={root} className="physics-dice-tray" style={resultLayout} data-renderer={twoDimensional?'2d':'3d'} data-dense-results={denseResults||undefined} data-status={frame.done?'settled':'rolling'} data-theme={theme.id} data-entry-side={own?'bottom':'top'} data-mode={frame.mode} data-material={twoDimensional?'canvas2d':failed?'unavailable':!prepared?'loading':theme.id==='sorcerer'?'volumetric-glass':theme.id==='fighter'?'obsidian-gold':theme.id==='ranger'?'forest-resin':theme.id.startsWith('dm-')?'purple-resin':theme.id} role="group" aria-label="Live dice tray">
    <div className="dice-tray-viewport"><div className="dice-tray-stage" data-surface={prewarmedWoodBg?'plain-wood':undefined} style={prewarmedWoodBg?{backgroundImage:`url("${prewarmedWoodBg}")`}:undefined}>
-   {twoDimensional&&<div className="dice-2d-animation" data-testid="dice-2d-animation">{frame.sides.slice(0,24).map((sides,i)=><DiceThemeContext.Provider key={`${frame.id}:${i}`} value={dieThemes?.[i]??theme}><ThreeDie big={frame.sides.length<=2} sides={sides} value={frame.values[i]===null?1:frame.percentile[i]==='tens'?(frame.values[i]!-1)*10:frame.percentile[i]==='ones'?frame.values[i]!-1:frame.values[i]!} percentilePart={frame.percentile[i]??undefined} rolling={!frame.done&&!pendingStart} crit={frame.critical[i]}/></DiceThemeContext.Provider>)}{frame.sides.length>24&&<span>+{frame.sides.length-24} dice shown in the results</span>}</div>}
+   {twoDimensional&&<div className="dice-2d-animation" data-testid="dice-2d-animation">{frame.sides.slice(0,24).map((sides,i)=>{const badge=dieBoxBadge(i);const dispVal=frame.values[i]===null?1:frame.percentile[i]==='tens'?(frame.values[i]!-1)*10:frame.percentile[i]==='ones'?frame.values[i]!-1:(frame.dieAdjustedValues?.[i]??frame.values[i]!);const dieEl=<DiceThemeContext.Provider key={hasDieBadges?undefined:`${frame.id}:${i}`} value={dieThemes?.[i]??theme}><ThreeDie big={frame.sides.length<=2} sides={sides} value={dispVal} percentilePart={frame.percentile[i]??undefined} rolling={frame.values[i]===null&&!pendingStart} crit={frame.critical[i]}/></DiceThemeContext.Provider>;return hasDieBadges?<div key={`${frame.id}:${i}`} className="dice-2d-slot" data-result={dieBoxResult(i)} data-role={frame.dieRoles?.[i]}>{dieEl}{badge&&<small className="tray-die-badge" data-badge-tone={badge.tone}>{badge.text}</small>}</div>:dieEl;})}{frame.sides.length>24&&<span>+{frame.sides.length-24} dice shown in the results</span>}</div>}
    <canvas className="dice-tray-canvas" ref={canvas} aria-label={result?'Settled dice':'Server dice rolling live'}/>
    <canvas className="dice-tray-transition" ref={outgoing} data-phase="idle" aria-hidden="true"/>
    {frame.burstProgress&&!result&&!compact&&<div className="tray-burst-progress" data-burst-used={frame.burstProgress.used} data-burst-limit={frame.burstProgress.limit}>Bonus dice: <strong>{frame.burstProgress.used} of {frame.burstProgress.limit}</strong></div>}
-   {(diceTrigger&&frame.done||!!frame.burstLinks?.length)&&!compact&&!reduced&&<svg ref={links} className="tray-trigger-links" viewBox="0 0 1000 671.0526" aria-hidden="true">
-    <defs><radialGradient id={`burst-glow-${frame.id}`}><stop offset="0" stopColor="#fff0ff"/><stop offset=".2" stopColor="#e8a1ff"/><stop offset=".5" stopColor="#b335ff" stopOpacity=".85"/><stop offset="1" stopColor="#8614ed" stopOpacity="0"/></radialGradient><marker id={`burst-arrow-${frame.id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" style={{fill:'#e3b0ff',stroke:'none'}}/></marker></defs>
+   {frame.trayBanner&&!compact&&<div className="tray-savage-banner" data-tray-banner={frame.trayBanner.tone}><strong>{frame.trayBanner.title}</strong><span>{frame.trayBanner.detail}</span></div>}
+   {hasSvgOverlay&&!compact&&!reduced&&<svg ref={links} className="tray-trigger-links" viewBox="0 0 1000 671.0526" aria-hidden="true">
+    <defs>
+     <radialGradient id={`burst-glow-${frame.id}`}><stop offset="0" stopColor="#fff0ff"/><stop offset=".2" stopColor="#e8a1ff"/><stop offset=".5" stopColor="#b335ff" stopOpacity=".85"/><stop offset="1" stopColor="#8614ed" stopOpacity="0"/></radialGradient>
+     <marker id={`burst-arrow-${frame.id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" style={{fill:'#e3b0ff',stroke:'none'}}/></marker>
+     <radialGradient id={`reroll-glow-${frame.id}`}><stop offset="0" stopColor={frame.trayBanner?.tone==='lucky'?'#ecfff4':'#fff8dc'}/><stop offset=".22" stopColor={rerollAccent}/><stop offset=".52" stopColor={frame.trayBanner?.tone==='lucky'?'#16a34a':'#f59e0b'} stopOpacity=".82"/><stop offset="1" stopColor={frame.trayBanner?.tone==='lucky'?'#065f46':'#b45309'} stopOpacity="0"/></radialGradient>
+     <marker id={`reroll-arrow-${frame.id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" style={{fill:rerollAccent,stroke:'none'}}/></marker>
+     <radialGradient id={`savage-crit-glow-${frame.id}`}><stop offset="0" stopColor="#fff4d6"/><stop offset=".22" stopColor="#ffad3b"/><stop offset=".55" stopColor="#e8590c" stopOpacity=".85"/><stop offset="1" stopColor="#9a1b0c" stopOpacity="0"/></radialGradient>
+    </defs>
     {(frame.done?diceTrigger?.groups??[]:[]).map((group,g)=><g key={g} style={{color:triggerColors[g%triggerColors.length]}}>
      {!diceTrigger?.kind&&group.indices.slice(1).map((i,j)=><g key={i}>{['aura','core','spark'].map(part=><path key={part} className={`tray-trigger-${part}`} data-from={group.indices[j]} data-to={i}/>)}</g>)}
-     {group.indices.map(i=><circle key={i} data-trigger-die={i} r="29"/>)}</g>)}
+    </g>)}
     {burstSources.map(i=><g key={`source-${i}`} className="tray-burst-source" data-burst-source={i} style={{color:'#d584ff'}}>
      <circle className="tray-burst-bloom" r="68" style={{fill:`url(#burst-glow-${frame.id})`,stroke:'none'}}/>
      <circle className="tray-burst-shockwave" r="28"/>
      <circle className="tray-burst-shockwave is-second" r="28"/>
     </g>)}
     {frame.burstLinks?.map(link=><g key={link.to} style={{color:'#e3b0ff'}} data-burst-parent={link.from} data-burst-child={link.to}>{['aura','core','spark'].map(part=><path key={part} className={`tray-trigger-${part}`} data-from={link.from} data-to={link.to} markerEnd={part==='core'?`url(#burst-arrow-${frame.id})`:undefined}/>)}</g>)}
+    {rerollSources.map(i=><g key={`reroll-source-${i}`} className="tray-reroll-source" data-reroll-source={i} style={{color:rerollAccent}}>
+     <circle className="tray-burst-bloom" r="62" style={{fill:`url(#reroll-glow-${frame.id})`,stroke:'none'}}/>
+     <circle className="tray-reroll-shockwave" r="28"/>
+     <circle className="tray-reroll-shockwave is-second" r="28"/>
+    </g>)}
+    {frame.rerollLinks?.map(link=><g key={`reroll-${link.from}-${link.to}`} style={{color:rerollAccent}} data-reroll-parent={link.from} data-reroll-child={link.to}>{['aura','core','spark'].map(part=><path key={part} className={`tray-trigger-${part}`} data-from={link.from} data-to={link.to} markerEnd={part==='core'?`url(#reroll-arrow-${frame.id})`:undefined}/>)}</g>)}
+    {savageCritIndices.map(i=><g key={`savage-crit-${i}`} className="tray-savage-crit-source" data-savage-crit-source={i} style={{color:'#ff9e2c'}}>
+     <circle className="tray-burst-bloom" r="70" style={{fill:`url(#savage-crit-glow-${frame.id})`,stroke:'none'}}/>
+     <circle className="tray-savage-crit-shockwave" r="30"/>
+     <circle className="tray-savage-crit-shockwave is-second" r="30"/>
+    </g>)}
    </svg>}
    </div></div>
    {frame.saveDice&&<div className="tray-save-labels" aria-hidden="true">{frame.saveDice.map((save,i)=><span key={i} ref={el=>{saveLabels.current[i]=el;}} className="tray-save-label">{save.label}{save.mode?` ${save.mode.toUpperCase()}`:''}</span>)}</div>}
+   {!compact&&!twoDimensional&&!reduced&&frame.dieRoles?.some((role,i)=>rolePillRoles.has(role)&&!frame.discardedDice?.[i])&&<div className="tray-role-labels" aria-hidden="true">{frame.sides.map((_,i)=>{const role=frame.dieRoles?.[i];return role&&rolePillRoles.has(role)&&!frame.discardedDice?.[i]?<span key={i} ref={el=>{roleLabels.current[i]=el;}} className={`tray-die-role-label is-${role}`} data-role-label-die={i}>{frame.dieLabels?.[i]||roleLabelFallback(role)}</span>:null;})}</div>}
    {reduced&&<div className="dice-tray-status">{frame.done?'Dice settled':'Live roll in progress'}</div>}
-   <div className="tray-number-flights" aria-hidden="true">{frame.sides.map((_,i)=><span key={i} ref={el=>{flights.current[i]=el;}} style={resultStyle(i)} data-die-id={i} data-set={frame.sets[i]} data-strength={tier(i)} data-tone={frame.critical[i]?'critical':frame.done&&frame.mode?(frame.sets[i]===frame.kept?'kept':'discarded'):'normal'} className={`tray-flying-number${frame.critical[i]?' critical':''}`}><span className="tray-number-flash"/>{value(i)}</span>)}</div>
-   <div className="dice-tray-results">{frame.sides.map((side,i)=><span ref={el=>{boxes.current[i]=el;}} className={`tray-die-result${frame.critical[i]?' critical':''}`} data-die-id={i} data-trigger={triggerGroup(i)>=0?'matched':undefined} data-trigger-group={triggerGroup(i)>=0?triggerGroup(i):undefined} data-sides={side} data-value={frame.values[i]??undefined} data-set={frame.sets[i]} data-result={frame.done&&frame.mode?(frame.sets[i]===frame.kept?'kept':'discarded'):'rolling'} data-critical={!!frame.critical[i]} data-theme={dieThemes?.[i]?.id??theme.id} data-orientation={arrived.includes(i)||failed?'settled':'rolling'} aria-label={`d${side}: ${arrived.includes(i)||failed?value(i):'rolling'}`} data-filled={arrived.includes(i)||failed} data-strength={tier(i)} style={{...resultStyle(i),...(triggerGroup(i)>=0?{'--trigger-color':triggerColors[triggerGroup(i)%triggerColors.length]}:{}),...(frame.done&&frame.mode?{borderColor:frame.sets[i]===frame.kept?'#39ef87':'#ff5365',boxShadow:`0 0 6px ${frame.sets[i]===frame.kept?'#39ef87':'#ff5365'}`} : {})}} key={i}>{frame.saveDice?.[i]&&<small className="tray-save-name" title={frame.saveDice[i].label}>{frame.saveDice[i].label}</small>}{frame.percentile[i]?`d100 ${frame.percentile[i]}`:`d${side}`}<strong>{arrived.includes(i)||failed?value(i):'?'}</strong>{!frame.saveDice?.[i]&&<small className="tray-max-label" style={{visibility:(arrived.includes(i)||failed)&&!!dieResultLabel(liveDieResult(frame,i))?'visible':'hidden'}} aria-hidden={!((arrived.includes(i)||failed)&&!!dieResultLabel(liveDieResult(frame,i)))}>{dieResultLabel(liveDieResult(frame,i))}</small>}{frame.saveDice?.[i]&&<span className="tray-save-verdict" data-outcome={saveResult(i)?.outcome}>{saveVerdict(i)}</span>}{frame.rerolls[i]>0&&<small className="tray-reroll-count" title={`Rerolled ${frame.rerolls[i]} times`}>{"\u21bb"}{frame.rerolls[i]}</small>}</span>)}</div>
+   <div className="tray-number-flights" aria-hidden="true">{frame.sides.map((_,i)=><span key={i} ref={el=>{flights.current[i]=el;}} style={resultStyle(i)} data-die-id={i} data-set={frame.sets[i]} data-strength={tier(i)} data-tone={flyingTone(i)} className={`tray-flying-number${frame.critical[i]?' critical':''}`}><span className="tray-number-flash"/>{value(i)}</span>)}</div>
+   <div className="dice-tray-results">{frame.sides.map((side,i)=>{const badge=dieBoxBadge(i);const boxResult=dieBoxResult(i);const showTrigger=triggerGroup(i)>=0;const settledFace=arrived.includes(i)||failed;const adj=frame.dieAdjustedValues?.[i];const hasFloor=settledFace&&adj!=null&&frame.values[i]!==null&&adj!==frame.values[i];const maxLabel=settledFace?dieResultLabel(liveDieResult(frame,i)):'';const ariaVal=settledFace?(hasFloor?`${value(i)} to ${adj}`:value(i)):'rolling';return <span ref={el=>{boxes.current[i]=el;}} className={`tray-die-result${frame.critical[i]?' critical':''}`} data-die-id={i} data-role={frame.dieRoles?.[i]} data-trigger={showTrigger?'matched':undefined} data-trigger-group={showTrigger?triggerGroup(i):undefined} data-sides={side} data-value={adj??frame.values[i]??undefined} data-set={frame.sets[i]} data-result={boxResult} data-critical={!!frame.critical[i]} data-theme={dieThemes?.[i]?.id??theme.id} data-orientation={settledFace?'settled':'rolling'} aria-label={`${dieBoxHeader(side,i)}: ${ariaVal}${badge?`, ${badge.text}`:''}`} data-filled={settledFace} data-strength={tier(i)} style={{...resultStyle(i),...(showTrigger?{'--trigger-color':triggerColors[triggerGroup(i)%triggerColors.length]}:{}),...(frame.done&&frame.mode?{borderColor:frame.sets[i]===frame.kept?'#39ef87':'#ff5365',boxShadow:`0 0 6px ${frame.sets[i]===frame.kept?'#39ef87':'#ff5365'}`} : {})}} key={i}>{frame.saveDice?.[i]&&<small className="tray-save-name" title={frame.saveDice[i].label}>{frame.saveDice[i].label}</small>}{dieBoxHeader(side,i)}<strong>{settledFace?(hasFloor?<><span className="tray-die-floor-raw">{value(i)}</span><span className="tray-die-floor-arrow">{"\u2192"}</span>{adj}</>:value(i)):'?'}</strong>{badge&&<small className="tray-die-badge" data-badge-tone={badge.tone}>{badge.text}</small>}{!frame.saveDice?.[i]&&(!badge||!!maxLabel)&&<small className="tray-max-label" style={{visibility:!!maxLabel?'visible':'hidden'}} aria-hidden={!maxLabel}>{maxLabel}</small>}{frame.saveDice?.[i]&&<span className="tray-save-verdict" data-outcome={saveResult(i)?.outcome}>{saveVerdict(i)}</span>}{frame.rerolls[i]>0&&<small className="tray-reroll-count" title={`Rerolled ${frame.rerolls[i]} times`}>{"\u21bb"}{frame.rerolls[i]}</small>}</span>;})}</div>
   </div>
-  <div className="tray-result-panel">
+  <div className="tray-result-panel" onClick={pendingReroll||waitingRerollOffer?e=>e.stopPropagation():undefined}>
   {!hiddenReview&&!pendingStart&&frame.saveDice&&<div className="tray-save-details" aria-label={frame.saveDice[0]?.rollKind==='initiative'?'Initiative results':'Saving throw results'}>{frame.saveDice.map((_,i)=><span key={i}>{saveBonus(i)}</span>)}</div>}
-  {!hiddenReview&&!pendingStart&&diceTrigger&&!compact&&<div className="tray-trigger-result" role="status" data-dice-trigger={diceTrigger.kind??'matched'}><strong>{diceTrigger.title}</strong><span>{diceTrigger.detail}: {diceTrigger.groups.map((group,g)=><em key={g} style={{color:triggerColors[g%triggerColors.length]}}>{group.indices.length} {group.indices.length===1?'die':'dice'} showing {group.value}</em>)}</span></div>}
+  {!hiddenReview&&!pendingStart&&(frame.rerollPrompt||waitingRerollOffer)&&<div className={`tray-reroll-prompt${waitingRerollOffer?' is-waiting':''}`} role="region" aria-label={`${frame.rerollPrompt?.label??frame.rerollOfferLabel} reroll option`} onPointerDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+   {waitingRerollOffer?<>
+    <div className="tray-reroll-info"><strong>{frame.rerollOfferLabel}</strong><span>Waiting for dice to settle…</span></div>
+    <div className="tray-reroll-actions"><button type="button" className="tray-reroll-btn is-reroll" disabled>Reroll ({frame.rerollOfferLabel})</button></div>
+   </>:frame.rerollPrompt!.readOnly?<>
+    <div className="tray-reroll-info"><strong>{frame.rerollPrompt!.label}</strong><span>{frame.attacker??frame.roller} rolled {frame.rerollPrompt!.rollTotal} ({frame.rerollPrompt!.diceSummary}) — deciding whether to reroll…</span></div>
+   </>:<>
+    <div className="tray-reroll-info"><strong>{frame.rerollPrompt!.label}</strong><span>Rolled <b>{frame.rerollPrompt!.rollTotal}</b> on {frame.rerollPrompt!.diceSummary} · once per turn</span></div>
+    <div className="tray-reroll-actions">
+     <button type="button" className="tray-reroll-btn is-reroll" disabled={submittedRerollId===frame.rerollPrompt!.id} onClick={e=>{e.stopPropagation();handleRerollChoice(true);}}>Reroll ({frame.rerollPrompt!.label})</button>
+     <button type="button" className="tray-reroll-btn is-keep" disabled={submittedRerollId===frame.rerollPrompt!.id} onClick={e=>{e.stopPropagation();handleRerollChoice(false);}}>Keep {frame.rerollPrompt!.rollTotal}</button>
+    </div>
+   </>}
+  </div>}
+  {!hiddenReview&&!pendingStart&&!frame.rerollPrompt&&!waitingRerollOffer&&diceTrigger&&!compact&&<div className="tray-trigger-result" role="status" data-dice-trigger={diceTrigger.kind??'matched'}><strong>{diceTrigger.title}</strong><span>{isSavageTrigger?diceTrigger.detail:<>{diceTrigger.detail}: {diceTrigger.groups.map((group,g)=><em key={g} style={{color:triggerColors[g%triggerColors.length]}}>{group.indices.length} {group.indices.length===1?'die':'dice'} showing {group.value}</em>)}</>}</span></div>}
   {hiddenReview??(!pendingStart&&result&&<div className="tray-roll-result">{result}</div>)}
   </div>
-  <div className="live-dice-footer"><span className="muted">{result?'':!prepared&&!failed?'Loading dice…':frame.done?'Dice settled':frame.rerolls.some(n=>n>0)?'Rerolling unreadable dice...':'Rolling...'}</span>{!hiddenReview&&!pendingStart&&<button type="button" onClick={event=>{event.stopPropagation();skip();}} aria-label="Skip roll animation">Skip</button>}</div>
+  <div className="live-dice-footer"><span className="muted">{result?'':!prepared&&!failed?'Loading dice…':pendingReroll?'Choose reroll or keep':frame.done?'Dice settled':frame.rerolls.some(n=>n>0)?'Rerolling unreadable dice...':'Rolling...'}</span>{!hiddenReview&&!pendingStart&&!pendingReroll&&<button type="button" onClick={event=>{event.stopPropagation();skip();}} aria-label="Skip roll animation">Skip</button>}</div>
  </div>{pendingStart&&<section className="private-save-prompt" role="region" aria-label="Saving throw needed" onClick={e=>e.stopPropagation()}>
   <span className="hidden-roll-private">DM ONLY</span>
   <h2>Saving throw needed</h2>

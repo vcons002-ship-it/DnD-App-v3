@@ -20,21 +20,38 @@ const trayTextures=new Map<string,Promise<THREE.Texture>>();
 let residentFeltMap:THREE.CanvasTexture|undefined;
 let residentOcclusionMap:THREE.CanvasTexture|undefined;
 let residentShadowMap:THREE.CanvasTexture|undefined;
+let residentRingMap:THREE.CanvasTexture|undefined;
+let residentWoodMap:THREE.CanvasTexture|undefined;
+let residentWoodBumpMap:THREE.CanvasTexture|undefined;
+let residentLeatherBumpMap:THREE.CanvasTexture|undefined;
+let residentTrayGeometries:{
+  plinth:THREE.BufferGeometry;
+  mainFrame:THREE.BufferGeometry;
+  crown:THREE.BufferGeometry;
+  trim:THREE.BufferGeometry;
+  liner:THREE.BufferGeometry;
+  clasp:THREE.BufferGeometry;
+  rivet:THREE.BufferGeometry;
+}|undefined;
 
 function getSharedTrayMaps(renderer:THREE.WebGLRenderer){
   if(!residentFeltMap){
-    const felt=document.createElement('canvas');felt.width=felt.height=128;
-    const feltCtx=felt.getContext('2d')!;feltCtx.fillStyle='#1b3029';feltCtx.fillRect(0,0,128,128);
-    for(let k=0;k<6000;k++){feltCtx.fillStyle=k%2?'#ffffff08':'#00000012';feltCtx.fillRect((k*73)%128,Math.floor(k*41.7)%128,1,1);}
+    const felt=document.createElement('canvas');felt.width=felt.height=256;
+    const feltCtx=felt.getContext('2d')!;
+    const bg=feltCtx.createRadialGradient(128,128,18,128,128,170);
+    bg.addColorStop(0,'#213b32');bg.addColorStop(.75,'#192d26');bg.addColorStop(1,'#12221c');
+    feltCtx.fillStyle=bg;feltCtx.fillRect(0,0,256,256);
+    for(let k=0;k<18000;k++){feltCtx.fillStyle=k%2?'#ffffff09':'#00000014';feltCtx.fillRect((k*73)%256,Math.floor(k*41.7)%256,1,1);}
+    feltCtx.strokeStyle='#d6c59822';feltCtx.lineWidth=1.5;feltCtx.setLineDash([5,4]);feltCtx.strokeRect(8,8,240,240);
     residentFeltMap=new THREE.CanvasTexture(felt);residentFeltMap.colorSpace=THREE.SRGBColorSpace;
-    residentFeltMap.wrapS=residentFeltMap.wrapT=THREE.RepeatWrapping;residentFeltMap.repeat.set(10,7);
+    residentFeltMap.wrapS=residentFeltMap.wrapT=THREE.RepeatWrapping;residentFeltMap.repeat.set(6,4);
     renderer.initTexture(residentFeltMap);
   }
   if(!residentOcclusionMap){
     const occlusionCanvas=document.createElement('canvas');occlusionCanvas.width=occlusionCanvas.height=128;
     const oc=occlusionCanvas.getContext('2d')!;
     const edgeShade=oc.createLinearGradient(0,0,0,128);
-    edgeShade.addColorStop(0,'#0009');edgeShade.addColorStop(.35,'#0004');edgeShade.addColorStop(1,'#0000');
+    edgeShade.addColorStop(0,'#000c');edgeShade.addColorStop(.3,'#0005');edgeShade.addColorStop(1,'#0000');
     oc.fillStyle=edgeShade;oc.fillRect(0,0,128,128);
     residentOcclusionMap=new THREE.CanvasTexture(occlusionCanvas);
     renderer.initTexture(residentOcclusionMap);
@@ -42,11 +59,146 @@ function getSharedTrayMaps(renderer:THREE.WebGLRenderer){
   if(!residentShadowMap){
     const canvas=document.createElement('canvas');canvas.width=canvas.height=64;
     const c=canvas.getContext('2d')!,gradient=c.createRadialGradient(32,32,4,32,32,32);
-    gradient.addColorStop(0,'#000a');gradient.addColorStop(1,'#0000');c.fillStyle=gradient;c.fillRect(0,0,64,64);
+    gradient.addColorStop(0,'#000b');gradient.addColorStop(1,'#0000');c.fillStyle=gradient;c.fillRect(0,0,64,64);
     residentShadowMap=new THREE.CanvasTexture(canvas);
     renderer.initTexture(residentShadowMap);
   }
-  return {feltMap:residentFeltMap,occlusionMap:residentOcclusionMap,shadowMap:residentShadowMap};
+  if(!residentRingMap){
+    const size=128,cCanvas=document.createElement('canvas');cCanvas.width=cCanvas.height=size;
+    const rc=cCanvas.getContext('2d')!,cx=size/2,cy=size/2;
+    const g=rc.createRadialGradient(cx,cy,size*.26,cx,cy,size*.5);
+    g.addColorStop(0,'rgba(255,255,255,0)');
+    g.addColorStop(.22,'rgba(255,255,255,0.12)');
+    g.addColorStop(.36,'rgba(255,255,255,0.98)');
+    g.addColorStop(.52,'rgba(255,255,255,0.96)');
+    g.addColorStop(.68,'rgba(255,255,255,0.34)');
+    g.addColorStop(1,'rgba(255,255,255,0)');
+    rc.fillStyle=g;rc.fillRect(0,0,size,size);
+    residentRingMap=new THREE.CanvasTexture(cCanvas);residentRingMap.colorSpace=THREE.SRGBColorSpace;
+    residentRingMap.minFilter=THREE.LinearMipmapLinearFilter;residentRingMap.magFilter=THREE.LinearFilter;
+    renderer.initTexture(residentRingMap);
+  }
+  if(!residentWoodMap||!residentWoodBumpMap){
+    const s=256;
+    const colorCanvas=document.createElement('canvas');colorCanvas.width=colorCanvas.height=s;
+    const bumpCanvas=document.createElement('canvas');bumpCanvas.width=bumpCanvas.height=s;
+    const cc=colorCanvas.getContext('2d')!,bc=bumpCanvas.getContext('2d')!;
+    const cImg=cc.createImageData(s,s),bImg=bc.createImageData(s,s);
+    for(let y=0;y<s;y++){
+      for(let x=0;x<s;x++){
+        const u=x/s,v=y/s;
+        const warp=Math.sin(u*Math.PI*2)*1.6+Math.sin(u*Math.PI*6+1.1)*.5;
+        const ring=Math.sin((v*14+warp)*Math.PI);
+        const fine=Math.sin(v*72+u*18.84)*.35;
+        const pore=((Math.imul(x*73856093^y*19349663,2654435761)>>>0)%97)<3?1:0;
+        const grain=Math.max(0,Math.min(1,.72+ring*.16+fine*.07-pore*.22));
+        const idx=(y*s+x)*4;
+        cImg.data[idx]=Math.round(255*grain);
+        cImg.data[idx+1]=Math.round(244*grain);
+        cImg.data[idx+2]=Math.round(230*grain);
+        cImg.data[idx+3]=255;
+        const bumpV=Math.round(Math.max(0,Math.min(255,145+ring*42+fine*20-pore*85)));
+        bImg.data[idx]=bImg.data[idx+1]=bImg.data[idx+2]=bumpV;bImg.data[idx+3]=255;
+      }
+    }
+    cc.putImageData(cImg,0,0);bc.putImageData(bImg,0,0);
+    residentWoodMap=new THREE.CanvasTexture(colorCanvas);residentWoodMap.colorSpace=THREE.SRGBColorSpace;
+    residentWoodBumpMap=new THREE.CanvasTexture(bumpCanvas);
+    for(const t of [residentWoodMap,residentWoodBumpMap]){
+      t.wrapS=t.wrapT=THREE.RepeatWrapping;t.anisotropy=renderer.capabilities.getMaxAnisotropy();renderer.initTexture(t);
+    }
+  }
+  if(!residentLeatherBumpMap){
+    const s=128,lCanvas=document.createElement('canvas');lCanvas.width=lCanvas.height=s;
+    const lc=lCanvas.getContext('2d')!,lImg=lc.createImageData(s,s);
+    for(let y=0;y<s;y++){
+      for(let x=0;x<s;x++){
+        const h=Math.imul((x*374761393)^(y*668265263),1274126177)>>>0;
+        const cell=Math.sin(x*.45)*Math.cos(y*.45);
+        const val=Math.round(Math.max(0,Math.min(255,130+cell*45+((h%64)-32))));
+        const idx=(y*s+x)*4;
+        lImg.data[idx]=lImg.data[idx+1]=lImg.data[idx+2]=val;lImg.data[idx+3]=255;
+      }
+    }
+    lc.putImageData(lImg,0,0);
+    residentLeatherBumpMap=new THREE.CanvasTexture(lCanvas);
+    residentLeatherBumpMap.wrapS=residentLeatherBumpMap.wrapT=THREE.RepeatWrapping;residentLeatherBumpMap.repeat.set(8,6);
+    renderer.initTexture(residentLeatherBumpMap);
+  }
+  return {feltMap:residentFeltMap,occlusionMap:residentOcclusionMap,shadowMap:residentShadowMap,ringMap:residentRingMap,woodMap:residentWoodMap,woodBumpMap:residentWoodBumpMap,leatherBumpMap:residentLeatherBumpMap};
+}
+
+function roundedRectShape(hx:number,hy:number,r:number):THREE.Shape{
+  const rr=Math.min(r,hx*.48,hy*.48),s=new THREE.Shape();
+  s.moveTo(-hx+rr,-hy);
+  s.lineTo(hx-rr,-hy);s.quadraticCurveTo(hx,-hy,hx,-hy+rr);
+  s.lineTo(hx,hy-rr);s.quadraticCurveTo(hx,hy,hx-rr,hy);
+  s.lineTo(-hx+rr,hy);s.quadraticCurveTo(-hx,hy,-hx,hy-rr);
+  s.lineTo(-hx,-hy+rr);s.quadraticCurveTo(-hx,-hy,-hx+rr,-hy);
+  return s;
+}
+
+function roundedHolePath(hx:number,hy:number,r:number):THREE.Path{
+  const rr=Math.min(r,hx*.48,hy*.48),p=new THREE.Path();
+  p.moveTo(-hx+rr,-hy);
+  p.quadraticCurveTo(-hx,-hy,-hx,-hy+rr);p.lineTo(-hx,hy-rr);p.quadraticCurveTo(-hx,hy,-hx+rr,hy);
+  p.lineTo(hx-rr,hy);p.quadraticCurveTo(hx,hy,hx,hy-rr);
+  p.lineTo(hx,-hy+rr);p.quadraticCurveTo(hx,-hy,hx-rr,-hy);
+  p.lineTo(-hx+rr,-hy);
+  return p;
+}
+
+/** Build a continuous mitered hollow frame with smooth chamfered bevels and rail-aligned wood UVs. */
+function createFrameGeometry(
+  outerHx:number,outerHy:number,outerR:number,
+  innerHx:number,innerHy:number,innerR:number,
+  totalDepth:number,bevelSize:number,bevelThickness:number,bevelSegments=3,curveSegments=10,
+):THREE.BufferGeometry{
+  const depth=Math.max(.01,totalDepth-bevelThickness*2);
+  const shape=roundedRectShape(outerHx-bevelSize,outerHy-bevelSize,Math.max(.02,outerR-bevelSize));
+  shape.holes.push(roundedHolePath(innerHx+bevelSize,innerHy+bevelSize,Math.max(.02,innerR+bevelSize)));
+  const geom=new THREE.ExtrudeGeometry(shape,{depth,bevelEnabled:bevelSize>0&&bevelThickness>0,bevelSize,bevelThickness,bevelSegments,curveSegments});
+  geom.translate(0,0,bevelThickness);
+  geom.computeVertexNormals();
+  const pos=geom.getAttribute('position'),uv=geom.getAttribute('uv');
+  if(pos&&uv){
+    for(let i=0;i<pos.count;i++){
+      const x=pos.getX(i),y=pos.getY(i),z=pos.getZ(i);
+      const horizontalRail=Math.abs(y)/outerHy>=Math.abs(x)/outerHx;
+      const along=horizontalRail?x:y;
+      const across=(horizontalRail?y:x)+z*.6;
+      uv.setXY(i,along*.18,across*.55);
+    }
+    uv.needsUpdate=true;
+  }
+  return geom;
+}
+
+function createCornerClaspGeometry():THREE.BufferGeometry{
+  const shape=new THREE.Shape();
+  shape.moveTo(-.02,.02);shape.lineTo(-.02,-1.06);shape.lineTo(.46,-1.06);
+  shape.lineTo(.46,-.46);shape.lineTo(1.06,-.46);shape.lineTo(1.06,.02);
+  shape.closePath();
+  const geom=new THREE.ExtrudeGeometry(shape,{depth:.10,bevelEnabled:true,bevelSize:.02,bevelThickness:.02,bevelSegments:2});
+  geom.translate(0,0,.02);geom.computeVertexNormals();
+  return geom;
+}
+
+function getSharedTrayGeometries(){
+  if(!residentTrayGeometries){
+    const rivet=new THREE.CylinderGeometry(.048,.055,.036,10);
+    rivet.rotateX(Math.PI/2);
+    residentTrayGeometries={
+      plinth:createFrameGeometry(7.72,5.22,.34,6.96,4.46,.04,.40,.06,.05,2,6),
+      mainFrame:createFrameGeometry(7.64,5.14,.28,7.10,4.60,.06,1.00,.085,.085,3,8),
+      crown:createFrameGeometry(7.50,5.00,.22,7.13,4.63,.06,.14,.032,.032,2,6),
+      trim:createFrameGeometry(7.36,4.86,.16,7.22,4.72,.12,.06,.014,.014,1,6),
+      liner:createFrameGeometry(7.14,4.64,.08,7.01,4.51,.05,.90,.025,.035,2,6),
+      clasp:createCornerClaspGeometry(),
+      rivet,
+    };
+  }
+  return residentTrayGeometries;
 }
 
 export const warmTrayGraphics=()=>{getDiceStage();};
@@ -164,50 +316,92 @@ export function createTrayRenderer(dice:TrayDie[],toss:Toss,theme:DiceTheme,kept
   let tableScene:ReturnType<typeof createDiceTableScene>|undefined;
   const plainTable=createPlainDiceTableSurface(scene,trayScale);
   let tableKey='',sceneRevision=0,preparedSize='',compiledRevision=-1;
-  scene.add(new THREE.HemisphereLight(0xf4ead9,0x172324,.45));
-  const light=new THREE.DirectionalLight(0xfff3dd,1.5);light.position.set(-9,3,6).multiplyScalar(trayScale);light.castShadow=true;light.shadow.mapSize.set(budget.diceShadowSize,budget.diceShadowSize);
+  scene.add(new THREE.HemisphereLight(0xf6eedf,0x243038,.78));
+  const light=new THREE.DirectionalLight(0xfff3dd,1.62);light.position.set(-9,3,6).multiplyScalar(trayScale);light.castShadow=true;light.shadow.mapSize.set(budget.diceShadowSize,budget.diceShadowSize);
   Object.assign(light.shadow.camera,{left:-10*trayScale,right:10*trayScale,top:8*trayScale,bottom:-8*trayScale,near:.1,far:35*trayScale});light.shadow.bias=-.0003;light.shadow.normalBias=.025;scene.add(light);
   const geometry:THREE.BufferGeometry[]=[],materials:THREE.Material[]=[],textures:THREE.Texture[]=[];
   const box=(x:number,y:number,z:number,w:number,h:number,d:number,color:number):THREE.Mesh<THREE.BufferGeometry,THREE.Material>=>{
     const g=new THREE.BoxGeometry(w,h,d),m=new THREE.MeshStandardMaterial({color,roughness:.86,envMapIntensity:.18});
     const mesh=new THREE.Mesh(g,m);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;tray.add(mesh);geometry.push(g);materials.push(m);return mesh;
   };
-  // The plinth and inset floor are separate solids, so the artwork cannot flatten
-  // the silhouette or paint over the visible outside edge of the tray.
-  box(0,0,-.30,15.05,10.05,.44,0x100e13);
+  const {feltMap,occlusionMap,shadowMap,ringMap,woodMap,woodBumpMap,leatherBumpMap}=getSharedTrayMaps(stage.renderer);
+  const trayGeoms=getSharedTrayGeometries();
+  const addFramePiece=(geom:THREE.BufferGeometry,mat:THREE.Material,z:number,castShadow=false)=>{
+    const m=new THREE.Mesh(geom,mat);m.position.z=z;m.castShadow=castShadow;m.receiveShadow=true;tray.add(m);
+    if(!materials.includes(mat))materials.push(mat);return m;
+  };
+  // Stepped dark plinth base anchors the sculpted tray firmly onto the tabletop.
+  addFramePiece(
+    trayGeoms.plinth,
+    new THREE.MeshStandardMaterial({color:0x0f0c12,roughness:.82,metalness:.06,envMapIntensity:.22}),
+    -.34,
+    false,
+  );
   const floor=box(0,0,-.17,14.4,9.4,.3,0x182a27);
   floor.name='tray-bed';
-  const {feltMap,occlusionMap,shadowMap}=getSharedTrayMaps(stage.renderer);
   if(trayArt){trayArt.anisotropy=stage.renderer.capabilities.getMaxAnisotropy();textures.push(trayArt);}
   const feltMaterial=new THREE.MeshStandardMaterial({map:trayArt??feltMap,roughness:.94,metalness:0,bumpMap:feltMap,bumpScale:.012,envMapIntensity:.35});materials.push(feltMaterial);floor.material=feltMaterial;
-  const trim=theme.id.startsWith('dm-')?0x9ba5b1:theme.id==='fighter'?0xa27632:theme.id==='ranger'?0x784825:theme.id==='sorcerer'?0x454956:0x49413a;
-  const rim=theme.id.startsWith('dm-')?0x171b23:theme.id==='fighter'?0x111116:theme.id==='ranger'?0x241207:theme.id==='sorcerer'?0x22080e:0x160904;
-  for(const [x,y,w,h] of [[-7.2,0,.4,9.8],[7.2,0,.4,9.8],[0,-4.7,14.8,.4],[0,4.7,14.8,.4]]){
-    const wall=box(x,y,.55,w,h,1.1,rim);
-    const lining=wall.material as THREE.MeshStandardMaterial;
-    lining.bumpMap=feltMap;lining.bumpScale=.022;lining.roughness=.72;
-    // A lower fillet and a narrower cap expose the vertical lining between them.
-    box(x,y,.09,w>.5?w:w+.10,h>.5?h:h+.10,.16,rim);
-    box(x,y,1.10,w,h,.12,rim);
-    const lip=box(x,y,1.18,w>.5?w:w*.35,h>.5?h:h*.35,.045,trim);
-    const metal=lip.material as THREE.MeshStandardMaterial;metal.metalness=.7;metal.roughness=.5;metal.envMapIntensity=.12;
+  const palette=theme.id.startsWith('dm-')
+    ? {wood:0x232936,crown:0x1b202b,trim:0xa8b5c4,liner:0x181c24}
+    : theme.id==='fighter'
+      ? {wood:0x28211d,crown:0x1b1716,trim:0xc49545,liner:0x1c1714}
+      : theme.id==='ranger'
+        ? {wood:0x4b2b18,crown:0x361e0f,trim:0x8c5a32,liner:0x1d2619}
+        : theme.id==='sorcerer'
+          ? {wood:0x3b131d,crown:0x270b12,trim:0x9aa2b2,liner:0x1e0e14}
+          : {wood:0x4a2c1d,crown:0x331d13,trim:0xb38a4c,liner:0x1c2520};
+  // Sculpted hardwood perimeter frame with smooth chamfered shoulders and mitered wood grain.
+  addFramePiece(
+    trayGeoms.mainFrame,
+    new THREE.MeshStandardMaterial({color:palette.wood,map:woodMap,bumpMap:woodBumpMap,bumpScale:.024,roughness:.52,metalness:.04,envMapIntensity:.52}),
+    .04,
+    true,
+  );
+  // Raised upper rail crown + continuous recessed metallic inlay channel.
+  addFramePiece(
+    trayGeoms.crown,
+    new THREE.MeshStandardMaterial({color:palette.crown,map:woodMap,bumpMap:woodBumpMap,bumpScale:.018,roughness:.44,metalness:.06,envMapIntensity:.56}),
+    .98,
+    false,
+  );
+  const trimMaterial=new THREE.MeshStandardMaterial({color:palette.trim,metalness:.82,roughness:.30,envMapIntensity:.85});
+  addFramePiece(trayGeoms.trim,trimMaterial,1.10,false);
+  // Cushioned inner suede/leather wall lining with padded top lip.
+  addFramePiece(
+    trayGeoms.liner,
+    new THREE.MeshStandardMaterial({color:palette.liner,map:feltMap,bumpMap:leatherBumpMap,bumpScale:.02,roughness:.88,metalness:.02,envMapIntensity:.22}),
+    -.02,
+    true,
+  );
+  // Sculpted beveled corner hardware brackets + domed rivets locking the mitered rails.
+  for(const [cx,cy,rot] of [[-7.58,5.08,0],[7.58,5.08,-Math.PI/2],[7.58,-5.08,Math.PI],[-7.58,-5.08,Math.PI/2]] as const){
+    const corner=new THREE.Group();
+    corner.position.set(cx,cy,1.03);corner.rotation.z=rot;
+    const bracket=new THREE.Mesh(trayGeoms.clasp,trimMaterial);
+    bracket.castShadow=false;bracket.receiveShadow=true;corner.add(bracket);
+    for(const [rx,ry] of [[.22,-.22],[.84,-.22],[.22,-.84]] as const){
+      const rivet=new THREE.Mesh(trayGeoms.rivet,trimMaterial);
+      rivet.castShadow=false;rivet.receiveShadow=true;rivet.position.set(rx,ry,.145);corner.add(rivet);
+    }
+    tray.add(corner);
   }
-  // Soft contact occlusion anchors the recessed bed even under bright tray art.
-  for(const [x,y,w,h,rotation] of [[0,4.49,14,.48,0],[0,-4.49,14,.48,Math.PI],[-6.99,0,9,.48,Math.PI/2],[6.99,0,9,.48,-Math.PI/2]]){
-    const g=new THREE.PlaneGeometry(w,h),m=new THREE.MeshBasicMaterial({map:occlusionMap,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1});
-    const mesh=new THREE.Mesh(g,m);mesh.position.set(x,y,.004);mesh.rotation.z=rotation;tray.add(mesh);geometry.push(g);materials.push(m);
+  // Soft contact occlusion anchors the recessed bed along all 4 padded inner walls.
+  for(const [x,y,w,h,rotation] of [[0,4.48,14.04,.50,0],[0,-4.48,14.04,.50,Math.PI],[-6.98,0,9.04,.50,Math.PI/2],[6.98,0,9.04,.50,-Math.PI/2]]){
+    const g=new THREE.PlaneGeometry(w,h),m=new THREE.MeshBasicMaterial({map:occlusionMap,transparent:true,depthWrite:false,depthTest:true,polygonOffset:true,polygonOffsetFactor:-1});
+    const mesh=new THREE.Mesh(g,m);mesh.position.set(x,y,-.014);mesh.rotation.z=rotation;mesh.renderOrder=0;tray.add(mesh);geometry.push(g);materials.push(m);
   }
-  const shadows=dice.map(()=>{const g=new THREE.PlaneGeometry(2,2),m=new THREE.MeshBasicMaterial({map:shadowMap,transparent:true,depthWrite:false});const mesh=new THREE.Mesh(g,m);scene.add(mesh);geometry.push(g);materials.push(m);return mesh;});
+  const shadows=dice.map(()=>{const g=new THREE.PlaneGeometry(2,2),m=new THREE.MeshBasicMaterial({map:shadowMap,transparent:true,depthWrite:false,depthTest:true,polygonOffset:true,polygonOffsetFactor:-1});const mesh=new THREE.Mesh(g,m);mesh.renderOrder=0;scene.add(mesh);geometry.push(g);materials.push(m);return mesh;});
   const handles=dice.map((d,i)=>{const dieTheme=dieThemes?.[i]??theme;const h=createMaterialDie(d.sides,dieTheme,!!d.crit,!!d.tens,!!d.ones);h.setMossAgate(!!appearance?.mossAgate);h.setEnchantedAmber(!!appearance?.enchantedAmber);h.setMoltenCracks(!!appearance?.molten);h.setInternalLightning(!!appearance?.lightning);h.setInnerGlow(appearance?.dmGlow??0);h.setLiquidInk(!!appearance?.liquidInk);h.setDenseResin(!!appearance?.denseDm);h.setFaceValues(fixedFaces?Array.from({length:d.sides},(_,j)=>d.tens?j*10:d.ones?j:j+1):trayFaceValues(d,toss.topFaces[i]),fixedFaces);h.object.scale.setScalar(toss.radius*diePhysicalScale(d.sides));h.setTrayLighting(true);
     // The standard shadow pass cannot transmit resin or discard this custom
     // inlay shader's empty areas. Keep its soft contact shadow instead of an
     // opaque silhouette cast by every numbered face.
     h.object.traverse(child=>{if(child instanceof THREE.Mesh)child.castShadow=!!child.userData.shatterChunk||!child.userData.dicePowerArt&&!(dieTheme.id.startsWith('dm-')&&!d.crit);});scene.add(h.object);return h;});
-  // Rings identify the result without tinting the player's material or hiding numerals.
+  // Depth-tested rings sit strictly on the tray bed underneath every 3D die (never occluding die faces).
   const rings=dice.map(d=>{
-    const g=new THREE.RingGeometry(toss.radius*diePhysicalScale(d.sides)*1.12,toss.radius*diePhysicalScale(d.sides)*1.23,64);
-    const m=new THREE.MeshBasicMaterial({color:d.set===keptSet?0x39ef87:0xff5365,transparent:true,opacity:.95,depthTest:false,depthWrite:false});
-    const mesh=new THREE.Mesh(g,m);mesh.renderOrder=10;mesh.visible=false;scene.add(mesh);geometry.push(g);materials.push(m);return mesh;
+    const ringSize=toss.radius*diePhysicalScale(d.sides)*3.15;
+    const g=new THREE.PlaneGeometry(ringSize,ringSize);
+    const m=new THREE.MeshBasicMaterial({map:ringMap,color:d.set===keptSet?0x39ef87:0xff5365,transparent:true,opacity:.96,depthTest:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
+    const mesh=new THREE.Mesh(g,m);mesh.renderOrder=1;mesh.visible=false;scene.add(mesh);geometry.push(g);materials.push(m);return mesh;
   });
   const a=new THREE.Quaternion(),b=new THREE.Quaternion(),projectedNumber=new THREE.Vector3();
   const rangerIndices=dice.flatMap((d,i)=>(dieThemes?.[i]??theme).id==='ranger'&&!d.crit?[i]:[]);
@@ -233,12 +427,13 @@ export function createTrayRenderer(dice:TrayDie[],toss:Toss,theme:DiceTheme,kept
   }
   const trails=appearance?.varisTrail?(appearance.woodlandWake?createWoodlandWake(scene,toss.radius,rangerIndices,trayScale):createDiceTrails(scene,toss.radius,rangerIndices,trayScale)):undefined;
   let activeCount=dice.length,liveResults:readonly (number|null)[]|undefined;
+  let customRingColors:readonly (number|null)[]|undefined;
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   const shatterWorld=dice.some((_,i)=>(dieThemes?.[i]??theme).id==='fighter')?createShatterWorld(toss.radius,trayScale):undefined;
   const shatterProxies=shatterWorld?handles.map((h,i)=>{h.setShatterWorld(shatterWorld);return shatterWorld.addDieProxy(dice[i].sides,toss.radius*diePhysicalScale(dice[i].sides));}):[];
   return {
     resetForRoll(next:Toss){
-      toss=next;liveResults=undefined;activeCount=dice.length;keptSet=undefined;
+      toss=next;liveResults=undefined;activeCount=dice.length;keptSet=undefined;customRingColors=undefined;
       handles.forEach(h=>h.resetForRoll());shatterWorld?.reset();trails?.reset();
       rings.forEach(r=>r.visible=false);shadows.forEach(s=>s.visible=false);
     },
@@ -303,6 +498,11 @@ export function createTrayRenderer(dice:TrayDie[],toss:Toss,theme:DiceTheme,kept
       finally {handles.forEach(h=>h.prewarmShatter(false));}
     },
     setKeptSet(set:number|undefined){keptSet=set;rings.forEach((ring,i)=>(ring.material as THREE.MeshBasicMaterial).color.set(dice[i].set===set?0x39ef87:0xff5365));},
+    setDieRings(colors:readonly (number|null)[]|undefined){
+      customRingColors=colors;
+      if(!colors)return;
+      rings.forEach((ring,i)=>{const c=colors[i];if(c!==undefined&&c!==null)(ring.material as THREE.MeshBasicMaterial).color.set(c);});
+    },
     numberPosition(index:number){
       const point=handles[index].resultPosition(projectedNumber);
       point.project(camera);
@@ -327,8 +527,16 @@ export function createTrayRenderer(dice:TrayDie[],toss:Toss,theme:DiceTheme,kept
         h.setReducedMotion(reduced.matches);h.updatePose(camera,now);
         shadows[k].visible=!h.powerState().broken;
         const proxy=shatterProxies[k];if(proxy){proxy.position.set(h.object.position.x,h.object.position.y,h.object.position.z);proxy.quaternion.set(h.object.quaternion.x,h.object.quaternion.y,h.object.quaternion.z,h.object.quaternion.w);proxy.collisionFilterMask=h.powerState().broken?0:12;proxy.aabbNeedsUpdate=true;}
-        const ring=rings[k];ring.visible=keptSet!==undefined&&elapsed>=toss.duration;ring.position.set(h.object.position.x,h.object.position.y,.015);
-        const shadow=shadows[k];shadow.position.set(h.object.position.x,h.object.position.y,.006);
+        const ring=rings[k];
+        if(customRingColors!==undefined){
+          const color=customRingColors[k]??null;
+          ring.visible=color!==null;
+          if(color!==null)(ring.material as THREE.MeshBasicMaterial).color.set(color);
+        }else{
+          ring.visible=keptSet!==undefined&&elapsed>=toss.duration;
+        }
+        ring.position.set(h.object.position.x,h.object.position.y,-.004);
+        const shadow=shadows[k];shadow.position.set(h.object.position.x,h.object.position.y,-.010);
         const dieRadius=toss.radius*diePhysicalScale(dice[k].sides);
         const clearance=Math.max(0,h.object.position.z-dieRadius*.65);
         shadow.scale.setScalar(dieRadius*(1.0+clearance*.18));(shadow.material as THREE.MeshBasicMaterial).opacity=Math.max(.15,.9-clearance*.18);
