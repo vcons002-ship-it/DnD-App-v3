@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createSession, createMap, setActiveMap, createCharacter, createToken,
   setManualDamage, setSheetAbility, getCharacter, listRollLog, setResource,
-  setConcentration, getRollEntry, updateCharacter } from './sessions.js';
+  setConcentration, setCondition, getRollEntry, updateCharacter } from './sessions.js';
 import { resolveAttack, resolveAttackDamage, resolveManeuver } from './combat.js';
 import { getManeuver } from './maneuvers/srd.js';
 import { isOnHitManeuver } from '../../shared/maneuvers.js';
@@ -126,4 +126,45 @@ it('holds maximum unmodified superiority d8s before requesting the save, without
  expect(requests.at(-1)).toEqual([20]);expect(holds).toHaveLength(1);
  expect(getCharacter(f.ch.id)!.resources['Superiority Dice'].used).toBe(1);
  expect(getCharacter(f.target.id)!.curHp).toBeLessThan(200);
+});
+
+it('auto-fails Pushing Attack STR save on a Paralyzed target with clear push reveal and log outcome', async () => {
+  const f = arena(true);
+  updateCharacter(f.ch.id, { weapons: [{ name: 'Sword', kind: 'melee', damage: '1d6', attackBonus: 100 }] });
+  setSheetAbility('pc', f.ch.id, { ...getManeuver('Pushing Attack')!, id: 'push' });
+  setCondition('pc', f.target.id, { id: 'par', label: 'Paralyzed', aura: 'red', isConcentration: false });
+
+  const requests: { sides: number[]; label?: string }[] = [];
+  const live = async (run: () => void) =>
+    runLiveCommand(
+      run,
+      () => {},
+      { label: 'Attack', roller: 'Fighter', className: 'Fighter', waitForPresentation: async () => {} },
+      async (sides, _p, _m, _seed, info) => {
+        requests.push({ sides, label: info?.label });
+        return sides.map((s) => (s === 20 ? 14 : 4));
+      },
+    );
+
+  await live(() => {
+    resolveAttack(f.s.id, 'Fighter', f.a.id, f.b.id, 0);
+  });
+  const pending = listRollLog(f.s.id).find((e) => e.pending)!;
+  await live(() => {
+    expect(resolveManeuver(f.s.id, 'Fighter', pending.id, 'push').ok).toBe(true);
+  });
+
+  // Advantage ([20, 20]) from Paralyzed target, non-crit at 60 ft ([6], [8]), and NO saving-throw d20 rolled.
+  expect(requests.map((r) => r.sides)).toEqual([[20, 20], [6], [8]]);
+  const saveLog = listRollLog(f.s.id).find((e) => e.label === 'STR save')!;
+  expect(saveLog).toBeTruthy();
+  expect(saveLog.detail).toContain('auto-fails (paralyzed)');
+  expect(saveLog.detail).toContain('Push succeeds — move the target up to 15 ft.');
+  expect(saveLog.reveal).toMatchObject({
+    kind: 'check',
+    outcome: 'fail',
+    autoFailReason: 'paralyzed',
+    effectOutcome: 'Push succeeds - move the target up to 15 ft.',
+    presentedLive: false,
+  });
 });

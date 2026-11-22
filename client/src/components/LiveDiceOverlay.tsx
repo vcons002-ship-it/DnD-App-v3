@@ -20,6 +20,7 @@ import {ThreeDie,DiceThemeContext} from './ThreeDie';
 import {useDiceRendering,reportDiceGraphicsFailure} from '../lib/useDiceRendering';
 import {useLegacyMode} from '../lib/useEnvironmentQuality';
 import {diceTableBackgroundSync,drawPrewarmedDiceBoard} from '../lib/diceBoardAssets';
+import {computeDiceResultsLayout} from '../lib/diceResultsLayout';
 
 /** Render authoritative poses with a short interpolation buffer. No local physics,
  * face reassignment, trajectory retry, or client-generated result. */
@@ -81,16 +82,12 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
   }));
   observer.observe(node);return()=>observer.disconnect();
  },[]);
- const resultCount=Math.max(1,frame.sides.length);
- const denseResults=resultCount>20;
  const hasDieBadges=!!frame.dieLabels?.some(Boolean)||!!frame.dieRoles?.some(r=>rolePillRoles.has(r))||hasSavageResolution;
- const resultColumns=Math.min(resultCount,Math.max(1,Math.floor(resultSpace.width/(frame.saveDice?118:hasDieBadges?112:denseResults?44:58))));
- const resultRows=Math.ceil(resultCount/resultColumns);
- const resultsHeight=Math.min(Math.max(hasDieBadges?94:80,resultRows*(hasDieBadges?86:72)),Math.max(64,resultSpace.height*.42));
- const resultCellHeight=(resultsHeight-8-(resultRows-1)*4)/resultRows;
- const resultLayout={'--dice-result-columns':resultColumns,'--dice-result-rows':resultRows,
-  '--dice-results-height':`${resultsHeight}px`,'--dice-result-number-size':`${Math.max(10,Math.min(30,resultCellHeight-(denseResults?16:32)))}px`,
-  '--dice-result-label-size':`${Math.max(7,Math.min(12,resultCellHeight*.18))}px`} as CSSProperties;
+ const resultsLayout=computeDiceResultsLayout({width:resultSpace.width,height:resultSpace.height,count:frame.sides.length,hasDieBadges,hasSaveDice:!!frame.saveDice});
+ const resultLayout={'--dice-result-columns':resultsLayout.columns,'--dice-result-rows':resultsLayout.rows,
+  '--dice-results-height':`${resultsLayout.resultsHeight}px`,'--dice-result-col-max':`${resultsLayout.colMaxWidth}px`,
+  '--dice-result-number-size':`${resultsLayout.numberSize}px`,'--dice-result-label-size':`${resultsLayout.labelSize}px`,
+  '--dice-result-badge-size':`${resultsLayout.badgeSize}px`} as CSSProperties;
  const outgoing=useRef<HTMLCanvasElement>(null),previousId=useRef(frame.id),previousTheme=useRef(diceThemeForRoll(frame.className,frame.dmDice,frame.affinity,frame.diceTheme).id),handoffDuration=useRef(180),swappingTray=useRef(false);
  const dmPan=useRef(0);
  useLayoutEffect(()=>{
@@ -439,7 +436,7 @@ export function LiveDiceOverlay({frame,result,onSkip,impactReady=false,compact=f
   <div className="roll-reveal-who">{frame.saveDice&&!frame.saveDice[0]?.rollKind?'Triggered by ':''}{frame.attacker??resultHeader?.attacker??frame.roller}{target&&<span className="rr-arrow"> &rarr; {target}</span>}{!!frame.advantageReasons?.length&&<span className={`rr-adv-reason is-${frame.advantageState??frame.mode??'straight'}`}> &middot; {(frame.advantageState??frame.mode)==='adv'?'Advantage':(frame.advantageState??frame.mode)==='dis'?'Disadvantage':'Straight (adv + dis)'}: {frame.advantageReasons.join(', ')}</span>}</div>
   {naturalTwenty&&!compact&&!hiddenReview&&<NaturalTwentyCelebration key={frame.id}/>}
   {naturalCritical&&!compact&&!hiddenReview&&<div className="roll-reveal-outcome tray-natural-critical" role="status" aria-label="Roll result">CRITICAL HIT!</div>}
-  <div ref={root} className="physics-dice-tray" style={resultLayout} data-renderer={twoDimensional?'2d':'3d'} data-dense-results={denseResults||undefined} data-status={frame.done?'settled':'rolling'} data-theme={theme.id} data-entry-side={own?'bottom':'top'} data-mode={frame.mode} data-material={twoDimensional?'canvas2d':failed?'unavailable':!prepared?'loading':theme.id==='sorcerer'?'volumetric-glass':theme.id==='fighter'?'obsidian-gold':theme.id==='ranger'?'forest-resin':theme.id.startsWith('dm-')?'purple-resin':theme.id} role="group" aria-label="Live dice tray">
+  <div ref={root} className="physics-dice-tray" style={resultLayout} data-renderer={twoDimensional?'2d':'3d'} data-compact-results={resultsLayout.compact||undefined} data-dense-results={resultsLayout.dense||undefined} data-status={frame.done?'settled':'rolling'} data-theme={theme.id} data-entry-side={own?'bottom':'top'} data-mode={frame.mode} data-material={twoDimensional?'canvas2d':failed?'unavailable':!prepared?'loading':theme.id==='sorcerer'?'volumetric-glass':theme.id==='fighter'?'obsidian-gold':theme.id==='ranger'?'forest-resin':theme.id.startsWith('dm-')?'purple-resin':theme.id} role="group" aria-label="Live dice tray">
    <div className="dice-tray-viewport"><div className="dice-tray-stage" data-surface={prewarmedWoodBg?'plain-wood':undefined} style={prewarmedWoodBg?{backgroundImage:`url("${prewarmedWoodBg}")`}:undefined}>
    {twoDimensional&&<div className="dice-2d-animation" data-testid="dice-2d-animation">{frame.sides.slice(0,24).map((sides,i)=>{const badge=dieBoxBadge(i);const dispVal=frame.values[i]===null?1:frame.percentile[i]==='tens'?(frame.values[i]!-1)*10:frame.percentile[i]==='ones'?frame.values[i]!-1:(frame.dieAdjustedValues?.[i]??frame.values[i]!);const dieEl=<DiceThemeContext.Provider key={hasDieBadges?undefined:`${frame.id}:${i}`} value={dieThemes?.[i]??theme}><ThreeDie big={frame.sides.length<=2} sides={sides} value={dispVal} percentilePart={frame.percentile[i]??undefined} rolling={frame.values[i]===null&&!pendingStart} crit={frame.critical[i]}/></DiceThemeContext.Provider>;return hasDieBadges?<div key={`${frame.id}:${i}`} className="dice-2d-slot" data-result={dieBoxResult(i)} data-role={frame.dieRoles?.[i]}>{dieEl}{badge&&<small className="tray-die-badge" data-badge-tone={badge.tone}>{badge.text}</small>}</div>:dieEl;})}{frame.sides.length>24&&<span>+{frame.sides.length-24} dice shown in the results</span>}</div>}
    <canvas className="dice-tray-canvas" ref={canvas} aria-label={result?'Settled dice':'Server dice rolling live'}/>

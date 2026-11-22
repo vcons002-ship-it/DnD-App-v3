@@ -233,22 +233,23 @@
 
 /* One fixed roll window. Pool size and result content never alter its bounds. */
 [data-dice-presentation]:not(.is-impact)>.roll-reveal{
- box-sizing:border-box;width:min(960px,calc(100vw - 16px));
- height:min(1040px,calc(100dvh - 24px));max-height:none;
- display:grid;grid-template-rows:74px 28px minmax(0,1fr) 80px 30px;
- gap:6px;align-items:stretch;overflow:hidden;transform:none;transition:none;
+ box-sizing:border-box;
+ width:min(1160px,calc(100vw - 16px),max(760px,calc((100dvh - 224px)*1.49 + 32px)));
+ height:min(1040px,calc(100dvh - 14px));max-height:none;padding:8px 12px;
+ display:grid;grid-template-rows:36px 18px minmax(0,1fr) 64px 22px;
+ gap:3px;align-items:stretch;overflow:hidden;transform:none;transition:none;
 }
 [data-dice-presentation]:not(.is-impact) .roll-reveal-title,
 [data-dice-presentation]:not(.is-impact) .roll-reveal-who{margin:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 [data-dice-presentation]:not(.is-impact) .roll-reveal-title{
- font-size:clamp(22px,3vw,32px);font-weight:800;line-height:1.15;color:#ffe9b5;
+ font-size:clamp(18px,2.1vw,25px);font-weight:800;line-height:1.15;color:#ffe9b5;
  text-shadow:0 2px 3px #000,0 0 14px #ba884433;letter-spacing:.015em;
- white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
  align-self:center;
 }
-[data-dice-presentation]:not(.is-impact) .roll-reveal-who{font-size:16px;color:#ece2d0;}
+[data-dice-presentation]:not(.is-impact) .roll-reveal-who{font-size:13px;line-height:1.25;color:#ece2d0;align-self:center;}
 [data-dice-presentation]:not(.is-impact) .physics-dice-tray{
- min-height:0;height:100%;align-self:stretch;margin:0;display:grid;grid-template-rows:minmax(0,1fr) var(--dice-results-height,96px);gap:6px;
+ min-height:0;height:100%;align-self:stretch;margin:0;display:grid;grid-template-rows:minmax(0,1fr) var(--dice-results-height,68px);gap:4px;
 }
 /* Canvas-heavy roll windows use viewport sizing, independently of HUD zoom. */
 .player-fantasy [data-dice-presentation]:not(.is-impact)>.roll-reveal{zoom:1;}
@@ -257,28 +258,27 @@
 .dice-tray-stage .dice-tray-canvas{background:transparent;}
 [data-dice-presentation]:not(.is-impact) .dice-tray-results{align-content:start;overflow:auto;min-height:0;padding:6px 0;margin:0;}
 .tray-result-panel{min-height:0;overflow:auto;}
-[data-dice-presentation]:not(.is-impact) .live-dice-footer{margin:0;align-self:center;}
+[data-dice-presentation]:not(.is-impact) .live-dice-footer{margin:0;align-self:center;font-size:12px;}
+[data-dice-presentation]:not(.is-impact) .live-dice-footer button{font-size:11.5px;padding:2px 9px;line-height:1.2;}
 @media(max-height:800px){
- [data-dice-presentation]:not(.is-impact)>.roll-reveal{grid-template-rows:56px 24px minmax(0,1fr) 84px 26px;}
- [data-dice-presentation]:not(.is-impact) .roll-reveal-title{font-size:24px;}
- [data-dice-presentation]:not(.is-impact) .physics-dice-tray{grid-template-rows:minmax(0,1fr) var(--dice-results-height,96px);}
+ [data-dice-presentation]:not(.is-impact)>.roll-reveal{grid-template-rows:32px 17px minmax(0,1fr) 60px 22px;}
+ [data-dice-presentation]:not(.is-impact) .roll-reveal-title{font-size:21px;}
+ [data-dice-presentation]:not(.is-impact) .physics-dice-tray{grid-template-rows:minmax(0,1fr) var(--dice-results-height,64px);}
 }
 @media(max-height:650px){
- [data-dice-presentation]:not(.is-impact)>.roll-reveal{grid-template-rows:52px 22px minmax(0,1fr) 72px 26px;padding:10px;gap:3px;}
- [data-dice-presentation]:not(.is-impact) .roll-reveal-title{font-size:22px;}
- [data-dice-presentation]:not(.is-impact) .physics-dice-tray{grid-template-rows:minmax(0,1fr) var(--dice-results-height,96px);}
+ [data-dice-presentation]:not(.is-impact)>.roll-reveal{grid-template-rows:28px 16px minmax(0,1fr) 54px 20px;padding:6px 10px;gap:2px;}
+ [data-dice-presentation]:not(.is-impact) .roll-reveal-title{font-size:19px;}
+ [data-dice-presentation]:not(.is-impact) .physics-dice-tray{grid-template-rows:minmax(0,1fr) var(--dice-results-height,60px);}
 }
 
 /* Every landing box stays visible. Large pools gain rows inside the same fixed
-   window, with smaller cells rather than an off-screen scrolling strip. */
+   strip, shrinking cell typography instead of shrinking the 3D dice tray. */
 [data-dice-presentation]:not(.is-impact) .dice-tray-results{
- display:grid;grid-template-columns:repeat(var(--dice-result-columns,1),minmax(0,72px));
+ display:grid;grid-template-columns:repeat(var(--dice-result-columns,1),minmax(0,var(--dice-result-col-max,60px)));
  grid-template-rows:repeat(var(--dice-result-rows,1),minmax(0,1fr));
- justify-content:center;align-content:stretch;gap:4px;overflow:visible;padding:4px 0;
+ justify-content:center;align-content:stretch;gap:3px 4px;overflow:hidden;padding:2px 0;
 }
 .physics-dice-tray .tray-die-result{box-sizing:border-box;position:relative;flex:0 0 auto;max-width:160px;padding:4px 8px;}
-[data-dice-presentation]:not(.is-impact) .dice-tray-results:has(.tray-save-verdict){grid-template-columns:repeat(var(--dice-result-columns,1),minmax(0,118px));}
-[data-dice-presentation]:not(.is-impact) .dice-tray-results:has(.tray-die-badge){grid-template-columns:repeat(var(--dice-result-columns,1),minmax(0,112px));}
 .tray-die-result[data-result="kept"]{border-color:#39ef87;background:#112e20;box-shadow:0 0 8px #39ef8744;}
 .tray-die-result[data-result="discarded"]{border-color:#ff5365;background:#2f161b;opacity:.68;}
 .tray-die-result[data-result="discarded"] strong{color:#ffaeb7;text-decoration:line-through 2px #ff5365;}
@@ -294,7 +294,7 @@
 .tray-die-result[data-role="rider"] strong{color:#ffd8c2;}
 .tray-die-floor-raw{font-size:.58em;opacity:.65;text-decoration:line-through;vertical-align:baseline;margin-right:1px;}
 .tray-die-floor-arrow{font-size:.6em;color:#38e2d8;margin:0 2px;}
-.tray-die-badge{display:block;margin:1px auto 0;padding:1px 5px;border-radius:4px;font:700 10px/1.25 system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.tray-die-badge{display:block;margin:1px auto 0;padding:0 4px;border-radius:4px;font:700 var(--dice-result-badge-size,9px)/1.12 system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
 .tray-die-badge[data-badge-tone="kept"]{color:#9cffc2;background:#174a2f;}
 .tray-die-badge[data-badge-tone="discarded"]{color:#ffb5be;background:#4d1e25;}
 .tray-die-badge[data-badge-tone="savage-crit"]{color:#ffd89e;background:#59260a;border:1px solid #ff9e2c88;}
@@ -312,12 +312,23 @@
 .dice-2d-slot[data-role="lucky-reroll"]{border-color:#5cf29c;background:#0c2818aa;box-shadow:0 0 10px #5cf29c44;}
 .dice-2d-slot[data-role="rider"]{border-color:#ff7d45;background:#2a130baa;box-shadow:0 0 10px #ff7d4544;}
 [data-dice-presentation]:not(.is-impact) .dice-tray-results .tray-die-result{
- min-width:0;width:100%;margin:0;padding:2px 3px;font-size:var(--dice-result-label-size,12px);text-align:center;overflow:hidden;
+ display:flex;flex-direction:column;align-items:center;justify-content:center;
+ min-width:0;width:100%;height:100%;margin:0;padding:2px 3px;border-radius:7px;line-height:1.1;
+ font-size:var(--dice-result-label-size,11px);text-align:center;overflow:hidden;
 }
 [data-dice-presentation]:not(.is-impact) .dice-tray-results .tray-die-result strong{
- font-size:var(--dice-result-number-size,30px);line-height:1.05;margin:1px 0;
+ font-size:var(--dice-result-number-size,22px);line-height:1.02;margin:1px 0;min-width:0;
 }
-[data-dense-results=true] .tray-max-label{display:none;}
+[data-dice-presentation]:not(.is-impact) .tray-max-label{font-size:8px;line-height:1.05;min-height:0;}
+[data-compact-results="true"] .tray-max-label{display:none;}
+[data-compact-results="true"] .dice-tray-results .tray-die-result{padding:1px 3px;border-radius:6px;}
+[data-compact-results="true"] .dice-tray-results .tray-die-result strong{min-width:0;margin:0;}
+[data-compact-results="true"] .tray-die-badge{padding:0 3px;font-size:var(--dice-result-badge-size,9px);line-height:1.1;}
+[data-compact-results="true"] .tray-die-result .tray-save-name{font-size:9px;line-height:11px;}
+[data-compact-results="true"] .tray-save-verdict{font-size:10px;line-height:12px;}
+[data-dense-results="true"] .tray-max-label,[data-dense-results="true"] .tray-die-badge{display:none;}
+[data-dense-results="true"] .dice-tray-results .tray-die-result{padding:1px 2px;border-radius:4px;}
+[data-dense-results="true"] .dice-tray-results .tray-die-result strong{line-height:1;}
 .tray-reroll-count{position:absolute;right:2px;top:0;font:9px/12px system-ui;color:#ffe0ac;background:#171c20;}
 .tray-die-result .tray-save-name{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:15px;margin:0;}
 .tray-save-verdict{display:block;white-space:nowrap;font:800 12px/17px system-ui;}
@@ -329,23 +340,25 @@
 .tray-save-details .tray-save-outcome{margin:0;gap:1px;align-items:stretch;text-align:center;white-space:normal;}
 .tray-save-summary{display:flex;align-items:center;justify-content:center;gap:6px;}
 .tray-save-summary .tray-save-name{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
-.tray-save-summary b{flex:0 0 auto;font-size:12px;padding:2px 5px;}
-.tray-save-details small{font-size:11px;line-height:13px;}
+.tray-save-summary b{flex:0 0 auto;font-size:11px;padding:1px 5px;}
+.tray-save-details small{font-size:10.5px;line-height:12px;}
 .tray-save-details .tray-save-outcome>small:last-child{white-space:nowrap;}
 .tray-save-details em{padding:0 4px;}
-.tray-save-details .tray-save-equation{font-size:15px;line-height:17px;min-height:0;}
+.tray-save-details .tray-save-equation{font-size:13.5px;line-height:15px;min-height:0;}
 /* Horizontal equations retain their total at the right edge, including phones
    and unusually long modifier lists. No vertical scrolling hides a result. */
 .tray-result-panel{overflow:visible;min-width:0;}
 .tray-result-panel .rr-equation,
 .roll-reveal:has(.physics-dice-tray) .tray-result-panel .rr-buildup.rr-equation{
  box-sizing:border-box;flex-wrap:nowrap;justify-content:safe center;gap:7px;
- padding:4px 0;margin:0;overflow-x:auto;overflow-y:hidden;height:100%;
+ padding:2px 0;margin:0;overflow-x:auto;overflow-y:hidden;height:100%;
 }
 .tray-result-panel .rr-equation>*{flex:0 0 auto;}
-.tray-result-panel .rr-equation small{font-size:12px;line-height:14px;max-width:145px;}
-.tray-result-panel .rr-equation .rr-adjustment{padding:4px 8px;max-width:160px;gap:2px;}
-.tray-result-panel .rr-equation .rr-equation-total{position:sticky;right:0;z-index:1;background:#13191ff5;padding:2px 10px;gap:2px;}
+.tray-result-panel .rr-equation strong{font-size:23px;}
+.tray-result-panel .rr-equation small{font-size:11.5px;line-height:13px;max-width:145px;}
+.tray-result-panel .rr-equation .rr-adjustment{padding:3px 8px;max-width:160px;gap:1px;}
+.tray-result-panel .rr-equation .rr-equation-total{position:sticky;right:0;z-index:1;background:#13191ff5;padding:1px 10px;gap:1px;}
+.tray-result-panel .rr-equation .rr-equation-total strong{font-size:34px;}
 .tray-result-panel .roll-reveal-tohit,.tray-result-panel .roll-reveal-damage{height:100%;min-width:0;}
 .tray-result-panel .tray-roll-result,.tray-result-panel .tray-roll-result>div{height:100%;min-width:0;}
 /* Secondary outcome messages belong over the tray, never below the equation. */
@@ -356,17 +369,17 @@
  text-align:center;color:#fff0be;text-shadow:0 2px 4px #000,0 0 6px #000;
 }
 .roll-reveal:has(.physics-dice-tray) .tray-result-panel .rr-comparison-title{top:34%;}
-.tray-result-panel .tray-trigger-result{position:absolute;left:12px;right:12px;top:57%;z-index:7;background:#101721d9;border-radius:8px;}
+.tray-result-panel .tray-trigger-result{position:absolute;left:12px;right:12px;top:63%;z-index:7;background:#101721d9;border-radius:8px;}
 @media(max-height:650px){
- .tray-result-panel .rr-equation strong{font-size:24px;}
+ .tray-result-panel .rr-equation strong{font-size:20px;}
  .tray-result-panel .rr-equation small{font-size:11px;line-height:12px;}
  .tray-result-panel .rr-equation .rr-adjustment{padding:3px 6px;}
- .tray-result-panel .rr-equation .rr-equation-total strong{font-size:34px;}
+ .tray-result-panel .rr-equation .rr-equation-total strong{font-size:28px;}
 }
 
 /* Private rolls keep the exact same window/canvas bounds through start, roll,
    review, manual edit and reroll. Controls occupy the reserved result region. */
-[data-dice-presentation][data-private-roll=true]:not(.is-impact)>.roll-reveal{grid-template-rows:64px 26px minmax(0,1fr) 180px 24px}
+[data-dice-presentation][data-private-roll=true]:not(.is-impact)>.roll-reveal{width:min(960px,calc(100vw - 16px));grid-template-rows:42px 20px minmax(0,1fr) 180px 22px}
 [data-private-roll=true] .tray-result-panel{overflow:hidden;position:relative}
 /* Manual entry may extend above the reserved footer without hiding its fields. */
 [data-private-roll=true] .tray-result-panel:has(.hidden-roll-entry){overflow:visible}
@@ -400,14 +413,14 @@
  .live-dice-footer button {min-height:28px;min-width:56px;}
 }
 
-.tray-reroll-prompt{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px 14px;height:100%;padding:6px 14px;box-sizing:border-box;border:1px solid #f5b95188;border-radius:10px;background:linear-gradient(180deg,#23170aee,#151118f2);box-shadow:0 4px 18px #000a,0 0 18px #f5b95124;color:#ffe6ba;}
+.tray-reroll-prompt{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px 12px;height:100%;padding:4px 12px;box-sizing:border-box;border:1px solid #f5b95188;border-radius:10px;background:linear-gradient(180deg,#23170aee,#151118f2);box-shadow:0 4px 18px #000a,0 0 18px #f5b95124;color:#ffe6ba;}
 .tray-reroll-prompt.is-waiting{border-color:#bca16a44;background:#151218d9;box-shadow:none;opacity:.82;}
 .tray-reroll-info{display:flex;flex-direction:column;gap:2px;min-width:0;text-align:left;}
-.tray-reroll-info strong{color:#ffd273;font:800 13px/1.2 system-ui;letter-spacing:.02em;text-transform:uppercase;}
-.tray-reroll-info span{color:#efe3cf;font:500 13px/1.25 system-ui;}
+.tray-reroll-info strong{color:#ffd273;font:800 12px/1.2 system-ui;letter-spacing:.02em;text-transform:uppercase;}
+.tray-reroll-info span{color:#efe3cf;font:500 12.5px/1.25 system-ui;}
 .tray-reroll-info span b{color:#fff3d1;font-weight:800;}
 .tray-reroll-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;}
-.tray-reroll-btn{border-radius:7px;padding:7px 14px;font:700 13px/1.2 system-ui;cursor:pointer;transition:transform 90ms ease,filter 120ms ease,opacity 120ms ease;}
+.tray-reroll-btn{border-radius:7px;padding:5px 12px;font:700 12.5px/1.2 system-ui;cursor:pointer;transition:transform 90ms ease,filter 120ms ease,opacity 120ms ease;}
 .tray-reroll-btn:disabled{opacity:.55;cursor:default;}
 .tray-reroll-btn.is-reroll{border:1px solid #ffcf70;background:linear-gradient(180deg,#e08b1b,#b45b0b);color:#fff8e8;box-shadow:0 2px 10px #e08b1b55;}
 .tray-reroll-btn.is-reroll:not(:disabled):hover{filter:brightness(1.1);transform:translateY(-1px);}

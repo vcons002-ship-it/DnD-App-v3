@@ -20,6 +20,7 @@ const trayTextures=new Map<string,Promise<THREE.Texture>>();
 let residentFeltMap:THREE.CanvasTexture|undefined;
 let residentOcclusionMap:THREE.CanvasTexture|undefined;
 let residentShadowMap:THREE.CanvasTexture|undefined;
+let residentTableShadowMap:THREE.CanvasTexture|undefined;
 let residentRingMap:THREE.CanvasTexture|undefined;
 let residentWoodMap:THREE.CanvasTexture|undefined;
 let residentWoodBumpMap:THREE.CanvasTexture|undefined;
@@ -27,10 +28,12 @@ let residentLeatherBumpMap:THREE.CanvasTexture|undefined;
 let residentTrayGeometries:{
   plinth:THREE.BufferGeometry;
   mainFrame:THREE.BufferGeometry;
+  innerBevel:THREE.BufferGeometry;
   crown:THREE.BufferGeometry;
   trim:THREE.BufferGeometry;
   liner:THREE.BufferGeometry;
   clasp:THREE.BufferGeometry;
+  claspWall:THREE.BufferGeometry;
   rivet:THREE.BufferGeometry;
 }|undefined;
 
@@ -51,7 +54,7 @@ function getSharedTrayMaps(renderer:THREE.WebGLRenderer){
     const occlusionCanvas=document.createElement('canvas');occlusionCanvas.width=occlusionCanvas.height=128;
     const oc=occlusionCanvas.getContext('2d')!;
     const edgeShade=oc.createLinearGradient(0,0,0,128);
-    edgeShade.addColorStop(0,'#000c');edgeShade.addColorStop(.3,'#0005');edgeShade.addColorStop(1,'#0000');
+    edgeShade.addColorStop(0,'#000000d8');edgeShade.addColorStop(.28,'#00000066');edgeShade.addColorStop(.62,'#00000018');edgeShade.addColorStop(1,'#00000000');
     oc.fillStyle=edgeShade;oc.fillRect(0,0,128,128);
     residentOcclusionMap=new THREE.CanvasTexture(occlusionCanvas);
     renderer.initTexture(residentOcclusionMap);
@@ -62,6 +65,20 @@ function getSharedTrayMaps(renderer:THREE.WebGLRenderer){
     gradient.addColorStop(0,'#000b');gradient.addColorStop(1,'#0000');c.fillStyle=gradient;c.fillRect(0,0,64,64);
     residentShadowMap=new THREE.CanvasTexture(canvas);
     renderer.initTexture(residentShadowMap);
+  }
+  if(!residentTableShadowMap){
+    const tc=document.createElement('canvas');tc.width=256;tc.height=192;
+    const ctx2d=tc.getContext('2d')!;
+    ctx2d.clearRect(0,0,256,192);
+    ctx2d.save();
+    ctx2d.filter='blur(18px)';
+    ctx2d.fillStyle='rgba(0,0,0,0.68)';
+    ctx2d.beginPath();
+    ctx2d.roundRect(28,24,200,144,18);
+    ctx2d.fill();
+    ctx2d.restore();
+    residentTableShadowMap=new THREE.CanvasTexture(tc);
+    renderer.initTexture(residentTableShadowMap);
   }
   if(!residentRingMap){
     const size=128,cCanvas=document.createElement('canvas');cCanvas.width=cCanvas.height=size;
@@ -125,7 +142,7 @@ function getSharedTrayMaps(renderer:THREE.WebGLRenderer){
     residentLeatherBumpMap.wrapS=residentLeatherBumpMap.wrapT=THREE.RepeatWrapping;residentLeatherBumpMap.repeat.set(8,6);
     renderer.initTexture(residentLeatherBumpMap);
   }
-  return {feltMap:residentFeltMap,occlusionMap:residentOcclusionMap,shadowMap:residentShadowMap,ringMap:residentRingMap,woodMap:residentWoodMap,woodBumpMap:residentWoodBumpMap,leatherBumpMap:residentLeatherBumpMap};
+  return {feltMap:residentFeltMap,occlusionMap:residentOcclusionMap,shadowMap:residentShadowMap,tableShadowMap:residentTableShadowMap,ringMap:residentRingMap,woodMap:residentWoodMap,woodBumpMap:residentWoodBumpMap,leatherBumpMap:residentLeatherBumpMap};
 }
 
 function roundedRectShape(hx:number,hy:number,r:number):THREE.Shape{
@@ -176,25 +193,44 @@ function createFrameGeometry(
 
 function createCornerClaspGeometry():THREE.BufferGeometry{
   const shape=new THREE.Shape();
-  shape.moveTo(-.02,.02);shape.lineTo(-.02,-1.06);shape.lineTo(.46,-1.06);
-  shape.lineTo(.46,-.46);shape.lineTo(1.06,-.46);shape.lineTo(1.06,.02);
+  shape.moveTo(-.08,.08);shape.lineTo(-.08,-.98);shape.lineTo(.34,-.98);
+  shape.lineTo(.34,-.34);shape.lineTo(.98,-.34);shape.lineTo(.98,.08);
   shape.closePath();
-  const geom=new THREE.ExtrudeGeometry(shape,{depth:.10,bevelEnabled:true,bevelSize:.02,bevelThickness:.02,bevelSegments:2});
+  const geom=new THREE.ExtrudeGeometry(shape,{depth:.11,bevelEnabled:true,bevelSize:.024,bevelThickness:.024,bevelSegments:2});
   geom.translate(0,0,.02);geom.computeVertexNormals();
+  return geom;
+}
+
+function createCornerClaspWallGeometry():THREE.BufferGeometry{
+  // Vertical wrap-around corner hardware hugging the outer hardwood wall down into the plinth.
+  const shape=new THREE.Shape();
+  shape.moveTo(-.14,-.94);
+  shape.lineTo(-.14,-.18);
+  shape.quadraticCurveTo(-.14,.14,.18,.14);
+  shape.lineTo(.94,.14);
+  shape.lineTo(.94,.20);
+  shape.lineTo(.18,.20);
+  shape.quadraticCurveTo(-.20,.20,-.20,-.18);
+  shape.lineTo(-.20,-.94);
+  shape.closePath();
+  const geom=new THREE.ExtrudeGeometry(shape,{depth:1.58,bevelEnabled:true,bevelSize:.012,bevelThickness:.014,bevelSegments:2,curveSegments:8});
+  geom.computeVertexNormals();
   return geom;
 }
 
 function getSharedTrayGeometries(){
   if(!residentTrayGeometries){
-    const rivet=new THREE.CylinderGeometry(.048,.055,.036,10);
+    const rivet=new THREE.CylinderGeometry(.044,.052,.038,10);
     rivet.rotateX(Math.PI/2);
     residentTrayGeometries={
-      plinth:createFrameGeometry(7.72,5.22,.34,6.96,4.46,.04,.40,.06,.05,2,6),
-      mainFrame:createFrameGeometry(7.64,5.14,.28,7.10,4.60,.06,1.00,.085,.085,3,8),
-      crown:createFrameGeometry(7.50,5.00,.22,7.13,4.63,.06,.14,.032,.032,2,6),
-      trim:createFrameGeometry(7.36,4.86,.16,7.22,4.72,.12,.06,.014,.014,1,6),
-      liner:createFrameGeometry(7.14,4.64,.08,7.01,4.51,.05,.90,.025,.035,2,6),
+      plinth:createFrameGeometry(7.98,5.48,.40,7.00,4.50,.04,.72,.09,.07,2,8),
+      mainFrame:createFrameGeometry(7.82,5.32,.32,7.12,4.62,.06,1.62,.11,.12,4,10),
+      innerBevel:createFrameGeometry(7.34,4.84,.14,7.07,4.57,.06,.42,.07,.07,3,8),
+      crown:createFrameGeometry(7.66,5.16,.26,7.22,4.72,.10,.22,.055,.055,3,8),
+      trim:createFrameGeometry(7.47,4.97,.20,7.39,4.89,.17,.06,.012,.012,1,8),
+      liner:createFrameGeometry(7.15,4.65,.08,7.00,4.50,.05,1.24,.03,.04,2,8),
       clasp:createCornerClaspGeometry(),
+      claspWall:createCornerClaspWallGeometry(),
       rivet,
     };
   }
@@ -248,7 +284,7 @@ export function preloadDiceGraphics(theme: DiceTheme, canStart: () => boolean,co
     if (!canStart()) return;
     await preloadDiceTableTexture();
     if (!canStart()) return;
-    const warmWidth=typeof window!=='undefined'?Math.max(320,Math.min(760,(window.innerWidth||800)-28)):600;
+    const warmWidth=typeof window!=='undefined'?Math.max(320,Math.min(960,(window.innerWidth||800)-28)):720;
     const warmHeight=warmWidth*10.2/15.2;
     const warmDpr=typeof window!=='undefined'?Math.min(2,window.devicePixelRatio||1):1;
     if(!warmedDice.has(theme.id)){
@@ -266,7 +302,7 @@ export function preloadDiceGraphics(theme: DiceTheme, canStart: () => boolean,co
         await renderer.prepare(warmWidth, warmHeight, warmDpr, canStart);
         if(canStart()&&!getPrewarmedBoardCanvas(theme.id)){
           const snap=document.createElement('canvas');
-          const snapW=760,snapH=Math.round(760*10.2/15.2);
+          const snapW=960,snapH=Math.round(960*10.2/15.2);
           snap.width=snapW;snap.height=snapH;
           const snapCtx=snap.getContext('2d');
           if(snapCtx){
@@ -310,31 +346,43 @@ export function createTrayRenderer(dice:TrayDie[],toss:Toss,theme:DiceTheme,kept
   const stage=getDiceStage(),scene=new THREE.Scene();scene.environment=stage.scene.environment;
   const trayScale=toss.trayScale??1;
   const tray=new THREE.Group();tray.scale.set(trayScale,trayScale,1);scene.add(tray);
-  // Frame every physical pool at the same apparent tray size. Larger pools
-  // retain their established dice-to-tray ratio and therefore look smaller.
-  const camera=new THREE.PerspectiveCamera(25,15.2/10.2,.1,60*trayScale);camera.position.set(0,-8,25).multiplyScalar(trayScale);camera.lookAt(0,0,.25*trayScale);camera.updateMatrixWorld();
+  // Lower tabletop camera perspective clearly reveals recessed inner leather walls,
+  // chamfered hardwood bevels, and outer plinth depth without edge clipping.
+  const camera=new THREE.PerspectiveCamera(31,15.2/10.2,.1,75*trayScale);camera.position.set(0,-11.6,20.8).multiplyScalar(trayScale);camera.lookAt(0,-.15*trayScale,.35*trayScale);camera.updateMatrixWorld();
   let tableScene:ReturnType<typeof createDiceTableScene>|undefined;
   const plainTable=createPlainDiceTableSurface(scene,trayScale);
   let tableKey='',sceneRevision=0,preparedSize='',compiledRevision=-1;
-  scene.add(new THREE.HemisphereLight(0xf6eedf,0x243038,.78));
-  const light=new THREE.DirectionalLight(0xfff3dd,1.62);light.position.set(-9,3,6).multiplyScalar(trayScale);light.castShadow=true;light.shadow.mapSize.set(budget.diceShadowSize,budget.diceShadowSize);
-  Object.assign(light.shadow.camera,{left:-10*trayScale,right:10*trayScale,top:8*trayScale,bottom:-8*trayScale,near:.1,far:35*trayScale});light.shadow.bias=-.0003;light.shadow.normalBias=.025;scene.add(light);
+  scene.add(new THREE.HemisphereLight(0xf6eedf,0x1b2228,.62));
+  const light=new THREE.DirectionalLight(0xfff1d6,1.85);light.position.set(-11,5.5,10.5).multiplyScalar(trayScale);light.castShadow=true;light.shadow.mapSize.set(budget.diceShadowSize,budget.diceShadowSize);
+  Object.assign(light.shadow.camera,{left:-12*trayScale,right:12*trayScale,top:10*trayScale,bottom:-10*trayScale,near:.1,far:44*trayScale});light.shadow.bias=-.0004;light.shadow.normalBias=.03;scene.add(light);
+  const rimLight=new THREE.DirectionalLight(0xd9e6ff,.42);rimLight.position.set(10,-9,9).multiplyScalar(trayScale);scene.add(rimLight);
   const geometry:THREE.BufferGeometry[]=[],materials:THREE.Material[]=[],textures:THREE.Texture[]=[];
   const box=(x:number,y:number,z:number,w:number,h:number,d:number,color:number):THREE.Mesh<THREE.BufferGeometry,THREE.Material>=>{
     const g=new THREE.BoxGeometry(w,h,d),m=new THREE.MeshStandardMaterial({color,roughness:.86,envMapIntensity:.18});
     const mesh=new THREE.Mesh(g,m);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;tray.add(mesh);geometry.push(g);materials.push(m);return mesh;
   };
-  const {feltMap,occlusionMap,shadowMap,ringMap,woodMap,woodBumpMap,leatherBumpMap}=getSharedTrayMaps(stage.renderer);
+  const {feltMap,occlusionMap,shadowMap,tableShadowMap,ringMap,woodMap,woodBumpMap,leatherBumpMap}=getSharedTrayMaps(stage.renderer);
   const trayGeoms=getSharedTrayGeometries();
-  const addFramePiece=(geom:THREE.BufferGeometry,mat:THREE.Material,z:number,castShadow=false)=>{
-    const m=new THREE.Mesh(geom,mat);m.position.z=z;m.castShadow=castShadow;m.receiveShadow=true;tray.add(m);
+  const wallsGroup=new THREE.Group();
+  // Proportionally grow wall depth on larger trays so multi-die trays stay deep.
+  wallsGroup.scale.set(1,1,1+(trayScale-1)*.65);
+  tray.add(wallsGroup);
+  const addFramePiece=(parent:THREE.Group,geom:THREE.BufferGeometry,mat:THREE.Material,z:number,castShadow=false)=>{
+    const m=new THREE.Mesh(geom,mat);m.position.z=z;m.castShadow=castShadow;m.receiveShadow=true;parent.add(m);
     if(!materials.includes(mat))materials.push(mat);return m;
   };
+  // Grounded drop shadow cast by the tray box onto the tabletop underneath.
+  const tableDropShadowG=new THREE.PlaneGeometry(18.6,13.4);
+  const tableDropShadowM=new THREE.MeshBasicMaterial({map:tableShadowMap,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1});
+  const tableDropShadow=new THREE.Mesh(tableDropShadowG,tableDropShadowM);
+  tableDropShadow.position.set(.2,-.2,-.558);
+  tray.add(tableDropShadow);geometry.push(tableDropShadowG);materials.push(tableDropShadowM);
   // Stepped dark plinth base anchors the sculpted tray firmly onto the tabletop.
   addFramePiece(
+    tray,
     trayGeoms.plinth,
     new THREE.MeshStandardMaterial({color:0x0f0c12,roughness:.82,metalness:.06,envMapIntensity:.22}),
-    -.34,
+    -.555,
     false,
   );
   const floor=box(0,0,-.17,14.4,9.4,.3,0x182a27);
@@ -342,51 +390,54 @@ export function createTrayRenderer(dice:TrayDie[],toss:Toss,theme:DiceTheme,kept
   if(trayArt){trayArt.anisotropy=stage.renderer.capabilities.getMaxAnisotropy();textures.push(trayArt);}
   const feltMaterial=new THREE.MeshStandardMaterial({map:trayArt??feltMap,roughness:.94,metalness:0,bumpMap:feltMap,bumpScale:.012,envMapIntensity:.35});materials.push(feltMaterial);floor.material=feltMaterial;
   const palette=theme.id.startsWith('dm-')
-    ? {wood:0x232936,crown:0x1b202b,trim:0xa8b5c4,liner:0x181c24}
+    ? {wood:0x252c3b,crown:0x1b212e,trim:0x8693a6,corner:0x5e697a,liner:0x273040}
     : theme.id==='fighter'
-      ? {wood:0x28211d,crown:0x1b1716,trim:0xc49545,liner:0x1c1714}
+      ? {wood:0x342720,crown:0x241a15,trim:0xa47c3c,corner:0x6d5228,liner:0x322721}
       : theme.id==='ranger'
-        ? {wood:0x4b2b18,crown:0x361e0f,trim:0x8c5a32,liner:0x1d2619}
+        ? {wood:0x4e2f1b,crown:0x372011,trim:0x8d6338,corner:0x604224,liner:0x273524}
         : theme.id==='sorcerer'
-          ? {wood:0x3b131d,crown:0x270b12,trim:0x9aa2b2,liner:0x1e0e14}
-          : {wood:0x4a2c1d,crown:0x331d13,trim:0xb38a4c,liner:0x1c2520};
-  // Sculpted hardwood perimeter frame with smooth chamfered shoulders and mitered wood grain.
+          ? {wood:0x421722,crown:0x2b0d15,trim:0x8f94a3,corner:0x5e5866,liner:0x351a24}
+          : {wood:0x523120,crown:0x382014,trim:0x9c7842,corner:0x684e2a,liner:0x283830};
+  const woodMat=new THREE.MeshStandardMaterial({color:palette.wood,map:woodMap,bumpMap:woodBumpMap,bumpScale:.042,roughness:.52,metalness:.04,envMapIntensity:.52});
+  // Sculpted tall hardwood perimeter frame + chamfered inner top ledge.
+  addFramePiece(wallsGroup,trayGeoms.mainFrame,woodMat,0,true);
+  addFramePiece(wallsGroup,trayGeoms.innerBevel,woodMat,1.14,true);
+  // Gently domed upper rail crown + delicate recessed metallic pinstripe inlay.
   addFramePiece(
-    trayGeoms.mainFrame,
-    new THREE.MeshStandardMaterial({color:palette.wood,map:woodMap,bumpMap:woodBumpMap,bumpScale:.024,roughness:.52,metalness:.04,envMapIntensity:.52}),
-    .04,
+    wallsGroup,
+    trayGeoms.crown,
+    new THREE.MeshStandardMaterial({color:palette.crown,map:woodMap,bumpMap:woodBumpMap,bumpScale:.024,roughness:.44,metalness:.06,envMapIntensity:.56}),
+    1.54,
     true,
   );
-  // Raised upper rail crown + continuous recessed metallic inlay channel.
+  const trimMaterial=new THREE.MeshStandardMaterial({color:palette.trim,metalness:.78,roughness:.36,envMapIntensity:.82});
+  addFramePiece(wallsGroup,trayGeoms.trim,trimMaterial,1.71,false);
+  // Cushioned taller inner suede/leather wall lining rising visibly above the bed.
   addFramePiece(
-    trayGeoms.crown,
-    new THREE.MeshStandardMaterial({color:palette.crown,map:woodMap,bumpMap:woodBumpMap,bumpScale:.018,roughness:.44,metalness:.06,envMapIntensity:.56}),
-    .98,
-    false,
-  );
-  const trimMaterial=new THREE.MeshStandardMaterial({color:palette.trim,metalness:.82,roughness:.30,envMapIntensity:.85});
-  addFramePiece(trayGeoms.trim,trimMaterial,1.10,false);
-  // Cushioned inner suede/leather wall lining with padded top lip.
-  addFramePiece(
+    wallsGroup,
     trayGeoms.liner,
-    new THREE.MeshStandardMaterial({color:palette.liner,map:feltMap,bumpMap:leatherBumpMap,bumpScale:.02,roughness:.88,metalness:.02,envMapIntensity:.22}),
+    new THREE.MeshStandardMaterial({color:palette.liner,map:feltMap,bumpMap:leatherBumpMap,bumpScale:.032,roughness:.84,metalness:.03,envMapIntensity:.28}),
     -.02,
     true,
   );
-  // Sculpted beveled corner hardware brackets + domed rivets locking the mitered rails.
-  for(const [cx,cy,rot] of [[-7.58,5.08,0],[7.58,5.08,-Math.PI/2],[7.58,-5.08,Math.PI],[-7.58,-5.08,Math.PI/2]] as const){
+  // Wrap-around antiqued bronze/iron 3D corner hardware capping both the rim and outer sides.
+  const cornerMaterial=new THREE.MeshStandardMaterial({color:palette.corner,metalness:.76,roughness:.38,envMapIntensity:.75});
+  materials.push(cornerMaterial);
+  for(const [cx,cy,rot] of [[-7.68,5.18,0],[7.68,5.18,-Math.PI/2],[7.68,-5.18,Math.PI],[-7.68,-5.18,Math.PI/2]] as const){
     const corner=new THREE.Group();
-    corner.position.set(cx,cy,1.03);corner.rotation.z=rot;
-    const bracket=new THREE.Mesh(trayGeoms.clasp,trimMaterial);
-    bracket.castShadow=false;bracket.receiveShadow=true;corner.add(bracket);
-    for(const [rx,ry] of [[.22,-.22],[.84,-.22],[.22,-.84]] as const){
+    corner.position.set(cx,cy,0);corner.rotation.z=rot;
+    const bracket=new THREE.Mesh(trayGeoms.clasp,cornerMaterial);
+    bracket.position.z=1.62;bracket.castShadow=true;bracket.receiveShadow=true;corner.add(bracket);
+    const skirt=new THREE.Mesh(trayGeoms.claspWall,cornerMaterial);
+    skirt.position.z=.08;skirt.castShadow=true;skirt.receiveShadow=true;corner.add(skirt);
+    for(const [rx,ry] of [[.14,-.14],[.74,-.14],[.14,-.74]] as const){
       const rivet=new THREE.Mesh(trayGeoms.rivet,trimMaterial);
-      rivet.castShadow=false;rivet.receiveShadow=true;rivet.position.set(rx,ry,.145);corner.add(rivet);
+      rivet.castShadow=true;rivet.receiveShadow=true;rivet.position.set(rx,ry,1.765);corner.add(rivet);
     }
-    tray.add(corner);
+    wallsGroup.add(corner);
   }
-  // Soft contact occlusion anchors the recessed bed along all 4 padded inner walls.
-  for(const [x,y,w,h,rotation] of [[0,4.48,14.04,.50,0],[0,-4.48,14.04,.50,Math.PI],[-6.98,0,9.04,.50,Math.PI/2],[6.98,0,9.04,.50,-Math.PI/2]]){
+  // Wide soft contact occlusion anchors the deep recessed felt pocket into all 4 padded walls.
+  for(const [x,y,w,h,rotation] of [[0,4.02,14.04,1.15,0],[0,-4.02,14.04,1.15,Math.PI],[-6.52,0,9.04,1.15,Math.PI/2],[6.52,0,9.04,1.15,-Math.PI/2]]){
     const g=new THREE.PlaneGeometry(w,h),m=new THREE.MeshBasicMaterial({map:occlusionMap,transparent:true,depthWrite:false,depthTest:true,polygonOffset:true,polygonOffsetFactor:-1});
     const mesh=new THREE.Mesh(g,m);mesh.position.set(x,y,-.014);mesh.rotation.z=rotation;mesh.renderOrder=0;tray.add(mesh);geometry.push(g);materials.push(m);
   }

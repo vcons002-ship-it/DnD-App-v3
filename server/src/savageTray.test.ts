@@ -92,7 +92,7 @@ describe('Savage Attacker & Savage Attacks continuous live tray', () => {
     const final = frames.at(-1)!;
     expect(final.done).toBe(true);
     expect(final.sides).toEqual([12, 12, 12]);
-    expect(final.critical).toEqual([false, true, true]);
+    expect(final.critical).toEqual([false, true, false]);
     expect(final.dieRoles).toEqual(['base', 'crit', 'savage-crit']);
     expect(final.dieLabels).toEqual([null, 'CRIT', 'Savage Attacks']);
     expect(final.trayBanner?.tone).toBe('savage-crit');
@@ -133,7 +133,7 @@ describe('Savage Attacker & Savage Attacks continuous live tray', () => {
     expect(final.done).toBe(true);
     expect(final.sides).toEqual([12, 12, 12, 12, 12, 12]);
     expect(final.sets).toEqual([0, 0, 0, 1, 1, 1]);
-    expect(final.critical).toEqual([false, true, true, false, true, true]);
+    expect(final.critical).toEqual([false, true, false, false, true, false]);
     expect(final.dieRoles).toEqual(['base', 'crit', 'savage-crit', 'reroll', 'reroll-crit', 'savage-crit']);
     expect(final.rerollLinks).toEqual([
       { from: 0, to: 3 },

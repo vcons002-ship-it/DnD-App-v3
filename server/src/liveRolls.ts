@@ -226,7 +226,7 @@ async function weaponTrayFaces(sides:number[],publish:(frame:LiveDiceFrame)=>voi
    const baseCount=wt.baseCount??(wt.crit?Math.floor(critEnd/2):critEnd);
    const combinedExtra=!wt.hasReroll&&wt.hasExtraCrit;
    const sets=sides.map((_,i)=>combinedExtra&&i>=critEnd?2:0);
-   const critical=sides.map((_,i)=>i>=baseCount);
+   const critical=sides.map((_,i)=>(i>=baseCount&&i<critEnd)||i>=wt.setCount);
    const dieRoles:LiveDieRole[]=sides.map((_,i)=>i>=critEnd?'savage-crit':i>=baseCount?'crit':'base');
    const dieLabels:(string|null)[]=sides.map((_,i)=>{
     if(i>=critEnd){
@@ -275,7 +275,7 @@ async function weaponTrayFaces(sides:number[],publish:(frame:LiveDiceFrame)=>voi
      tray.dieLabels[i]=i>=baseCount?'Roll 1 \u00b7 CRIT':'Roll 1';
     }
    }
-   const newCritical=sides.map((_,i)=>i>=baseCount);
+   const newCritical=sides.map((_,i)=>i>=baseCount&&i<critEnd);
    const newRoles:LiveDieRole[]=sides.map((_,i)=>i>=critEnd?'savage-crit':i>=baseCount?'reroll-crit':'reroll');
    const newLabels=sides.map((_,i)=>i>=critEnd?(tray!.extraCritLabels?.[i-critEnd]??tray!.extraCritLabel):i>=baseCount?'Reroll \u00b7 CRIT':'Reroll');
    sides.forEach((_,i)=>tray!.links.push({from:i,to:start+i}));
@@ -393,14 +393,17 @@ async function weaponTrayFaces(sides:number[],publish:(frame:LiveDiceFrame)=>voi
     }else if(wt.bannerOverride){
      trayBanner=wt.bannerOverride;
     }
-   }else{
+   }else if(current.hasReroll||wt.rerollMode==='die-lte'){
     const exprDesc=`${current.damageExpr}${current.crit?' (crit)':''}`;
     if(state.done){
-     const firstTotal=sumSlice(state.values,0,current.setCount);
-     current.firstTotal=firstTotal;
-     const rerollVerb=wt.rerollMode==='die-lte'?`rerolling dice \u2264${wt.rerollMaxFace??2}`:'rerolling to keep higher';
-     trayBanner={title:current.rerollLabel,detail:`Roll 1: ${firstTotal} \u2014 ${rerollVerb}`,tone:wt.rerollMode==='die-lte'?'reroll':current.hasExtraCrit?'savage-both':'savage-reroll'};
-     diceTrigger={kind:'savage-attacker',title:`${current.rerollLabel}!`,detail:`Rolled ${firstTotal} on ${exprDesc}`,diceCount:current.setCount,groups:[{value:firstTotal,indices:Array.from({length:current.setCount},(_,i)=>i)}]};
+     const lowCount=wt.rerollMode==='die-lte'?state.values.slice(0,current.setCount).filter((v):v is number=>v!==null&&v<=(wt.rerollMaxFace??2)).length:current.setCount;
+     if(wt.rerollMode!=='die-lte'||lowCount>0){
+      const firstTotal=sumSlice(state.values,0,current.setCount);
+      current.firstTotal=firstTotal;
+      const rerollVerb=wt.rerollMode==='die-lte'?`rerolling dice \u2264${wt.rerollMaxFace??2}`:'rerolling to keep higher';
+      trayBanner={title:current.rerollLabel,detail:`Roll 1: ${firstTotal} \u2014 ${rerollVerb}`,tone:wt.rerollMode==='die-lte'?'reroll':current.hasExtraCrit?'savage-both':'savage-reroll'};
+      diceTrigger={kind:'savage-attacker',title:`${current.rerollLabel}!`,detail:`Rolled ${firstTotal} on ${exprDesc}`,diceCount:current.setCount,groups:[{value:firstTotal,indices:Array.from({length:current.setCount},(_,i)=>i)}]};
+     }
     }else{
      trayBanner={title:current.rerollLabel,detail:`Rolling ${exprDesc} \u2014 will apply ${current.rerollLabel}`,tone:wt.rerollMode==='die-lte'?'reroll':current.hasExtraCrit?'savage-both':'savage-reroll'};
     }
