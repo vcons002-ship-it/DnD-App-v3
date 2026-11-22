@@ -1701,7 +1701,7 @@ export function addRollLog(
 ): RollEntry {
   if(entry.reveal&&!entry.reveal.title&&(entry.reveal.kind==='attack'||entry.reveal.kind==='damage'))
     entry.reveal={...entry.reveal,title:`${['Attack','Damage'].includes(entry.label)?entry.expr:entry.label} — ${entry.reveal.kind==='attack'?'Attack Roll':'Damage Roll'}`};
-  if(entry.reveal && isLiveCommand())entry.reveal={...entry.reveal,physical:true};
+  if(entry.reveal && isLiveCommand() && !entry.reveal.autoFailReason)entry.reveal={...entry.reveal,physical:true};
   noteLiveRollReveal(entry.reveal);
   // Materializing a two-step hit refreshes its already accepted attack row.
   // Review only new attacks; the ensuing damage has its own result below.

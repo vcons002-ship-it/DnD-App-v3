@@ -31,9 +31,11 @@ let resultReveal=false;
 let reviewResults:HiddenRollResult[]=[];
 export const stagedRollResults=()=>reviewResults.slice();
 export function noteRollResult(result:HiddenRollResult){if(active)reviewResults.push(result);}
-/** A final snapshot may render the last throw; earlier throws cannot use it. */
+/** A final snapshot may render the last throw; earlier throws cannot use it.
+ *  Auto-failed saves roll no dice and replace the tray with a text card, so
+ *  any preceding unmodified throw still needs its full reading hold first. */
 export function noteLiveRollReveal(reveal:RollReveal|undefined){
- if(active&&reveal&&!reveal.presentedLive)resultReveal=true;
+ if(active&&reveal&&!reveal.presentedLive&&!reveal.autoFailReason)resultReveal=true;
 }
 export function resetLiveRollReveal(){if(active)resultReveal=false;}
 export const hasLiveRollReveal=()=>resultReveal;
