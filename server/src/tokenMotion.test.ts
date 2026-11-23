@@ -14,9 +14,10 @@ describe('tokenMotion', () => {
     expect(tokenMoveDuration(5 * pxPerFoot, pxPerFoot)).toBe(
       Math.round((5 / TOKEN_MOVE_FEET_PER_SECOND) * 1000),
     );
-    expect(tokenMoveDuration(10 * pxPerFoot, pxPerFoot)).toBe(1000);
-    expect(tokenMoveDuration(30 * pxPerFoot, pxPerFoot)).toBe(3000);
-    expect(tokenMoveDuration(60 * pxPerFoot, pxPerFoot)).toBe(6000);
+    expect(tokenMoveDuration(15 * pxPerFoot, pxPerFoot)).toBe(500);
+    expect(tokenMoveDuration(30 * pxPerFoot, pxPerFoot)).toBe(1000);
+    expect(tokenMoveDuration(60 * pxPerFoot, pxPerFoot)).toBe(2000);
+    expect(tokenMoveDuration(120 * pxPerFoot, pxPerFoot)).toBe(4000);
     // Tiny nudges keep a brief smooth minimum instead of an instant pop.
     expect(tokenMoveDuration(0.5 * pxPerFoot, pxPerFoot)).toBe(TOKEN_MOVE_MIN_MS);
     // Giant cross-map drags cap so exploration isn't stuck forever.

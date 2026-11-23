@@ -1,7 +1,7 @@
-/** Realistic combat trot/jog pace (~6.8 mph: 5 ft in 0.5 s, 30 ft in 3.0 s). */
-export const TOKEN_MOVE_FEET_PER_SECOND = 10;
-export const TOKEN_MOVE_MIN_MS = 160;
-export const TOKEN_MOVE_MAX_MS = 6000;
+/** Heroic combat sprint pace (~20.5 mph: 5 ft in 0.17 s, 30 ft in 1.0 s, 40 yd in 4.0 s). */
+export const TOKEN_MOVE_FEET_PER_SECOND = 30;
+export const TOKEN_MOVE_MIN_MS = 120;
+export const TOKEN_MOVE_MAX_MS = 4000;
 
 /** Presentation only: the server still decides placement and facing. */
 export function tokenMoveDuration(distancePx: number, pxPerFoot: number): number {
