@@ -13,7 +13,7 @@ import type {MapEnvironment} from '../../../shared/mapEnvironment';
 import {readGraphicsQuality} from '../lib/useEnvironmentQuality';
 import {readDiceRenderingMode} from '../lib/useDiceRendering';
 import {readServerRendering} from '../lib/useServerRendering';
-import {prepareRenderImages,warmRenderImages} from '../lib/renderImages';
+import {hasUncachedRenderImages,prepareRenderImages,warmRenderImages} from '../lib/renderImages';
 import {retainedRenderingEnabled} from '../lib/retainedRendering';
 import {applySnapshotDelta,stabilizeSnapshot} from '../../../shared/stateDelta';
 import type { ClassRosterEntry, LevelUpCommitRequest, LevelUpPlan, LevelUpPreview, LevelUpResult } from '../../../shared/levelingTypes';
@@ -1041,8 +1041,12 @@ export const useStore = create<Store>((set, get) => ({
     let flushRenderHp=()=>{};
     const acceptRendered=(snapshot:StateSnapshot,timing?:{id:string;revision:number})=>{
       const serial=++renderSerial;
-      const hasRenderImages=(s:StateSnapshot|undefined)=>!!(s&&(Object.keys(s.tokenSprites??{}).length||s.tokenLayerRaster||s.visionRaster||s.visionTiles||s.terrainRaster||s.legacyMotion));
-      if(!hasRenderImages(snapshot)&&!hasRenderImages(snapshot.partyView as StateSnapshot|undefined)){renderPending=false;acceptSnapshot(snapshot);flushRenderHp();return;}
+      if(!hasUncachedRenderImages(snapshot,get().chatAccessToken)){
+        if(timing){movementTiming('imagesStart',timing);movementTiming('imagesReady',timing);movementTiming('acceptStart',timing);}
+        renderPending=false;acceptSnapshot(snapshot);flushRenderHp();
+        if(timing)movementTiming('acceptEnd',timing);
+        return;
+      }
       renderPending=true;
       if(timing)movementTiming('imagesStart',timing);
       void prepareRenderImages(snapshot,get().chatAccessToken,timing).then(()=>{

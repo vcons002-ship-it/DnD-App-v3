@@ -76,7 +76,30 @@ export function deliverState(io:Emitter,id:string,snapshot:StateSnapshot,options
    };
    try{
     if(inputKey&&inputKey===d!.inputKey&&d!.ready){prepared=reuseRenderedSnapshot(next,d!.ready);source=d!.readySource?{...next,legacyGeometry:d!.readySource.legacyGeometry,...(next.partyView&&d!.readySource.partyView?{partyView:{...next.partyView,legacyGeometry:d!.readySource.partyView.legacyGeometry}}:{})}:prepared;if(timing)timing.reused=true;}
-    else{
+    else if(d!.managed&&options.renderProtocol!==undefined&&next.serverRendering?.enabled&&!d!.legacy){
+     if(timing)timing.geometryStartAt=timingClock();
+     const canWarm=!d!.forceFull&&!!d!.previous;
+     if(canWarm)setRenderWarmer(id,keys=>{if(deliveries.get(id)===d)io.to(id).emit('render:warm',{keys});});
+     try{
+      // Non-legacy clients use membership-only motion plans that don't depend on
+      // legacyGeometry, so run geometry/rendering and motion planning together.
+      const geometryWork=addGeometry(next,true,timing).then(s=>{if(timing){timing.geometryEndAt=timingClock();timing.renderStartAt=timingClock();}return s;});
+      const rendering=geometryWork.then(s=>renderedSnapshot(id,s,false,undefined,options.renderProtocol!>=2,timing,options.renderProtocol!>=3,options.sprites2d).then(value=>{if(timing)timing.renderEndAt=timingClock();return value;}));
+      const motion=prepareMotion(next,()=>rendering);
+      const [built,rendered,plan]=await Promise.all([geometryWork,rendering,motion]);
+      source=built;
+      if(canWarm)flushRenderWarmer(id);
+      prepared=plan?{...rendered,legacyMotion:plan.legacyMotion,...(rendered.partyView?{partyView:{...rendered.partyView,legacyMotion:plan.party}}:{})}:rendered;
+     }finally{if(canWarm)setRenderWarmer(id,undefined);}
+    }else if(!(d!.managed&&options.renderProtocol!==undefined&&next.serverRendering?.enabled)&&options.legacyMotion&&(options.renderProtocol??0)>=3&&!d!.forceFull&&d!.previous&&positionsChanged(d!.previous,next)){
+     if(timing)timing.geometryStartAt=timingClock();
+     const geometryWork=(d!.managed?addGeometry(next,!d!.legacy&&options.renderProtocol!==undefined,timing):Promise.resolve(next)).then(s=>{if(timing){timing.geometryEndAt=timingClock();timing.renderStartAt=timingClock();}return s;});
+     const motion=prepareMotion(next,()=>geometryWork);
+     const [built,plan]=await Promise.all([geometryWork,motion]);
+     source=built;
+     prepared=plan?{...built,legacyMotion:plan.legacyMotion,...(built.partyView?{partyView:{...built.partyView,legacyMotion:plan.party}}:{})}:built;
+     if(timing)timing.renderEndAt=timingClock();
+    }else{
      if(timing)timing.geometryStartAt=timingClock();
      prepared=d!.managed?await addGeometry(next,!d!.legacy&&options.renderProtocol!==undefined,timing):next;
      if(timing){timing.geometryEndAt=timingClock();timing.renderStartAt=timingClock();}
@@ -93,10 +116,6 @@ export function deliverState(io:Emitter,id:string,snapshot:StateSnapshot,options
        if(canWarm)flushRenderWarmer(id);
        prepared=plan?{...rendered,legacyMotion:plan.legacyMotion,...(rendered.partyView?{partyView:{...rendered.partyView,legacyMotion:plan.party}}:{})}:rendered;
       }finally{if(canWarm)setRenderWarmer(id,undefined);}
-     }else if(options.legacyMotion&&(options.renderProtocol??0)>=3&&!d!.forceFull&&d!.previous&&positionsChanged(d!.previous,source)){
-      const plan=await prepareMotion(source,async()=>source);
-      if(plan)prepared={...source,legacyMotion:plan.legacyMotion,...(source.partyView?{partyView:{...source.partyView,legacyMotion:plan.party}}:{})};
-      if(timing)timing.renderEndAt=timingClock();
      }else if(timing)timing.renderEndAt=timingClock();
     }
    }

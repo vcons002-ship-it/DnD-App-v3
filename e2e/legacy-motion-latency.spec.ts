@@ -8,6 +8,7 @@ import os from 'node:os';
 import {DM_SECRET,PORT} from './playwright.config';
 import {probe,xy} from './helpers/movementProbe';
 import {projectGround} from '../client/src/canvas/miniatureProjection';
+import {tokenMoveProgress} from '../client/src/canvas/tokenMotion';
 const rates=(process.env.MOTION_LATENCY_RATES??'1,6,20').split(',').map(Number);
 const modes=(process.env.MOTION_LATENCY_MODES??'legacy').split(',');
 if(modes.some(m=>!['legacy','local-2d','local-3d'].includes(m)))throw Error('Unknown motion latency mode');
@@ -87,7 +88,7 @@ test('movement latency on independent player and DM clients',async({browser,requ
     const released=data[0].active.releasedAt;expect(released).toBeGreaterThan(0);
     const sample:any={seq:i,releasedAt:released,healthMs,views:[]};
     for(const [j,d] of data.entries()){
-     const a=d.active,poses=a.motionFrames.filter((f:any)=>f.stage==='playing'&&f.mask!=null&&Number(f.mask)<12),errors=poses.map((f:any)=>{const t=Number(f.mask)/12,p=t*t*(3-2*t);return Math.abs(f.x-(a.from.x+(a.actualX-a.from.x)*p));});
+     const a=d.active,poses=a.motionFrames.filter((f:any)=>f.stage==='playing'&&f.mask!=null&&Number(f.mask)<12),errors=poses.map((f:any)=>{const p=tokenMoveProgress(Number(f.mask),12);return Math.abs(f.x-(a.from.x+(a.actualX-a.from.x)*p));});
      if(legacy&&rate<=6){expect(new Set(poses.map((f:any)=>f.mask)).size).toBeGreaterThanOrEqual(3);}if(errors.length)expect(Math.max(...errors)).toBeLessThan(.1);
      const frame=d.frames.find((f:any)=>legacy?f.server?.motionEndAt:f.server?.emittedAt);
      expect(frame,'server movement metrics are enabled').toBeTruthy();

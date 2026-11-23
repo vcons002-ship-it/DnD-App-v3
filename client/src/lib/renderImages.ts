@@ -39,10 +39,7 @@ export function warmRenderImages(keys:Iterable<string>,credential:string|null){
  if(!credential)return;
  for(const key of keys)void loadRenderImage(key,credential)?.catch(()=>{});
 }
-/** Decode before publishing the matching positions/mask revision. Camera motion
- * continues locally while the previous complete frame is displayed. */
-export async function prepareRenderImages(s:StateSnapshot,credential:string|null,timing?:{id:string;revision:number}){
- if(!credential)return;
+function collectRenderImageKeys(s:StateSnapshot):Set<string>{
  const keys=new Set<string>();
  for(const layer of [s,s.partyView])if(layer){
   if(layer.legacyMotion?.atlas){keys.add(layer.legacyMotion.atlas.mask.key);if(layer.legacyMotion.atlas.terrain)keys.add(layer.legacyMotion.atlas.terrain.key);if(layer.legacyMotion.atlas.base)keys.add(layer.legacyMotion.atlas.base.key);}
@@ -54,6 +51,19 @@ export async function prepareRenderImages(s:StateSnapshot,credential:string|null
   const painted=new Set(layer.tokenLayerIds??[]);
   for(const [id,pair] of Object.entries(layer.tokenSprites??{}))if(!painted.has(id)){keys.add(pair.body.key);keys.add(pair.hud.key);}
  }
+ return keys;
+}
+/** Return true only when at least one required raster asset still needs decoding. */
+export function hasUncachedRenderImages(s:StateSnapshot,credential:string|null):boolean{
+ if(!credential)return false;
+ for(const key of collectRenderImageKeys(s))if(!images.has(key))return true;
+ return false;
+}
+/** Decode before publishing the matching positions/mask revision. Camera motion
+ * continues locally while the previous complete frame is displayed. */
+export async function prepareRenderImages(s:StateSnapshot,credential:string|null,timing?:{id:string;revision:number}){
+ if(!credential)return;
+ const keys=collectRenderImageKeys(s);
  if(timing)movementTiming('imagesPlanned',{...timing,total:keys.size,cached:[...keys].filter(key=>images.has(key)).length,inflight:[...keys].filter(key=>!images.has(key)&&loading.has(key)).length});
  await Promise.all([...keys].map(key=>loadRenderImage(key,credential,timing)));
 }
