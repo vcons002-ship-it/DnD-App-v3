@@ -16,7 +16,7 @@ import {visibilityWorkers,formatExploredMemory} from './visibilityWorkers.js';
 import {tokenSprites} from './tokenSprites.js';
 import {legacyTerrainFrames} from './legacyTerrain.js';
 import {LEGACY_MOTION_STEPS} from '../../shared/legacyMotion.js';
-import {tokenMoveProgress} from '../../client/src/canvas/tokenMotion.js';
+import {tokenMoveDuration,tokenMoveProgress} from '../../client/src/canvas/tokenMotion.js';
 import {explorationGeneration} from './exploration.js';
 import {createSnapshotBuilder} from './visibility.js';
 import {listCharacters,listMonsters,listTokens} from './sessions.js';
@@ -203,9 +203,12 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
   }
   // Standard rendering and unassisted Legacy need authorized creature membership,
   // but render their own continuously moving sight. Do not rasterize these poses.
+  const pxPerFoot=after.map!.gridSizePx/Math.max(.001,after.map!.feetPerSquare);
+  const maxDistancePx=Math.max(0,...Object.values(moves).map(m=>Math.hypot(m.to.x-m.from.x,m.to.y-m.from.y)));
+  const durationMs=tokenMoveDuration(maxDistancePx,pxPerFoot);
   if(options?.membershipOnly){
    const endpoint=options.endpoint?await options.endpoint():after;
-   return {membershipOnly:true,id:routes.map(r=>r.id).join(':'),durationMs:400,moves,
+   return {membershipOnly:true,id:routes.map(r=>r.id).join(':'),durationMs,moves,
     frames:rawViews.map((view,index)=>{const frame=fields(view,index/LEGACY_MOTION_STEPS,endpoint,moves);
      return {...frame,tokenSprites:undefined,legacyGeometry:undefined,visionRaster:undefined,visionTiles:undefined};})};
   }
@@ -270,7 +273,7 @@ export async function prepareLegacyMotion(id:string,before:StateSnapshot,after:S
   // Atlas frames are one decoded image each for cover and graded artwork.
   // Geometry paths remain available only on maps without raster artwork.
   if(images?.atlas)for(const frame of output){frame.visionRaster=undefined;frame.visionTiles=undefined;frame.legacyGeometry={sight:[],near:[],lights:[],memory:[],affinity:frame.legacyGeometry?.affinity??[]};}
-  return {id:routes.map(r=>r.id).join(':'),durationMs:400,moves,frames:output,atlas:images?.atlas};
+  return {id:routes.map(r=>r.id).join(':'),durationMs,moves,frames:output,atlas:images?.atlas};
  })();
  if(motionCache.size>=16)motionCache.delete(motionCache.keys().next().value!);
  motionCache.set(coalesceKey,work);

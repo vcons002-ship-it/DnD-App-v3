@@ -39,7 +39,7 @@ export async function recordWalkingMove(previous:Token,next:Token,persist:boolea
  const crossedWall=Math.hypot(center.x-next.x,center.y-next.y)>.01||!hasLineOfSight(previous,next,map.walls);
  const route:WalkingRoute={id:randomUUID(),mapId:map.id,from:{x:previous.x,y:previous.y},to:{x:next.x,y:next.y},walls:JSON.stringify(map.walls??[]),generation:explorationGeneration(map.id),...(crossedWall?{crossedWall:true}:{})};
  if(routes.size>=2048)routes.delete(routes.keys().next().value!);routes.set(next.id,route);
- if(crossedWall||next.isHidden||(next.kind==='pc'&&next.blind&&!next.carriedLantern)||!(next.kind==='pc'||next.carriedLantern))return;
+ if(!persist||map.explorationMode==='off'||crossedWall||next.isHidden||(next.kind==='pc'&&next.blind&&!next.carriedLantern)||!(next.kind==='pc'||next.carriedLantern))return;
  const generation=explorationGeneration(map.id),tiles=listMapImages(map.id),identity=terrainIdentity(map,tiles);
  // Worker receives immutable movement-time inputs, with no DB handle or socket.
  const tokens=listTokens(map.id);

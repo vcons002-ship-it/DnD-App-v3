@@ -12,6 +12,7 @@ import {resetExploration} from './exploration.js';
 import {editMapWalls} from './mapWalls.js';
 import {visibilityWorkers} from './visibilityWorkers.js';
 import type {ExploredTerrain} from '../../shared/exploration.js';
+import {tokenMoveDuration} from '../../client/src/canvas/tokenMotion.js';
 import {TokenPresentation} from '../../client/src/canvas/tokenPresentation.js';
 afterAll(()=>visibilityWorkers.close());
 function contains(shape:ExploredTerrain|undefined,x:number,y:number){const ring=(r:[number,number][])=>{let yes=false;for(let i=0,j=r.length-1;i<r.length;j=i++){const [a,b]=r[i],[c,d]=r[j];if((b>y)!==(d>y)&&x<(c-a)*(y-b)/(d-b)+a)yes=!yes;}return yes;};return shape?.some(p=>ring(p[0])&&!p.slice(1).some(ring))??false;}
@@ -88,6 +89,7 @@ it('motion has bounded intermediate frames and never animates a relocation or re
  // No vision case verifies route/membership without needing raster credentials.
  const a={...before,playerVision:undefined},b={...after,playerVision:undefined};
  const plan=await prepareLegacyMotion('walking-test',a,b);expect(plan?.frames).toHaveLength(13);expect(plan?.frames.map(f=>f.at)).toEqual(Array.from({length:13},(_,i)=>i/12));
+ expect(plan?.durationMs).toBe(tokenMoveDuration(200,10));
  expect(plan?.moves[moved.id]).toEqual({from:{x:100,y:100},to:{x:300,y:100}});
  expect(await prepareLegacyMotion('walking-test',a,{...b,explorationEpoch:99})).toBeUndefined();
  await recordWalkingMove(f.token,moved,true,true);expect(await prepareLegacyMotion('walking-test',a,b)).toBeUndefined();
@@ -217,6 +219,7 @@ it.each([false,true])('animates a token moving outside darkvision without leakin
   expect(farPlan?.frames).toHaveLength(13);
   expect(farPlan?.moves[enemy2.id].to).toEqual(shortPlan?.moves[enemy.id].to);
   expect(farPlan?.durationMs).toBe(shortPlan?.durationMs);
+  expect(shortPlan?.durationMs).toBe(tokenMoveDuration(Math.hypot(shortPlan!.moves[enemy.id].to.x-400,0),10));
   expect(JSON.stringify(farPlan)).not.toContain('2400');
   expect(farPlan?.frames[0].tokenIds).toContain(enemy2.id);
   expect(farPlan?.frames[0].tokens?.find(t=>t.id===enemy2.id)?.partiallyRevealed).toBeUndefined();

@@ -1,5 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import {TokenPresentation} from '../../client/src/canvas/tokenPresentation.js';
+import {tokenMoveDuration} from '../../client/src/canvas/tokenMotion.js';
 import {createPlayerVision,visionContains,visionLit,visionShowsAffinity} from '../../shared/playerVision.js';
 import type {StateSnapshot,Token} from '../../shared/types.js';
 import type {ExploredTerrain} from '../../shared/exploration.js';
@@ -32,29 +33,32 @@ describe('movement-aligned reveal presentation',()=>{
   });
   it.each([false,true])('waits for the displayed scout to clear the wall (darkness=%s)',dark=>{
     const p=new TokenPresentation();p.sync(snapshot(650,false,dark),10,1000);
+    const d1=tokenMoveDuration(100,10);
     p.sync(snapshot(550,false,dark),10,1001);
     expect(p.position('varis')).toEqual({x:600,y:650});
     expect(visionContains(p.personalVision(),1050,550)).toBe(false);
     expect(p.explored()).toBe(oldMemory);
-    p.advance(1120);expect(visionContains(p.personalVision(),1050,550)).toBe(false);
-    p.advance(1180);expect(visionContains(p.personalVision(),1050,550)).toBe(true);
+    p.advance(1001+Math.round(d1*0.4));expect(visionContains(p.personalVision(),1050,550)).toBe(false);
+    p.advance(1001+Math.round(d1*0.7));expect(visionContains(p.personalVision(),1050,550)).toBe(true);
     if(dark)expect(visionLit(p.personalVision(),1050,550)).toBe(false);
     expect(p.explored()).toBe(oldMemory);
-    p.advance(1281);expect(p.position('varis')).toEqual({x:600,y:550});
+    p.advance(1001+d1+1);expect(p.position('varis')).toEqual({x:600,y:550});
     expect(p.explored()).toBe(newMemory);
   });
   it('also delays the distant observer shared reveal, while leaving personal sight blocked',()=>{
     const p=new TokenPresentation();p.sync(snapshot(650,true),10,1000);p.sync(snapshot(550,true),10,1001);
+    const d1=tokenMoveDuration(100,10);
     expect(visionContains(p.partyVision(),1050,550)).toBe(false);
-    p.advance(1180);expect(visionContains(p.partyVision(),1050,550)).toBe(true);
+    p.advance(1001+Math.round(d1*0.7));expect(visionContains(p.partyVision(),1050,550)).toBe(true);
     expect(visionContains(p.personalVision(),1050,550)).toBe(false);
   });
   it('does not restart movement on model readiness or an unrelated snapshot; redirects from the displayed pose',()=>{
-    const p=new TokenPresentation();p.sync(snapshot(),10,1000);p.sync(snapshot(550),10,1001);p.advance(1141);
+    const p=new TokenPresentation();p.sync(snapshot(),10,1000);p.sync(snapshot(550),10,1001);
+    const tMid=1001+tokenMoveDuration(100,10)/2;p.advance(tMid);
     const half=p.position('varis')!;expect(half.y).toBe(600);
-    p.sync(snapshot(550),10,1141);expect(p.position('varis')).toEqual(half);
-    p.sync(snapshot(800),10,1141);expect(p.position('varis')).toEqual(half);
-    p.advance(1500);expect(p.position('varis')!.y).toBe(800);
+    p.sync(snapshot(550),10,tMid);expect(p.position('varis')).toEqual(half);
+    p.sync(snapshot(800),10,tMid);expect(p.position('varis')).toEqual(half);
+    p.advance(tMid+tokenMoveDuration(200,10)+1);expect(p.position('varis')!.y).toBe(800);
   });
   it('immediately removes revoked tokens and clears memory, even during movement',()=>{
     const p=new TokenPresentation();p.sync(snapshot(),10,1000);p.sync(snapshot(550),10,1001);
