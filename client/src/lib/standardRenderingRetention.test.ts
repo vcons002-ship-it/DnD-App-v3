@@ -1,10 +1,12 @@
 import {describe,it,expect,vi} from 'vitest';
 import type Konva from 'konva';
 vi.mock('konva',()=>({default:{isDragging:()=>false,Group:class{}}}));
+import KonvaRuntime from 'konva';
 import {Scene,DirectionalLight,HemisphereLight,Texture,DepthTexture,Vector2,Vector3,type BufferAttribute,Mesh,BoxGeometry,MeshBasicMaterial,InstancedMesh,Matrix4,OrthographicCamera,WebGLRenderTarget,Bone,Skeleton,SkinnedMesh} from 'three';
 import {createBattlefieldLighting} from '../canvas/battlefieldLighting.js';
 import {createEnvironmentVisibility} from '../canvas/environmentVisibility.js';
 import {createMiniatureNameLayer,MINIATURE_NAME_LAYER} from '../canvas/miniatureNameLayer.js';
+import {setTetherPillsRendered} from '../canvas/miniatureNameLabels.js';
 import {createMiniatureMaskCache} from '../canvas/miniatureMaskCache.js';
 import {miniatureAppearanceKey} from '../canvas/miniatureAppearance.js';
 import {createVisionLightMask} from '../canvas/visionLightMask.js';
@@ -217,5 +219,34 @@ const svgMockNode=()=>{const children:any[]=[];const el:any={id:'',attrs:new Map
   expect(layer.attrs.retainedStats.partialScene).toBe(2);
   expect(door.hitCalls).toBe(2);
   dispose();
+ });
+ it('hides Konva tether pill paint children when GPU-rendered while keeping the beam cutout active',()=>{
+  const makeChild=(name:string)=>({
+   name,
+   _visible:true,
+   visible(next?:boolean){if(next!==undefined)this._visible=next;return this._visible;},
+  });
+  const cutout=makeChild('ray-mid-pill-cutout');
+  const bg=makeChild('ray-mid-pill-bg');
+  const text=makeChild('ray-mid-pill-text');
+  const pill=Object.assign(new KonvaRuntime.Group() as any,{
+   getAttr:(k:string)=>k==='pillId'?'tether-pill:tok1:0':undefined,
+   find:(selector:string)=>{
+    const wanted=selector.split(',').map(s=>s.trim().replace(/^\./,''));
+    return [cutout,bg,text].filter(c=>wanted.includes(c.name));
+   },
+  });
+  let batchDraws=0;
+  const layer={find:(s:string)=>s==='.ray-mid-pill'?[pill]:[],batchDraw:()=>{batchDraws++;}} as unknown as Konva.Layer;
+  setTetherPillsRendered(layer,new Set(['tether-pill:tok1:0']));
+  expect(bg.visible()).toBe(false);
+  expect(text.visible()).toBe(false);
+  expect(cutout.visible()).toBe(true);
+  expect(batchDraws).toBe(1);
+  setTetherPillsRendered(layer,new Set());
+  expect(bg.visible()).toBe(true);
+  expect(text.visible()).toBe(true);
+  expect(cutout.visible()).toBe(true);
+  expect(batchDraws).toBe(2);
  });
 });

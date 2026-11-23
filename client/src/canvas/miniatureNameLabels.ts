@@ -78,7 +78,8 @@ export function createMiniatureNameReader() {
 }
 
 /** Hide only the Konva paint children of GPU-rendered tether pills while
- *  keeping the parent group active so transforms/attrs continue updating. */
+ *  keeping the parent group and `.ray-mid-pill-cutout` active so transforms,
+ *  attrs, and the tether-beam cutout stay active cleanly. */
 export function setTetherPillsRendered(layer:Konva.Layer,ids:ReadonlySet<string>) {
   let changed=false;
   for(const pill of layer.find('.ray-mid-pill')) {
@@ -105,7 +106,11 @@ export function createTetherPillReader() {
     const present=new Set<string>();
     const result:MiniatureNameLabel[]=[];
     for(const pill of pills) {
-      if(!(pill instanceof Konva.Group)||!pill.isVisible()||pill.getAbsoluteOpacity()<=0)continue;
+      if(!(pill instanceof Konva.Group)||!pill.isVisible())continue;
+      const rawPillOpacity=pill.getAttr('pillOpacity');
+      const attrOpacity=typeof rawPillOpacity==='number'&&Number.isFinite(rawPillOpacity)?rawPillOpacity:0.95;
+      const effectiveOpacity=Math.max(0,Math.min(1,pill.getAbsoluteOpacity()*attrOpacity));
+      if(effectiveOpacity<=0)continue;
       const id=pill.getAttr('pillId') as string|undefined;
       const label=String(pill.getAttr('pillLabel')??'');
       const outOfRange=Boolean(pill.getAttr('pillOutOfRange'));
@@ -127,8 +132,8 @@ export function createTetherPillReader() {
         group.add(new Konva.Rect({
           width:refW,
           height:refH,
-          fill:'rgba(14, 17, 24, 0.62)',
-          opacity:0.82,
+          fill:'rgba(12, 15, 22, 0.84)',
+          opacity:1,
           stroke:outOfRange?'#e07b67':border,
           strokeWidth:refStroke,
           cornerRadius:refH/2,
@@ -141,8 +146,8 @@ export function createTetherPillReader() {
           verticalAlign:'middle',
           text:label,
           fill:outOfRange?'#ffb3a3':spark,
-          stroke:'rgba(0, 0, 0, 0.72)',
-          strokeWidth:refFont*0.14,
+          stroke:'rgba(0, 0, 0, 0.85)',
+          strokeWidth:refFont*0.16,
           fillAfterStrokeEnabled:true,
           fontStyle:'bold',
           fontSize:refFont,
@@ -170,7 +175,7 @@ export function createTetherPillReader() {
         id,
         canvas:entry.canvas,
         points:entry.points,
-        opacity:pill.getAbsoluteOpacity(),
+        opacity:effectiveOpacity,
         emphasized:false,
         alwaysVisible:true,
         coveredOpacity:TETHER_PILL_COVERED_OPACITY,
