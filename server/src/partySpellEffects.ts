@@ -2,7 +2,9 @@ import {breakInvisibility} from './advancedSpells.js';
 import {partySpell} from '../../shared/partySpells.js';
 import {shieldAcBonus,spellActionBlockMessage} from '../../shared/spellBuffs.js';
 import {effectiveAc} from '../../shared/modifiers.js';
-import {tokenDistanceFt} from '../../shared/distance.js';
+import {tokensWithin5ft,tokensWithinDistanceFt} from '../../shared/distance.js';
+import {baseSeparation} from '../../shared/tokenPlacement.js';
+import {miniatureBaseWidthFt} from '../../shared/monsterAppearance.js';
 import {tokenInSpellRadius} from '../../shared/spellAreas.js';
 import {passageWalls} from '../../shared/archGeometry.js';
 import {hasLineOfSight,distanceToWall} from '../../shared/mapWalls.js';
@@ -83,16 +85,18 @@ export function syncPassWithoutTrace(sid:string):boolean {
 export function mistyStepError(sid:string,kind:TokenKind,id:string,d:AbilityRollPayload['destination']):string|undefined {
   const map=d&&getMap(d.mapId),e=entity(kind,id),source=map&&listTokens(map.id).find(t=>t.kind===kind&&t.refId===id);
   if(!d||![d.x,d.y].every(Number.isFinite)||!map||map.sessionId!==sid||getSessionById(sid)?.activeMapId!==map.id||!source||!e)return 'Place the caster and choose a destination on the active map.';
-  if(tokenDistanceFt({...source,widthFt:0},{...d,widthFt:0},map)>30+1e-6)return 'Misty Step reaches up to 30 feet.';
+  if(!tokensWithinDistanceFt({...source,widthFt:0},{...d,widthFt:0},30,map))return 'Misty Step reaches up to 30 feet.';
   if(passageWalls(map.walls??[]).some(w=>!(w.door&&w.open)&&distanceToWall(d,w)<.1))return 'Choose a destination outside the wall.';
   // A visible window permits teleporting through it; closed opaque walls do not.
   if(!hasLineOfSight(source,d,map.walls))return 'Choose a destination the caster can see.';
+  const pxPerFoot=map.gridSizePx/(map.feetPerSquare||5),sourceRadius=miniatureBaseWidthFt(source,e)*pxPerFoot/2;
   if(listTokens(map.id).some(t=>{
     if(t.id===source.id)return false;
     const targetEntity=entity(t.kind,t.refId);
     if(targetEntity&&isDeadEntity(t.kind,targetEntity))return false;
     if(t.kind==='monster'&&targetEntity&&'objectKind' in targetEntity&&targetEntity.objectKind)return false;
-    return Math.hypot(t.x-d.x,t.y-d.y)<(source.widthFt+t.widthFt)*map.gridSizePx/map.feetPerSquare/2;
+    const targetRadius=miniatureBaseWidthFt(t,targetEntity??{})*pxPerFoot/2;
+    return Math.hypot(t.x-d.x,t.y-d.y)<baseSeparation(sourceRadius,targetRadius)-1e-5;
   }))return 'Choose an unoccupied destination.';
 }
 export function teleportMistyStep(sid:string,kind:TokenKind,id:string,d:NonNullable<AbilityRollPayload['destination']>):boolean {
@@ -109,7 +113,7 @@ export function shakeAwake(sid:string,actorId:string,targetId:string):string|und
   if(!actor||!target||!map||map.sessionId!==sid||actor.mapId!==target.mapId||actor.kind===target.kind&&actor.refId===target.refId)return 'Choose another creature to shake awake.';
   const a=entity(actor.kind,actor.refId),e=entity(target.kind,target.refId);
   if(!a||a.curHp<=0||a.conditions.some(c=>/^(incapacitated|paralyzed|petrified|stunned|unconscious)$/i.test(c.label))||spellActionBlockMessage(a))return 'The acting creature cannot take an action.';
-  if(tokenDistanceFt(actor,target,map)>5||!hasLineOfSight(actor,target,map.walls))return 'Move within 5 feet of the creature to shake them awake.';
+  if(!tokensWithin5ft(actor,target,map)||!hasLineOfSight(actor,target,map.walls))return 'Move within 5 feet of the creature to shake them awake.';
   const conditions=e?.conditions.filter(c=>c.label==='Hypnotic Pattern'&&c.combatEffect?.spell==='Hypnotic Pattern')??[];
   if(!conditions.length)return 'This creature is not affected by Hypnotic Pattern.';
   conditions.forEach(c=>clearCondition(target.kind,target.refId,c.id));

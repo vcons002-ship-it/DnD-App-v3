@@ -1,3 +1,4 @@
+import { withinDistanceFt } from './distance.js';
 import type {HpFxEvent,Weapon,WeaponAttackKind} from './types.js';
 
 /** Cosmetic categories only. Never forward a creature's weapon name or stats. */
@@ -5,7 +6,7 @@ export function weaponAttackKind(weapon:Weapon,distanceFt=0):WeaponAttackKind{
   const tags=[weapon.name,...weapon.tags??[]].join(' ').toLowerCase();
   const throwable=/\bthrown\b/.test(tags+' '+(weapon.range??''))||/\b(handaxe|dagger|javelin|spear|trident|light hammer)\b/.test(tags);
   const reach=Number(/reach\s*(\d+)/i.exec(weapon.range??'')?.[1]??5);
-  if(weapon.kind==='ranged'||throwable&&(distanceFt>reach+1e-6||/\bthrow(?:n)?\b/.test(weapon.name.toLowerCase()))){
+  if(weapon.kind==='ranged'||throwable&&(!withinDistanceFt(distanceFt,reach)||/\bthrow(?:n)?\b/.test(weapon.name.toLowerCase()))){
     if(/crossbow/.test(tags))return 'bolt';
     if(/\b(pistol|musket|rifle|firearm|gun)\b/.test(tags))return 'bullet';
     if(/blowgun|\bdart\b/.test(tags))return 'dart';

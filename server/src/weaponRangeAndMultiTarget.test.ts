@@ -56,6 +56,9 @@ describe('shared weapon range parser & evaluator', () => {
     const longsword: Weapon = { name: 'Longsword', kind: 'melee', damage: '1d8', damageType: 'slashing' };
     expect(parseWeaponRange(longsword)).toMatchObject({ normalFt: 5 });
     expect(formatWeaponRange(parseWeaponRange(longsword))).toBe('5 ft');
+    expect(evaluateWeaponRange(longsword, 5.4)).toMatchObject({ status: 'normal', pillText: '5 ft' });
+    expect(evaluateWeaponRange(longsword, 6.2)).toMatchObject({ status: 'normal', pillText: '6 ft' });
+    expect(evaluateWeaponRange(longsword, 7)).toMatchObject({ status: 'out', pillText: '7 ft · Out' });
 
     const glaive: Weapon = { name: 'Glaive', kind: 'melee', damage: '1d10', damageType: 'slashing', tags: ['Heavy', 'Reach'] };
     expect(parseWeaponRange(glaive)).toMatchObject({ normalFt: 10, reach: true });
@@ -65,7 +68,10 @@ describe('shared weapon range parser & evaluator', () => {
     const dagger: Weapon = { name: 'Dagger', kind: 'melee', damage: '1d4', damageType: 'piercing' };
     expect(parseWeaponRange(dagger)).toMatchObject({ normalFt: 20, longFt: 60, thrown: true });
     expect(evaluateWeaponRange(dagger, 15)).toMatchObject({ status: 'normal', pillText: '15 ft' });
+    expect(evaluateWeaponRange(dagger, 21.2)).toMatchObject({ status: 'normal', pillText: '21 ft' });
     expect(evaluateWeaponRange(dagger, 35)).toMatchObject({ status: 'long', pillText: '35 ft · Long' });
+    expect(evaluateWeaponRange(dagger, 61.2)).toMatchObject({ status: 'long', pillText: '61 ft · Long' });
+    expect(evaluateWeaponRange(dagger, 62)).toMatchObject({ status: 'out', pillText: '62 ft · Out' });
     expect(evaluateWeaponRange(dagger, 70)).toMatchObject({ status: 'out', pillText: '70 ft · Out' });
 
     const shortbow: Weapon = { name: 'Shortbow', kind: 'ranged', damage: '1d6', damageType: 'piercing', range: '80/320 ft' };
@@ -91,6 +97,10 @@ describe('shared weapon range parser & evaluator', () => {
     expect(formatTetherRangePill(25, { hoveredWeapon: longsword })).toEqual({
       midLabel: '25 ft · Out',
       outOfRange: true,
+    });
+    expect(formatTetherRangePill(5.4, { hoveredWeapon: longsword })).toEqual({
+      midLabel: '5 ft',
+      outOfRange: false,
     });
     expect(formatTetherRangePill(5, { hoveredWeapon: longsword })).toEqual({
       midLabel: '5 ft',

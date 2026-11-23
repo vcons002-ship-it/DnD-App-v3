@@ -157,7 +157,7 @@ import {
   autoCritFromConditions,
   evaluateAttackContext,
 } from '../../shared/conditionEffects.js';
-import { tokensWithin5ft, tokenDistanceFt } from '../../shared/distance.js';
+import { tokensWithin5ft, tokensWithinDistanceFt, tokenDistanceFt } from '../../shared/distance.js';
 import { rollDice, rollDicePool, type DiceResult } from '../../shared/dice.js';
 import { checkReveal, diceReveal } from '../../shared/rollReveal.js';
 import { smiteChoices, smiteDiceTerms, type SmiteChoice } from '../../shared/smite.js';
@@ -1437,7 +1437,7 @@ function riposteWeapons(sessionId: string, defenderId: string, attackerId: strin
   return ch.weapons.flatMap((weapon, index) => {
     if (tags?.length && !tags.some(t => weapon.tags?.some(w => w.trim().toLowerCase() === t.trim().toLowerCase()))) return [];
     const reach = Number(/(\d+)/.exec(weapon.range ?? '')?.[1]) || (weapon.tags?.some(t => t.toLowerCase() === 'reach') ? 10 : 5);
-    return weapon.kind === 'melee' && tokenDistanceFt(defender, attacker, map) <= reach + 1e-6 ? [index] : [];
+    return weapon.kind === 'melee' && tokensWithinDistanceFt(defender, attacker, reach, map) ? [index] : [];
   });
 }
 
@@ -1467,7 +1467,7 @@ export function resolveOrbLeap(sessionId: string, rollId: string, targetTokenId?
   const leapRange = orb.initial ? 90 : (orb.leapRangeFt ?? 30);
   if (!target || target.mapId !== orb.origin.mapId || map?.sessionId !== sessionId ||
       getSessionById(sessionId)?.activeMapId !== target.mapId || orb.visited.includes(`${target.kind}:${target.refId}`) ||
-      tokenDistanceFt(orb.origin,target,map) > leapRange + 1e-6 ||
+      !tokensWithinDistanceFt(orb.origin,target,leapRange,map) ||
       !hasLineOfSight(orb.origin,target,map?.walls) ||
       (target.kind === 'monster' && getMonster(target.refId)?.objectKind))
     return {ok:false,reason:'Choose a new creature within range of the orb.'};
@@ -2981,7 +2981,7 @@ function resolveSheetAbilityFor(
         if (!tok || !rec || isDeadEntity(tok.kind, rec) || (tok.kind === 'monster' && (rec as Monster).objectKind)) return false;
         if (casterTok && casterTok.mapId === tok.mapId) {
           const map = getMap(tok.mapId);
-          if (map && tokenDistanceFt(casterTok, tok, map) > 30) return false;
+          if (map && !tokensWithinDistanceFt(casterTok, tok, 30, map)) return false;
         }
         const entKey = `${tok.kind}:${tok.refId}`;
         if (seen.has(entKey)) return false;
@@ -3039,7 +3039,7 @@ function resolveSheetAbilityFor(
       if (!tok || !rec || rec.curHp <= 0 || isDeadEntity(tok.kind, rec) || (tok.kind === 'monster' && (rec as Monster).objectKind)) return false;
       if (casterTok && casterTok.mapId === tok.mapId) {
         const map = getMap(tok.mapId);
-        if (map && tokenDistanceFt(casterTok, tok, map) > 30) return false;
+        if (map && !tokensWithinDistanceFt(casterTok, tok, 30, map)) return false;
       }
       const entKey = `${tok.kind}:${tok.refId}`;
       if (seen.has(entKey)) return false;

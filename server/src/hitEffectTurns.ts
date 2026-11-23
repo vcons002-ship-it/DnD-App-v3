@@ -7,7 +7,7 @@ import { rollDice, withDiceMetadata } from '../../shared/dice.js';
 import { damageMultiplier } from '../../shared/combatMath.js';
 import type { Token } from '../../shared/types.js';
 import { markedEntity } from './marks.js';
-import {tokenDistanceFt} from '../../shared/distance.js';
+import {tokensWithinDistanceFt} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import { hitEffectSave } from './hitFeatures.js';
 import { listTokens,listCharacters,listMonsters,isDeadEntity,getSessionById,getToken,getMap,endConcentration,clearCondition,applyDamage,addRollLog,setCondition,setTempHp } from './sessions.js';
@@ -36,7 +36,7 @@ export function expireTimedSpellEffects(sid:string) {
       const caster=markedEntity(fx.casterKind,fx.casterId);
       if(fx.spellAction&&fx.spell.toLowerCase()==='witch bolt'&&fx.targetTokenId) {
         const target=getToken(fx.targetTokenId),map=target&&getMap(target.mapId),actor=target&&listTokens(target.mapId).find(t=>t.kind===kind&&t.refId===e.id);
-        if(!target||!actor||!map||tokenDistanceFt(actor,target,map)>60||!hasLineOfSight(actor,target,map.walls)) {
+        if(!target||!actor||!map||!tokensWithinDistanceFt(actor,target,60,map)||!hasLineOfSight(actor,target,map.walls)) {
           endConcentration(kind,e.id,'Witch Bolt link broken by distance or Total Cover');changed=true;continue;
         }
       }

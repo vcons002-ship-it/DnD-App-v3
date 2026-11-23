@@ -1,7 +1,7 @@
 import {advancedSpell,isInvisible} from '../../shared/advancedSpells.js';
 import {seesInvisible} from '../../shared/invisibleSight.js';
 import type {AbilityRollPayload,SheetAbility,Token,TokenKind,ClientToServerEvents} from '../../shared/types.js';
-import {tokenDistanceFt} from '../../shared/distance.js';
+import {tokenDistanceFt,withinDistanceFt} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import {createPlayerVision,visionContains} from '../../shared/playerVision.js';
 import {spellSlotOptions,selectSpellSlot} from '../../shared/spellSlotPools.js';
@@ -36,7 +36,7 @@ export function eligibleCounterspellers(c:Pick<HeldCast,'casterTokenId'|'session
    const spell=e.sheetAbilities.find(a=>advancedSpell(a)==='counterspell');
    if(!spell||effectiveRecharge(spell)?.spent||t.kind==='pc'&&!spellSlotOptions(getCharacter(t.refId)!,3).some(s=>s.remaining>0))return false;
    const distance=tokenDistanceFt(t,caster,map);
-   if(distance>60+1e-6||!hasLineOfSight(t,caster,map.walls)||isInvisible(enemy)&&!seesInvisible(e,distance))return false;
+   if(!withinDistanceFt(distance,60)||!hasLineOfSight(t,caster,map.walls)||isInvisible(enemy)&&!seesInvisible(e,distance))return false;
    if(t.kind==='pc'){
      if(map.mapFogEnabled&&!map.mapFogRevealed.includes(`${Math.floor(caster.x/map.gridSizePx)},${Math.floor(caster.y/map.gridSizePx)}`)||map.tokenFogEnabled&&!map.tokenFogRevealed.includes(`${Math.floor(caster.x/map.gridSizePx)},${Math.floor(caster.y/map.gridSizePx)}`))return false;
      if(!visionContains(createPlayerVision(map,all,new Set([t.refId])),caster.x,caster.y))return false;

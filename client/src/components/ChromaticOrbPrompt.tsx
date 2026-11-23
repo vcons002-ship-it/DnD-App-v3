@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { tokenDistanceFt } from '../../../shared/distance';
+import { tokenDistanceFt, tokensWithinDistanceFt } from '../../../shared/distance';
 import { resolveToken } from '../lib/entities';
 import { targetLabel } from '../lib/targets';
 import { playHeal } from '../lib/sfx';
@@ -47,7 +47,7 @@ export function ChromaticOrbPrompt() {
     (casterSide !== 'neutral' && side(kind, refId) === casterSide);
   const targets = snapshot.tokens.filter(t => !t.sharedSightOnly && !t.partiallyRevealed && (includeAllies || !allied(t.kind, t.refId)) && t.mapId === orb.origin.mapId &&
     !orb.visited.includes(`${t.kind}:${t.refId}`) && !resolveToken(snapshot, t).objectKind &&
-    tokenDistanceFt(orb.origin, t, snapshot.map) <= range + 1e-6)
+    tokensWithinDistanceFt(orb.origin, t, range, snapshot.map))
     .sort((a,b) => tokenDistanceFt(orb.origin,a,snapshot.map) - tokenDistanceFt(orb.origin,b,snapshot.map));
   const choosing = targeting?.rollId === entry.id;
   const selected = choosing ? snapshot.tokens.find(t => t.id === targeting.targetId) : undefined;

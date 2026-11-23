@@ -3,7 +3,7 @@ import { useStore } from '../state/socket';
 import { markSpell, abilityKey } from '../../../shared/hitFeatures';
 import { resolveToken } from '../lib/entities';
 import { targetLabel } from '../lib/targets';
-import { tokenDistanceFt } from '../../../shared/distance';
+import { tokenDistanceFt, tokensWithinDistanceFt } from '../../../shared/distance';
 
 export function MarkTransferPrompt() {
   const snapshot=useStore(s=>s.snapshot), socket=useStore(s=>s.socket);
@@ -22,7 +22,7 @@ export function MarkTransferPrompt() {
   if(!snapshot||!offer||selection&&!selection.mark) return null;
   const {c,a}=offer, source=snapshot.tokens.find(t=>t.kind==='pc'&&t.refId===c.id);
   const target=snapshot.tokens.find(t=>t.id===selection?.targetId);
-  const valid=!!source&&!!target&&!target.sharedSightOnly&&!target.partiallyRevealed&&target.mapId===source.mapId&&!resolveToken(snapshot,target).objectKind&&!resolveToken(snapshot,target).dead&&resolveToken(snapshot,target).curHp!==0&&!(target.kind===a.mark?.kind&&target.refId===a.mark.refId)&&tokenDistanceFt(source,target,snapshot.map)<=90;
+  const valid=!!source&&!!target&&!target.sharedSightOnly&&!target.partiallyRevealed&&target.mapId===source.mapId&&!resolveToken(snapshot,target).objectKind&&!resolveToken(snapshot,target).dead&&resolveToken(snapshot,target).curHp!==0&&!(target.kind===a.mark?.kind&&target.refId===a.mark.refId)&&tokensWithinDistanceFt(source,target,90,snapshot.map);
   const choose=()=>setSelection({rollId:`mark:${c.id}:${a.id}`,mark:{kind:'pc',refId:c.id,abilityId:a.id}});
   return <section className="orb-prompt orb-picking" aria-label="Move mark">
     <strong>{a.name}: target defeated</strong>

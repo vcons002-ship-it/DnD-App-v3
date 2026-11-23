@@ -4,7 +4,7 @@ import {spellcastingMod} from '../../shared/spellMath.js';
 import {profBonusFor} from '../../shared/combatMath.js';
 import {proficiencyBonus} from '../../shared/skills.js';
 import {spellcastingKeyFor} from '../../shared/spellExecution.js';
-import {tokenDistanceFt} from '../../shared/distance.js';
+import {tokensWithinDistanceFt} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import type {SheetAbility,TokenKind,RollEntry} from '../../shared/types.js';
 import {newId} from './db.js';
@@ -15,7 +15,7 @@ export function commandTargetError(sid:string,entry:RollEntry,tokenId:string):st
   const fx=entry.apply?.effect,target=getToken(tokenId),map=target&&getMap(target.mapId);
   const caster=fx&&listTokens(map?.id??'').find(t=>t.kind===fx.casterKind&&t.refId===fx.casterId);
   if(!fx?.commandWord||!target||!map||map.sessionId!==sid||map.id!==getSessionById(sid)?.activeMapId||!caster)return 'Place the caster and choose a creature on the active map.';
-  if(tokenDistanceFt({...caster,widthFt:0},{...target,widthFt:0},map)>60||!hasLineOfSight(caster,target,map.walls))return 'Command requires a visible target within 60 feet.';
+  if(!tokensWithinDistanceFt({...caster,widthFt:0},{...target,widthFt:0},60,map)||!hasLineOfSight(caster,target,map.walls))return 'Command requires a visible target within 60 feet.';
   const e=target.kind==='pc'?getCharacter(target.refId):getMonster(target.refId);
   if(!e||e.curHp<=0||target.kind==='monster'&&'objectKind' in e&&e.objectKind)return 'Choose a living creature for Command.';
   if((entry.apply?.consumedTargets??[]).some(id=>{const t=getToken(id);return t?.kind===target.kind&&t.refId===target.refId;}))return 'That creature already saved against this Command.';

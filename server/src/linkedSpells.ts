@@ -7,7 +7,7 @@ import {spellcastingKeyFor} from '../../shared/spellExecution.js';
 import {saveAdvantage,saveAutoFail} from '../../shared/conditionEffects.js';
 import {damageMultiplier} from '../../shared/combatMath.js';
 import {rollDice,rollDicePool,withDiceMetadata,usingPhysicalDice} from '../../shared/dice.js';
-import {tokenDistanceFt} from '../../shared/distance.js';
+import {tokenDistanceFt,tokensWithin5ft,tokensWithinDistanceFt,withinDistanceFt} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import {newId} from './db.js';
 import {rollSaveBatch} from './saveDiceBatch.js';
@@ -44,7 +44,7 @@ export function startSpellUse(ctx:LinkedSpellContext,a:SheetAbility,targetTokenI
 export function spiritualWeaponPlacementError(sid:string,kind:TokenKind,id:string,mapId:string,x:number,y:number):string|undefined {
   const map=getMap(mapId),actor=listTokens(mapId).find(t=>t.kind===kind&&t.refId===id);
   if(!map||map.sessionId!==sid||!actor||!Number.isFinite(x)||!Number.isFinite(y))return 'Place your caster on this map first.';
-  if(tokenDistanceFt({...actor,widthFt:0},{x,y,widthFt:0},map)>60+1e-6||!hasLineOfSight(actor,{x,y},map.walls))return 'Place Spiritual Weapon within 60 feet and outside Total Cover.';
+  if(!tokensWithinDistanceFt({...actor,widthFt:0},{x,y,widthFt:0},60,map)||!hasLineOfSight(actor,{x,y},map.walls))return 'Place Spiritual Weapon within 60 feet and outside Total Cover.';
 }
 
 export function summonSpiritualWeapon(ctx:LinkedSpellContext,a:SheetAbility,mapId:string,x:number,y:number){
@@ -93,7 +93,7 @@ export function mirrorIntercept(sid:string,attacker:Token,target:Token,roller:st
   const traits=source.abilities.map(a=>`${a.name} ${a.description}`).join(' ');
   const distance=tokenDistanceFt(attacker,target,getMap(target.mapId));
   const sense=/(?:blindsight|truesight)\s*:?\s*(\d+)\s*(?:ft|feet)/ig;
-  if(source.conditions.some(c=>spellKey(c.label)==='blinded')||defender.conditions.some(c=>spellKey(c.label)==='invisible')&&!/see invisibility/i.test(traits)||[...traits.matchAll(sense)].some(m=>distance<=Number(m[1])))return false;
+  if(source.conditions.some(c=>spellKey(c.label)==='blinded')||defender.conditions.some(c=>spellKey(c.label)==='invisible')&&!/see invisibility/i.test(traits)||[...traits.matchAll(sense)].some(m=>withinDistanceFt(distance,Number(m[1]))))return false;
   const dice=withDiceMetadata({label:`Mirror Image — ${defender.name}: Duplicate Check`,target:{kind:target.kind,refId:target.refId}},()=>rollDice(`${n}d6`))!;
   const diverted=dice.rolls.some(v=>v>=3),condition=defender.conditions.find(c=>spellKey(c.label)==='mirror image')!;
   if(diverted){if(n===1)clearCondition(target.kind,target.refId,condition.id);else setCondition(target.kind,target.refId,{...condition,combatEffect:{...condition.combatEffect!,duplicates:n-1}});}
@@ -220,12 +220,12 @@ export function repeatSpell(sid:string,roller:string,kind:TokenKind,id:string,co
     if(getSessionById(sid)?.activeTurnTokenId!==actor?.id)return 'Use this spell action on your turn.';
     if(fx.lastUseTurn===current)return 'This spell action was already used this turn.';
   }
-  if(locked&&actor&&(tokenDistanceFt(actor,token,getMap(token.mapId))>60||key==='witch bolt'&&!hasLineOfSight(actor,token,getMap(token.mapId)!.walls)))return 'The linked target is beyond 60 feet or behind Total Cover.';
+  if(locked&&actor&&(!tokensWithinDistanceFt(actor,token,60,getMap(token.mapId))||key==='witch bolt'&&!hasLineOfSight(actor,token,getMap(token.mapId)!.walls)))return 'The linked target is beyond 60 feet or behind Total Cover.';
   if(key==='heat metal'&&fx.itemDropped)return 'The heated item was dropped; there is no creature touching it.';
   if(key==='spiritual weapon'){
     const weapon=getToken(fx.summonTokenId??'');
     if(!weapon||!spiritualWeaponOwner(weapon)||weapon.mapId!==token.mapId)return 'The spectral weapon is no longer on this map.';
-    if(tokenDistanceFt(weapon,token,getMap(token.mapId))>5+1e-6||!hasLineOfSight(weapon,token,getMap(token.mapId)!.walls))return 'Choose a creature within 5 feet of Spiritual Weapon, outside Total Cover.';
+    if(!tokensWithin5ft(weapon,token,getMap(token.mapId))||!hasLineOfSight(weapon,token,getMap(token.mapId)!.walls))return 'Choose a creature within 5 feet of Spiritual Weapon, outside Total Cover.';
     faceTokenToward(sid,weapon.id,token.id);
   }
   setCondition(kind,id,{...condition!,combatEffect:{...fx,lastUseTurn:current}});

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { tokenDistanceFt, tokensWithin5ft } from '../../shared/distance.js';
+import {
+  DISTANCE_TOLERANCE_FT,
+  tokenDistanceFt,
+  tokensWithin5ft,
+  tokensWithinDistanceFt,
+  withinDistanceFt,
+} from '../../shared/distance.js';
 
 // A standard map: a 50-px grid cell = 5 ft (0.1 ft/px).
 const map = { feetPerSquare: 5, gridSizePx: 50 } as const;
@@ -44,5 +50,22 @@ describe('tokenDistanceFt / tokensWithin5ft', () => {
   it('keeps widthFt=0 point queries centered regardless of miniatureWidthFt', () => {
     const pointCaster = { x: 0, y: 0, widthFt: 0, miniatureWidthFt: 13.5 };
     expect(tokenDistanceFt(pointCaster, { x: 100, y: 0, widthFt: 0, miniatureWidthFt: 13.5 }, map)).toBeCloseTo(10);
+  });
+
+  it('forgives slightly inexact placements up to DISTANCE_TOLERANCE_FT without accepting far tokens', () => {
+    expect(DISTANCE_TOLERANCE_FT).toBe(1.5);
+    // 5.3 ft & 5.49 ft display as "5 ft" after rounding, and 6.2-6.5 ft are loose adjacent drops.
+    expect(tokensWithin5ft(tok(0, 0), tok(53, 0), map)).toBe(true);
+    expect(tokensWithin5ft(tok(0, 0), tok(54.9, 0), map)).toBe(true);
+    expect(tokensWithin5ft(tok(0, 0), tok(62, 0), map)).toBe(true);
+    expect(tokensWithin5ft(tok(0, 0), tok(65, 0), map)).toBe(true);
+    expect(tokensWithin5ft(tok(0, 0), tok(70, 0), map)).toBe(false);
+    expect(tokensWithin5ft(tok(0, 0), tok(100, 0), map)).toBe(false);
+
+    // Generic ranged helper behaves identically for 30 ft and 60 ft thresholds.
+    expect(withinDistanceFt(31.5, 30)).toBe(true);
+    expect(withinDistanceFt(32, 30)).toBe(false);
+    expect(tokensWithinDistanceFt(tok(0, 0), tok(612, 0), 60, map)).toBe(true);
+    expect(tokensWithinDistanceFt(tok(0, 0), tok(620, 0), 60, map)).toBe(false);
   });
 });

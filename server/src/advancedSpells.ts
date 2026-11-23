@@ -1,6 +1,6 @@
 import {advancedSpell,isInvisible,spikeInterval,subtractIntervals} from '../../shared/advancedSpells.js';
 import type {AbilityRollPayload,Condition,SheetAbility,Token,TokenKind} from '../../shared/types.js';
-import {tokenDistanceFt} from '../../shared/distance.js';
+import {tokensWithin5ft} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import {rollDicePool,withDiceMetadata} from '../../shared/dice.js';
 import {damageMultiplier} from '../../shared/combatMath.js';
@@ -15,7 +15,7 @@ export function invisibilityError(sid:string,kind:TokenKind,id:string,level:numb
   for(const tokenId of ids){
     const token=listSessionTokens(sid).find(t=>t.id===tokenId),e=token&&entity(token.kind,token.refId),map=token&&getMap(token.mapId),actor=map&&listTokens(map.id).find(t=>t.kind===kind&&t.refId===id);
     if(!token||!e||!actor||!map||isDeadEntity(token.kind,e)||e.curHp<=0||('objectKind'in e&&e.objectKind))return 'Choose living creatures on the caster’s map.';
-    if(tokenDistanceFt(actor,token,map)>5+1e-6||!hasLineOfSight(actor,token,map.walls))return 'Invisibility requires touching each target (within 5 ft).';
+    if(!tokensWithin5ft(actor,token,map)||!hasLineOfSight(actor,token,map.walls))return 'Invisibility requires touching each target (within 5 ft).';
   }
 }
 import {listMaps} from './sessions.js';

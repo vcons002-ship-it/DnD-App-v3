@@ -1,6 +1,6 @@
 import { markSpell, abilityKey } from '../../shared/hitFeatures.js';
 import type { TokenKind, SheetAbility, Token, RevealStep, Character, Monster, HpDamagePart } from '../../shared/types.js';
-import { tokenDistanceFt } from '../../shared/distance.js';
+import { tokensWithinDistanceFt } from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import { rollDicePool, withDiceMetadata } from '../../shared/dice.js';
 import { damageMultiplier } from '../../shared/combatMath.js';
@@ -12,7 +12,7 @@ export function castMark(sessionId:string,kind:TokenKind,id:string,ability:Sheet
   const mapId=getSessionById(sessionId)?.activeMapId;
   const source=mapId ? listTokens(mapId).find(t=>t.kind===kind && t.refId===id) : null;
   if (!caster || caster.sessionId!==sessionId || !markSpell(ability) || !source || !target || target.mapId!==mapId ||
-      tokenDistanceFt(source,target,getMap(target.mapId))>90 ||
+      !tokensWithinDistanceFt(source,target,90,getMap(target.mapId)) ||
       !hasLineOfSight(source,target,getMap(target.mapId)?.walls) ||
       markedEntity(target.kind,target.refId)?.sessionId!==sessionId ||
       (target.kind==='monster' && getMonster(target.refId)?.objectKind)) return false;

@@ -1,3 +1,4 @@
+import { withinDistanceFt } from '../../../shared/distance';
 import {difficultTravel} from '../../../shared/advancedSpells';
 import {mirrorImageCount,MIRROR_IMAGE_SPREAD} from '../../../shared/linkedSpells';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
@@ -264,7 +265,7 @@ function TokenShapeInner({
           previewArrow.current?.rotation(-facingAfterMove(origin.x,origin.y,result.x,result.y,token.facing)*180/Math.PI);
           tether.current?.points([origin.x,origin.y,result.x,result.y]);
           distText.current?.text(`${result.distanceFt} ft${result.costFt>result.distanceFt+.01?` · costs ${result.costFt} ft`:''}${movementAllowanceFt===undefined?'':` / ${movementAllowanceFt} ft`}`);
-          distText.current?.fill(movementAllowanceFt!==undefined&&result.costFt>movementAllowanceFt?'#ff9276':'#ffd21a');
+          distText.current?.fill(movementAllowanceFt!==undefined&&!withinDistanceFt(result.costFt,movementAllowanceFt)?'#ff9276':'#ffd21a');
           distText.current?.position({x:(origin.x+result.x)/2,y:(origin.y+result.y)/2-16});
           invalidateRetainedToken(dragOverlay.current);dragOverlay.current?.getLayer()?.batchDraw();
         });
@@ -284,7 +285,7 @@ function TokenShapeInner({
       const difficult=difficultTravel(origin,{x:cx,y:cy},terrainZones??[],pxPerFoot);
       const cost=Math.round((distance+difficult)*10)/10;
       distText.current.text(`${distance} ft${difficult>.01?` ? costs ${cost} ft`:''}${movementAllowanceFt === undefined ? '' : ` / ${movementAllowanceFt} ft`}`);
-      distText.current.fill(movementAllowanceFt !== undefined && cost > movementAllowanceFt ? '#ff9276' : '#ffd21a');
+      distText.current.fill(movementAllowanceFt !== undefined && !withinDistanceFt(cost, movementAllowanceFt) ? '#ff9276' : '#ffd21a');
       distText.current.position({x:(origin.x+cx)/2,y:(origin.y+cy)/2-distText.current.fontSize()*1.1});
     }
     invalidateRetainedToken(dragOverlay.current);dragOverlay.current?.getLayer()?.batchDraw();
