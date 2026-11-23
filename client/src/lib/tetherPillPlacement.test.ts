@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeTetherPillMetrics,
   computeTetherPillPlacement,
   evalTetherQuadraticBezier,
+  TETHER_PILL_MAX_MAP_FONT_FT,
+  TETHER_PILL_MAX_SCREEN_FONT_PX,
+  TETHER_PILL_MIN_SCREEN_FONT_PX,
   type TetherBezier,
   type TetherObstacleToken,
 } from './tetherPillPlacement';
@@ -92,6 +96,40 @@ function pillClearOfObstacles(
   return true;
 }
 
+function minDistanceToBezier(curve: TetherBezier, pt: { x: number; y: number }): number {
+  let best = Infinity;
+  for (let i = 0; i <= 100; i++) {
+    const c = evalTetherQuadraticBezier(curve, i / 100);
+    const d = Math.hypot(c.x - pt.x, c.y - pt.y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+describe('computeTetherPillMetrics', () => {
+  const pxPerFoot = 12.8;
+
+  it('clamps screen size between min and max bounds across zoom levels', () => {
+    const moderateZoomOut = computeTetherPillMetrics('30 ft', pxPerFoot, 0.7);
+    expect(moderateZoomOut.fontSize * 0.7).toBeGreaterThanOrEqual(TETHER_PILL_MIN_SCREEN_FONT_PX - 1e-6);
+    expect(moderateZoomOut.fontSize * 0.7).toBeLessThanOrEqual(TETHER_PILL_MAX_SCREEN_FONT_PX + 1e-6);
+
+    const zoomedIn = computeTetherPillMetrics('30 ft', pxPerFoot, 3.0);
+    expect(zoomedIn.fontSize * 3.0).toBeLessThanOrEqual(TETHER_PILL_MAX_SCREEN_FONT_PX + 1e-6);
+    expect(zoomedIn.fontSize * 3.0).toBeGreaterThanOrEqual(TETHER_PILL_MIN_SCREEN_FONT_PX - 1e-6);
+  });
+
+  it('caps map-space size at extreme zoom-out and small grids so it never overwhelms tokens', () => {
+    const farZoomOut = computeTetherPillMetrics('85 ft · Long', pxPerFoot, 0.2);
+    expect(farZoomOut.fontSize).toBeLessThanOrEqual(pxPerFoot * TETHER_PILL_MAX_MAP_FONT_FT + 1e-6);
+    expect(farZoomOut.pillH).toBeLessThan(3 * pxPerFoot);
+
+    const smallGrid = computeTetherPillMetrics('30 ft', 3.2, 0.25);
+    expect(smallGrid.fontSize).toBeLessThanOrEqual(3.2 * TETHER_PILL_MAX_MAP_FONT_FT + 1e-6);
+    expect(smallGrid.pillH).toBeLessThan(3 * 3.2);
+  });
+});
+
 describe('computeTetherPillPlacement', () => {
   const pxPerFoot = 12.8; // 64px / 5ft square
 
@@ -114,14 +152,15 @@ describe('computeTetherPillPlacement', () => {
     });
     const mid = evalTetherQuadraticBezier(curve, 0.5);
     expect(res.showLeader).toBe(false);
+    expect(res.overlaps2dToken).toBe(false);
     expect(res.x).toBeCloseTo(mid.x, 4);
     expect(res.y).toBeCloseTo(mid.y, 4);
     expect(pillClearOfObstacles(res, 52, 19, pxPerFoot, [a, b])).toBe(true);
   });
 
-  it('pushes wide melee / reach distance labels clear of adjacent tokens in horizontal, vertical, and diagonal setups', () => {
+  it('keeps melee / reach labels on the tether midpoint without detaching or drawing leader lines', () => {
     const scale = 1;
-    const pillW = 92; // e.g. "5 ft · Disadv"
+    const pillW = 68;
     const pillH = 19;
     const cases: [{ x: number; y: number }, { x: number; y: number }][] = [
       [{ x: 100, y: 100 }, { x: 100 + 5 * pxPerFoot, y: 100 }], // horizontal 5 ft
@@ -131,14 +170,15 @@ describe('computeTetherPillPlacement', () => {
     ];
 
     for (const [pa, pb] of cases) {
-      const a: TetherObstacleToken = { id: 'a', x: pa.x, y: pa.y, baseWidthFt: 5 };
-      const b: TetherObstacleToken = { id: 'b', x: pb.x, y: pb.y, baseWidthFt: 5 };
+      const a: TetherObstacleToken = { id: 'a', x: pa.x, y: pa.y, baseWidthFt: 5, is3d: false };
+      const b: TetherObstacleToken = { id: 'b', x: pb.x, y: pb.y, baseWidthFt: 5, is3d: false };
       const curve = makeBezierBetween(
         { x: a.x, y: a.y, widthFt: a.baseWidthFt },
         { x: b.x, y: b.y, widthFt: b.baseWidthFt },
         pxPerFoot,
         scale,
       );
+      const mid = evalTetherQuadraticBezier(curve, 0.5);
       const res = computeTetherPillPlacement({
         curve,
         pillW,
@@ -147,8 +187,12 @@ describe('computeTetherPillPlacement', () => {
         scale,
         obstacles: [a, b],
       });
-      expect(res.showLeader).toBe(true);
-      expect(pillClearOfObstacles(res, pillW, pillH, pxPerFoot, [a, b])).toBe(true);
+      expect(res.showLeader).toBe(false);
+      expect(res.x).toBeCloseTo(mid.x, 4);
+      expect(res.y).toBeCloseTo(mid.y, 4);
+      expect(res.anchorX).toBeCloseTo(mid.x, 4);
+      expect(res.anchorY).toBeCloseTo(mid.y, 4);
+      expect(res.overlaps2dToken).toBe(true);
     }
   });
 
@@ -178,49 +222,13 @@ describe('computeTetherPillPlacement', () => {
       obstacles: [a, b, midBlocker],
     });
     expect(res.showLeader).toBe(false);
+    expect(res.overlaps2dToken).toBe(false);
+    expect(minDistanceToBezier(curve, res)).toBeLessThan(1e-6);
     expect(Math.abs(res.x - mid.x)).toBeGreaterThan(20);
     expect(pillClearOfObstacles(res, 54, 19, pxPerFoot, [a, b, midBlocker])).toBe(true);
   });
 
-  it('finds an unobstructed diagonal/opposite pocket in a crowded melee scrum', () => {
-    const a: TetherObstacleToken = { id: 'a', x: 200, y: 200, baseWidthFt: 5 };
-    const b: TetherObstacleToken = { id: 'b', x: 200 + 5 * pxPerFoot, y: 200, baseWidthFt: 5 };
-    // Block directly above the seam between a and b so the pill must find an open pocket
-    const topBlocker: TetherObstacleToken = {
-      id: 'c',
-      x: 200 + 2.5 * pxPerFoot,
-      y: 200 - 5 * pxPerFoot,
-      baseWidthFt: 5,
-    };
-    const rightFlank: TetherObstacleToken = {
-      id: 'd',
-      x: 200 + 5 * pxPerFoot,
-      y: 200 - 5 * pxPerFoot,
-      baseWidthFt: 5,
-    };
-    const obstacles = [a, b, topBlocker, rightFlank];
-    const curve = makeBezierBetween(
-      { x: a.x, y: a.y, widthFt: a.baseWidthFt },
-      { x: b.x, y: b.y, widthFt: b.baseWidthFt },
-      pxPerFoot,
-      1,
-    );
-
-    const pillW = 68;
-    const pillH = 19;
-    const res = computeTetherPillPlacement({
-      curve,
-      pillW,
-      pillH,
-      pxPerFoot,
-      scale: 1,
-      obstacles,
-    });
-    expect(res.showLeader).toBe(true);
-    expect(pillClearOfObstacles(res, pillW, pillH, pxPerFoot, obstacles)).toBe(true);
-  });
-
-  it('clears standing 3D miniature silhouettes under tilted and rotated camera projection', () => {
+  it('flags overlaps2dToken false for 3D-only obstacles in crowded melee and tilted camera views', () => {
     const tiltDegrees = 45;
     const rotationDegrees = 90;
     const a: TetherObstacleToken = { id: 'a', x: 300, y: 300, baseWidthFt: 5, is3d: true };
@@ -237,21 +245,20 @@ describe('computeTetherPillPlacement', () => {
       pxPerFoot,
       1,
     );
-    const pillW = 76;
-    const pillH = 19;
+    const mid = evalTetherQuadraticBezier(curve, 0.5);
     const res = computeTetherPillPlacement({
       curve,
-      pillW,
-      pillH,
+      pillW: 60,
+      pillH: 19,
       pxPerFoot,
       scale: 1,
       tiltDegrees,
       rotationDegrees,
       obstacles: [a, b],
     });
-    expect(res.showLeader).toBe(true);
-    expect(
-      pillClearOfObstacles(res, pillW, pillH, pxPerFoot, [a, b], tiltDegrees, rotationDegrees),
-    ).toBe(true);
+    expect(res.showLeader).toBe(false);
+    expect(res.x).toBeCloseTo(mid.x, 4);
+    expect(res.y).toBeCloseTo(mid.y, 4);
+    expect(res.overlaps2dToken).toBe(false);
   });
 });

@@ -25,7 +25,7 @@ import {requestBattlefieldFrame,cancelBattlefieldFrame} from './battlefieldFrame
 import {createLatestFrame} from '../lib/latestFrame';
 import {ManualFog,type ManualFogHandle} from './ManualFog';
 import {mirrorImageCount} from '../../../shared/linkedSpells';
-import {isTokenAffinityVisible,resolveTargetAffinity,SpellAreaShapes,SpellRayTargetShapes,type TargetAffinity} from './SpellAreaShapes';
+import {isTokenAffinityVisible,resolveTargetAffinity,SpellAreaShapes,SpellRayTargetShapes,syncTetherPillsOnLayer,type TargetAffinity} from './SpellAreaShapes';
 import {DEATH_SKULL} from '../lib/miniatures';
 import './door-controls.css';
 import { activeHasteCondition, speedIsZero, walkingSpeedFeet } from '../../../shared/spellBuffs';
@@ -54,7 +54,7 @@ import type { MiniatureLayerHandle, MiniatureToken } from './MiniatureLayer';
 import type { GpuMapFloorConfig } from './gpuMapFloor';
 import { createGroundTokenSpriteReader } from './gpuGroundTokens';
 import { exploredTerrainBrightness } from '../../../shared/terrainLighting';
-import { createMiniatureNameReader, setMiniatureNamesRendered } from './miniatureNameLabels';
+import { createMiniatureNameReader, createTetherPillReader, setMiniatureNamesRendered, setTetherPillsRendered } from './miniatureNameLabels';
 import { MiniatureFallback } from './MiniatureFallback';
 import { BATTLEFIELD_TILT_DEGREES, groundYScale, screenToMap, perspectiveSlope, unprojectGround, mapToScreen, projectGround } from './miniatureProjection';
 import { useBoxSelection } from './useBoxSelection';
@@ -1071,13 +1071,16 @@ function MapStageInner({
     });
   })],[legacy,hpFx,snapshot,miniatureTokens,pxPerFoot,isDm,spellRollFx]);
   const readSharedNames=useMemo(()=>createMiniatureNameReader(),[]);
+  const readTetherPills=useMemo(()=>createTetherPillReader(),[]);
+  const invalidateMiniatures=useCallback(()=>miniatureRef.current?.invalidate(),[]);
   const miniatureNameLabels = useStableCallback(() => [...readMiniatureNames(tokenLayerRef.current,
-    id=>selectedIds.includes(id)||hover?.token.id===id||orbTarget?.targetId===id), ...readSharedNames(sharedTokenLayerRef.current,()=>false)]);
+    id=>selectedIds.includes(id)||hover?.token.id===id||orbTarget?.targetId===id), ...readSharedNames(sharedTokenLayerRef.current,()=>false), ...readTetherPills(spellAreaLayerRef.current)]);
   const handleRenderedNames = useCallback((ids: ReadonlySet<string>) => {
     for(const layer of [tokenLayerRef.current, sharedTokenLayerRef.current]) {
       if(!layer)continue;
       setMiniatureNamesRendered(layer,ids);
     }
+    if(spellAreaLayerRef.current) setTetherPillsRendered(spellAreaLayerRef.current,ids);
   },[]);
 
   const readGroundSprites = useMemo(() => createGroundTokenSpriteReader(), []);
@@ -1176,6 +1179,7 @@ function MapStageInner({
       drawnViewRef.current = { x: nextView.x, y: nextView.y, scale: nextView.scale, sy: groundScaleY };
       suppressGroundHudSyncRef.current = true;
       try {
+        syncTetherPillsOnLayer(spellAreaLayerRef.current, pxPerFoot, nextView.scale, projectionState.current.tilt, projectionState.current.rotation);
         for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
           if (!layer) continue;
           layer.position({ x: nextView.x, y: nextView.y });
@@ -1201,6 +1205,7 @@ function MapStageInner({
     visionRef.current?.camera({ view: target });
     suppressGroundHudSyncRef.current = true;
     try {
+      syncTetherPillsOnLayer(spellAreaLayerRef.current, pxPerFoot, target.scale, projectionState.current.tilt, projectionState.current.rotation);
       for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
         if (!layer) continue;
         layer.position({ x: target.x, y: target.y });
@@ -1261,6 +1266,7 @@ function MapStageInner({
       const prevAutoDraw = Konva.autoDrawEnabled;
       Konva.autoDrawEnabled = false;
       try {
+        syncTetherPillsOnLayer(spellAreaLayerRef.current, pxPerFoot, nextView.scale, projectionState.current.tilt, projectionState.current.rotation);
         for (const layer of [layerRef.current, groundTokenLayerRef.current, tokenLayerRef.current, sharedTokenLayerRef.current, spellAreaLayerRef.current]) {
           if (!layer) continue;
           layer.position({ x: nextView.x, y: nextView.y });
@@ -2065,10 +2071,8 @@ function MapStageInner({
           label.rotation(-rotation);
           if(hudHasVisibleKonvaContent(label)){invalidateRetainedToken(label,false);visibleHudRotated=true;}
         }
-        const pills=layer.find('.ray-mid-pill');
-        const invSy=1/Math.max(0.25,groundYScale(tilt));
-        for(const pill of pills){pill.rotation(-rotation);pill.scaleY(invSy);}
-        if(previous.tilt!==tilt || visibleHudRotated || pills.length){
+        const updatedPills=layer===spellAreaLayerRef.current&&syncTetherPillsOnLayer(layer,pxPerFoot,nextView.scale,tilt,rotation);
+        if(previous.tilt!==tilt || visibleHudRotated || updatedPills){
           if(layer===spellAreaLayerRef.current){
             const hasContent=spellAreaHasContent();
             if(!hasContent && !spellAreaHasPixelsRef.current)continue;
@@ -2600,7 +2604,7 @@ function MapStageInner({
               // Targeting is a UI overlay, never a source of terrain visibility.
               ref={layer=>{spellAreaLayerRef.current=layer;if(layer){const c=layer.getNativeCanvasElement();c.style.zIndex='6';c.style.pointerEvents='none';c.dataset.testid='spell-area-canvas';}}}>
               {map&&<SharedSpellAreas mapId={map.id} hideId={areaCast?areaSocketId:undefined} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare}/>}
-              {map&&<CombatTargetLine tokens={actionSnapshot.tokens} mapId={map.id} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare} getPosition={getLiveTokenPosition} getBaseWidthFt={getTokenBaseWidthFt} is3dToken={isMiniatureTokenReady} isVisibleAt={tokenVisibleAtPosition} tiltDegrees={tiltDegrees} rotationDegrees={rotationDegrees}/>}
+              {map&&<CombatTargetLine tokens={actionSnapshot.tokens} mapId={map.id} scale={view.scale} pxPerFoot={map.gridSizePx/map.feetPerSquare} getPosition={getLiveTokenPosition} getBaseWidthFt={getTokenBaseWidthFt} is3dToken={isMiniatureTokenReady} isVisibleAt={tokenVisibleAtPosition} tiltDegrees={tiltDegrees} rotationDegrees={rotationDegrees} onPillChange={invalidateMiniatures}/>}
               {areaCast&&areaActor&&map&&<SpellAreaShapes spellName={areaCast.name} scale={view.scale} spec={areaCast.spec} placement={areaPreview} caster={areaActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} previewState="aiming" targets={areaTargets.filter(t=>!areaExcluded.includes(t.id)).map(t=>({...t,baseWidthFt:getTokenBaseWidthFt(t),affinity:resolveTargetAffinity(actionSnapshot.monsters,areaActor,t,{role:snapshot.role,vision:snapshot.playerVision,map:snapshot.map,affinityIds:legacyAffinity})}))}/>}
               {rayCast&&rayActor&&map&&<SpellRayTargetShapes caster={rayActor} pxPerFoot={map.gridSizePx/map.feetPerSquare} rangeFt={rayCast.rangeFt} scale={view.scale} damageType={rayCast.damageType} spellName={rayCast.name} distinct={rayCast.distinct} affinity={rayCast.kind === 'allies' ? 'friendly' : 'enemy'} getPosition={getLiveTokenPosition} getBaseWidthFt={getTokenBaseWidthFt} is3dToken={isMiniatureTokenReady} targets={(() => {
                 const byId = new Map<string, { token: Token; count: number; tag: string; affinity: TargetAffinity }>();

@@ -29,16 +29,56 @@ export type TetherPillPlacementInput = {
   prevOffsetUV?: { du: number; dv: number } | null;
 };
 
+export const TETHER_PILL_MIN_SCREEN_FONT_PX = 8.5;
+export const TETHER_PILL_MAX_SCREEN_FONT_PX = 12.5;
+export const TETHER_PILL_IDEAL_MAP_FONT_FT = 1.0;
+export const TETHER_PILL_MAX_MAP_FONT_FT = 1.6;
+export const TETHER_PILL_COVERED_OPACITY = 0.22;
+
+export type TetherPillMetrics = {
+  fontSize: number;
+  pillW: number;
+  pillH: number;
+  strokeWidth: number;
+};
+
+/**
+ * Bounded pill typography in map coordinates: keeps a readable min/max screen
+ * pixel height across normal zoom levels while capping map-space size so
+ * zooming far out never blows the pill up across tokens or rooms.
+ */
+export function computeTetherPillMetrics(
+  label: string,
+  pxPerFoot: number,
+  scale: number,
+): TetherPillMetrics {
+  const safeScale = Math.max(0.05, scale || 1);
+  const safePpf = Math.max(1, pxPerFoot || 10);
+  const idealMapFont = safePpf * TETHER_PILL_IDEAL_MAP_FONT_FT;
+  const screenClampedFont =
+    Math.min(
+      TETHER_PILL_MAX_SCREEN_FONT_PX,
+      Math.max(TETHER_PILL_MIN_SCREEN_FONT_PX, idealMapFont * safeScale),
+    ) / safeScale;
+  const fontSize = Math.min(safePpf * TETHER_PILL_MAX_MAP_FONT_FT, screenClampedFont);
+  const pillH = fontSize * 1.55;
+  const pillW = Math.max(fontSize * 3.0, label.length * fontSize * 0.62 + fontSize * 1.0);
+  const strokeWidth = Math.max(0.6 / safeScale, fontSize * 0.095);
+  return { fontSize, pillW, pillH, strokeWidth };
+}
+
 export type TetherPillPlacementResult = {
   /** Pill center in map coordinates. */
   x: number;
   /** Pill center in map coordinates. */
   y: number;
-  /** Curve point in map coordinates to anchor an optional dashed leader line. */
+  /** Curve point in map coordinates (kept equal to pill position; never detaches). */
   anchorX: number;
   anchorY: number;
   showLeader: boolean;
   offsetUV: { du: number; dv: number };
+  /** True when placed over a flat 2D token/HUD so Konva can dim it softly. */
+  overlaps2dToken: boolean;
 };
 
 export function evalTetherQuadraticBezier(
@@ -66,6 +106,7 @@ type UVObstacleEnvelope = {
   bodyMinV: number;
   bodyMaxV: number;
   hasBody: boolean;
+  is3d: boolean;
 };
 
 function rectOverlapArea(
@@ -141,14 +182,13 @@ function measureTotalOverlap(
   return total;
 }
 
-const SLIDE_TS = [0.38, 0.62, 0.28, 0.72, 0.2, 0.8] as const;
-const RADIAL_DEG_OFFSETS = [0, -28, 28, -55, 55, 180, 152, -152, 125, -125, -90, 90] as const;
-const RADIAL_STEP_MULTIPLIERS = [1, 2, 3, 4, 5, 6.5, 8.5, 11, 14.5, 19] as const;
+const SLIDE_TS = [0.38, 0.62, 0.28, 0.72] as const;
 
 /**
- * Place a tether's midpoint range pill so it never draws on top of visible
- * tokens, their below-base HUDs, or tilted 3D miniatures while remaining anchored
- * as close to the tether midpoint as possible.
+ * Place a tether's distance pill directly on the Bezier curve itself. When a
+ * long ranged tether crosses a token at the midpoint, slide along open curve
+ * spans; otherwise keep it centered on the tether (where depth-masking or
+ * overlap dimming handles visual stacking cleanly without a leader line).
  */
 export function computeTetherPillPlacement(
   input: TetherPillPlacementInput,
@@ -167,10 +207,6 @@ export function computeTetherPillPlacement(
     u: cosR * x - sinR * y,
     v: (sinR * x + cosR * y) * sy,
   });
-  const toXY = (u: number, v: number) => ({
-    x: cosR * u + (sinR / sy) * v,
-    y: -sinR * u + (cosR / sy) * v,
-  });
 
   const midMap = evalTetherQuadraticBezier(curve, 0.5);
   const midUV = toUV(midMap.x, midMap.y);
@@ -183,6 +219,7 @@ export function computeTetherPillPlacement(
       anchorY: midMap.y,
       showLeader: false,
       offsetUV: { du: 0, dv: 0 },
+      overlaps2dToken: false,
     };
   }
 
@@ -196,7 +233,8 @@ export function computeTetherPillPlacement(
     const { u: tu, v: tv } = toUV(obs.x, obs.y);
     const r = Math.max(4 / safeScale, (obs.baseWidthFt * safePpf) / 2);
     const hudHalfW = Math.max(r * 0.78, Math.min(40, Math.max(22, r * 0.75))) + pad;
-    const hasBody = !!obs.is3d && sinTilt > 0.01;
+    const is3d = !!obs.is3d;
+    const hasBody = is3d && sinTilt > 0.01;
     const bodyHalfW = r * 0.75 + pad;
     envelopes[i] = {
       tu,
@@ -212,34 +250,28 @@ export function computeTetherPillPlacement(
       bodyMinV: tv - 2.35 * r * sinTilt - pad,
       bodyMaxV: tv,
       hasBody,
+      is3d,
     };
   }
 
-  // Tier 1: default curve midpoint has zero token overlap.
-  if (measureTotalOverlap(midUV.u, midUV.v, hw, hh, envelopes) === 0) {
-    return {
-      x: midMap.x,
-      y: midMap.y,
-      anchorX: midMap.x,
-      anchorY: midMap.y,
-      showLeader: false,
-      offsetUV: { du: 0, dv: 0 },
-    };
-  }
+  const non3dEnvelopes = envelopes.filter((e) => !e.is3d);
+  let chosenMap = midMap;
+  let chosenUV = midUV;
 
-  // Tier 2: slide along the curve when there is open beam span.
+  // Slide along the curve only when the midpoint overlaps and open beam span exists.
   const startUV = toUV(curve.sx, curve.sy);
   const endUV = toUV(curve.ex, curve.ey);
-  const chordU = endUV.u - startUV.u;
-  const chordV = endUV.v - startUV.v;
-  const chordUV = Math.hypot(chordU, chordV);
+  const chordUV = Math.hypot(endUV.u - startUV.u, endUV.v - startUV.v);
 
-  if (chordUV >= pillW * 1.05) {
+  if (
+    measureTotalOverlap(midUV.u, midUV.v, hw, hh, envelopes) > 0 &&
+    chordUV >= pillW * 1.1
+  ) {
     let bestSlide: {
       x: number;
       y: number;
-      du: number;
-      dv: number;
+      u: number;
+      v: number;
       cost: number;
     } | null = null;
     for (let i = 0; i < SLIDE_TS.length; i++) {
@@ -254,83 +286,27 @@ export function computeTetherPillPlacement(
           : 0;
         const cost = Math.abs(t - 0.5) * chordUV + prevPenalty;
         if (!bestSlide || cost < bestSlide.cost) {
-          bestSlide = { x: pt.x, y: pt.y, du, dv, cost };
+          bestSlide = { x: pt.x, y: pt.y, u: uv.u, v: uv.v, cost };
         }
       }
     }
     if (bestSlide) {
-      return {
-        x: bestSlide.x,
-        y: bestSlide.y,
-        anchorX: bestSlide.x,
-        anchorY: bestSlide.y,
-        showLeader: false,
-        offsetUV: { du: bestSlide.du, dv: bestSlide.dv },
-      };
+      chosenMap = { x: bestSlide.x, y: bestSlide.y };
+      chosenUV = { u: bestSlide.u, v: bestSlide.v };
     }
   }
 
-  // Tier 3: step radially outward around the midpoint in camera-upright space,
-  // preferring perpendicular "camera-up" directions and clear margins.
-  const chordLen = chordUV || 1;
-  const tu = chordU / chordLen;
-  const tv = chordV / chordLen;
-  const n1 = { u: -tv, v: tu };
-  const n2 = { u: tv, v: -tu };
-  const upNormal = n1.v <= n2.v ? n1 : n2;
-  const baseAngle = Math.atan2(upNormal.v, upNormal.u);
+  const overlaps2dToken =
+    non3dEnvelopes.length > 0 &&
+    measureTotalOverlap(chosenUV.u, chosenUV.v, hw, hh, non3dEnvelopes) > 0;
 
-  const dirs: { du: number; dv: number }[] = [];
-  for (let i = 0; i < RADIAL_DEG_OFFSETS.length; i++) {
-    const a = baseAngle + (RADIAL_DEG_OFFSETS[i] * Math.PI) / 180;
-    dirs.push({ du: Math.cos(a), dv: Math.sin(a) });
-  }
-  dirs.push({ du: 0, dv: -1 }, { du: 0, dv: 1 });
-
-  const stepBase = Math.max(8 / safeScale, safePpf * 0.9);
-  let bestClear: { u: number; v: number; cost: number } | null = null;
-  let bestFallback: { u: number; v: number; score: number } | null = null;
-
-  const prevMaxBonus = prevOffsetUV ? 0.22 * Math.hypot(prevOffsetUV.du, prevOffsetUV.dv) : 0;
-  const minHalf = Math.min(hw, hh);
-  for (let sIdx = 0; sIdx < RADIAL_STEP_MULTIPLIERS.length; sIdx++) {
-    const step = RADIAL_STEP_MULTIPLIERS[sIdx] * stepBase;
-    if (bestClear && step + minHalf - prevMaxBonus > bestClear.cost) break;
-    for (let dIdx = 0; dIdx < dirs.length; dIdx++) {
-      const dir = dirs[dIdx];
-      const dist = Math.abs(dir.du) * hw + Math.abs(dir.dv) * hh + step;
-      const candU = midUV.u + dir.du * dist;
-      const candV = midUV.v + dir.dv * dist;
-      const overlap = measureTotalOverlap(candU, candV, hw, hh, envelopes);
-      const du = candU - midUV.u;
-      const dv = candV - midUV.v;
-      const prevPenalty = prevOffsetUV
-        ? 0.22 * Math.hypot(du - prevOffsetUV.du, dv - prevOffsetUV.dv)
-        : 0;
-      const cost = dist + (candV > midUV.v ? 6 / safeScale : 0) + prevPenalty;
-
-      if (overlap === 0) {
-        if (!bestClear || cost < bestClear.cost) {
-          bestClear = { u: candU, v: candV, cost };
-        }
-      } else {
-        const score = overlap * 1000 + cost;
-        if (!bestFallback || score < bestFallback.score) {
-          bestFallback = { u: candU, v: candV, score };
-        }
-      }
-    }
-  }
-
-  const chosen = bestClear ?? bestFallback!;
-  const chosenMap = toXY(chosen.u, chosen.v);
-  const dispUV = Math.hypot(chosen.u - midUV.u, chosen.v - midUV.v);
   return {
     x: chosenMap.x,
     y: chosenMap.y,
-    anchorX: midMap.x,
-    anchorY: midMap.y,
-    showLeader: dispUV > hh * 0.65,
-    offsetUV: { du: chosen.u - midUV.u, dv: chosen.v - midUV.v },
+    anchorX: chosenMap.x,
+    anchorY: chosenMap.y,
+    showLeader: false,
+    offsetUV: { du: chosenUV.u - midUV.u, dv: chosenUV.v - midUV.v },
+    overlaps2dToken,
   };
 }

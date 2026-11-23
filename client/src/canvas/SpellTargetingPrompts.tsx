@@ -54,6 +54,7 @@ export const CombatTargetLine = memo(function CombatTargetLine({
   isVisibleAt,
   tiltDegrees = 0,
   rotationDegrees = 0,
+  onPillChange,
 }: {
   tokens: StateSnapshot['tokens'];
   mapId: string;
@@ -65,6 +66,7 @@ export const CombatTargetLine = memo(function CombatTargetLine({
   isVisibleAt?: (id: string, x: number, y: number) => boolean;
   tiltDegrees?: number;
   rotationDegrees?: number;
+  onPillChange?: () => void;
 }) {
   const storeSnapshot = useStore((s) => s.snapshot);
   const showTargetLine = useStore((s) => s.showTargetLine);
@@ -155,6 +157,7 @@ export const CombatTargetLine = memo(function CombatTargetLine({
       obstacles={visibleObstacles}
       tiltDegrees={tiltDegrees}
       rotationDegrees={rotationDegrees}
+      onPillChange={onPillChange}
       mapScale={storeSnapshot?.map}
       formatMidLabel={storeSnapshot?.map ? formatMidLabel : undefined}
       midLabel={
