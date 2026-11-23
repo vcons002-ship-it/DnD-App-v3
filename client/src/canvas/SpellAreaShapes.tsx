@@ -372,6 +372,7 @@ export function SpellRayTargetShapes({
       traveler: Konva.Group | null;
       endArrow: Konva.Group | null;
       midPill: Konva.Group | null;
+      midPillCutout: Konva.Rect | null;
       midPillRect: Konva.Rect | null;
       midPillText: Konva.Text | null;
       prevOffsetUV: { du: number; dv: number } | null;
@@ -421,6 +422,7 @@ export function SpellRayTargetShapes({
           traveler: bGroup.findOne<Konva.Group>('.ray-travel-arrow') ?? null,
           endArrow: bGroup.findOne<Konva.Group>('.ray-end-arrow') ?? null,
           midPill,
+          midPillCutout: midPill?.findOne<Konva.Rect>('.ray-mid-pill-cutout') ?? null,
           midPillRect: midPill?.findOne<Konva.Rect>('.ray-mid-pill-bg') ?? null,
           midPillText: midPill?.findOne<Konva.Text>('.ray-mid-pill-text') ?? null,
           prevOffsetUV: null,
@@ -685,12 +687,20 @@ export function SpellRayTargetShapes({
               curScale !== beam.lastPillScale ||
               curPpf !== beam.lastPillPpf;
             const metrics = computeTetherPillMetrics(livePill.midLabel, curPpf, curScale);
-            const textStrokeWidth = Math.max(0.8, metrics.fontSize * 0.14);
+            const textStrokeWidth = Math.max(0.9, metrics.fontSize * 0.16);
             if (styleChanged) {
               beam.lastLabel = livePill.midLabel;
               beam.lastOutOfRange = effOut;
               beam.lastPillScale = curScale;
               beam.lastPillPpf = curPpf;
+              if (beam.midPillCutout) {
+                const cutPad = metrics.strokeWidth * 0.5;
+                beam.midPillCutout.x(-cutPad);
+                beam.midPillCutout.y(-cutPad);
+                beam.midPillCutout.width(metrics.pillW + metrics.strokeWidth);
+                beam.midPillCutout.height(metrics.pillH + metrics.strokeWidth);
+                beam.midPillCutout.cornerRadius((metrics.pillH + metrics.strokeWidth) / 2);
+              }
               if (beam.midPillRect) {
                 beam.midPillRect.width(metrics.pillW);
                 beam.midPillRect.height(metrics.pillH);
@@ -727,6 +737,7 @@ export function SpellRayTargetShapes({
                 prevOffsetUV: beam.prevOffsetUV,
               });
               beam.prevOffsetUV = placement.offsetUV;
+              const pillOpacity = placement.overlaps2dToken ? 0.38 : 0.95;
               beam.midPill.setAttrs({
                 pillLabel: livePill.midLabel,
                 pillOutOfRange: effOut,
@@ -734,13 +745,16 @@ export function SpellRayTargetShapes({
                 pillSpark: tPalette.spark,
                 pillW: metrics.pillW,
                 pillH: metrics.pillH,
+                pillOpacity,
               });
               beam.midPill.position({ x: placement.x, y: placement.y });
               beam.midPill.offsetX(metrics.pillW / 2);
               beam.midPill.offsetY(metrics.pillH / 2);
               beam.midPill.rotation(-effRot);
               beam.midPill.scaleY(invSy);
-              beam.midPill.opacity(placement.overlaps2dToken ? 0.38 : 0.9);
+              beam.midPill.opacity(1);
+              beam.midPillRect?.opacity(pillOpacity);
+              beam.midPillText?.opacity(pillOpacity);
               anyPillChanged = true;
             }
           } else {
@@ -1035,7 +1049,9 @@ export function SpellRayTargetShapes({
                       rotationDegrees,
                       obstacles: initialObstacles,
                     });
-                    const textStrokeWidth = Math.max(0.8, metrics.fontSize * 0.14);
+                    const textStrokeWidth = Math.max(0.9, metrics.fontSize * 0.16);
+                    const cutPad = metrics.strokeWidth * 0.5;
+                    const pillOpacity = placement.overlaps2dToken ? 0.38 : 0.95;
                     return (
                       <Group
                         name="ray-mid-pill"
@@ -1045,7 +1061,7 @@ export function SpellRayTargetShapes({
                         offsetY={metrics.pillH / 2}
                         rotation={-rotationDegrees}
                         scaleY={invSy}
-                        opacity={placement.overlaps2dToken ? 0.38 : 0.9}
+                        opacity={1}
                         pillId={`tether-pill:${token.id}:${k}`}
                         pillLabel={renderPill.midLabel}
                         pillOutOfRange={effOutOfRange}
@@ -1053,13 +1069,25 @@ export function SpellRayTargetShapes({
                         pillSpark={tPalette.spark}
                         pillW={metrics.pillW}
                         pillH={metrics.pillH}
+                        pillOpacity={pillOpacity}
                       >
+                        <Rect
+                          name="ray-mid-pill-cutout"
+                          x={-cutPad}
+                          y={-cutPad}
+                          width={metrics.pillW + metrics.strokeWidth}
+                          height={metrics.pillH + metrics.strokeWidth}
+                          cornerRadius={(metrics.pillH + metrics.strokeWidth) / 2}
+                          fill="#000"
+                          globalCompositeOperation="destination-out"
+                          listening={false}
+                        />
                         <Rect
                           name="ray-mid-pill-bg"
                           width={metrics.pillW}
                           height={metrics.pillH}
-                          fill="rgba(14, 17, 24, 0.62)"
-                          opacity={0.82}
+                          fill="rgba(12, 15, 22, 0.84)"
+                          opacity={pillOpacity}
                           stroke={effOutOfRange ? '#e07b67' : tPalette.border}
                           strokeWidth={metrics.strokeWidth}
                           cornerRadius={metrics.pillH / 2}
@@ -1072,7 +1100,8 @@ export function SpellRayTargetShapes({
                           verticalAlign="middle"
                           text={renderPill.midLabel}
                           fill={effOutOfRange ? '#ffb3a3' : tPalette.spark}
-                          stroke="rgba(0, 0, 0, 0.72)"
+                          opacity={pillOpacity}
+                          stroke="rgba(0, 0, 0, 0.85)"
                           strokeWidth={textStrokeWidth}
                           fillAfterStrokeEnabled
                           fontStyle="bold"
@@ -1138,6 +1167,15 @@ export function syncTetherPillsOnLayer(
     node.offsetY(metrics.pillH / 2);
     node.rotation(-rotationDegrees);
     node.scaleY(invSy);
+    const cutout = node.findOne<Konva.Rect>('.ray-mid-pill-cutout');
+    if (cutout) {
+      const cutPad = metrics.strokeWidth * 0.5;
+      cutout.x(-cutPad);
+      cutout.y(-cutPad);
+      cutout.width(metrics.pillW + metrics.strokeWidth);
+      cutout.height(metrics.pillH + metrics.strokeWidth);
+      cutout.cornerRadius((metrics.pillH + metrics.strokeWidth) / 2);
+    }
     const bg = node.findOne<Konva.Rect>('.ray-mid-pill-bg');
     if (bg) {
       bg.width(metrics.pillW);
@@ -1150,7 +1188,7 @@ export function syncTetherPillsOnLayer(
       txt.width(metrics.pillW);
       txt.height(metrics.pillH);
       txt.fontSize(metrics.fontSize);
-      txt.strokeWidth(Math.max(0.8, metrics.fontSize * 0.14));
+      txt.strokeWidth(Math.max(0.9, metrics.fontSize * 0.16));
     }
   }
   return any;
