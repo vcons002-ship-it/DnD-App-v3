@@ -85,6 +85,8 @@ const svgMockNode=()=>{const children:any[]=[];const el:any={id:'',attrs:new Map
   expect(position.version).toBe(version);expect(names.state).toEqual({nameTextureUpdates:1,namePositionUpdates:1});
   names.sync([{...label,points:points.map(p=>({x:p.x+.00000001,y:p.y}))}],new Set(['one']));expect(position.version).toBeGreaterThan(version);expect(names.state.nameTextureUpdates).toBe(1);
   names.sync([{...label,canvas:{width:100,height:20} as HTMLCanvasElement}],new Set(['one']));expect(names.state.nameTextureUpdates).toBe(2);
+  names.sync([{id:'tether-pill:one:0',canvas,points,opacity:.9,emphasized:false,alwaysVisible:true,coveredOpacity:.22}],new Set());
+  expect(scene.getObjectByName('miniature-name')).toBeDefined();
   names.sync([],new Set());expect(scene.children).toHaveLength(0);names.dispose();
  });
  it('detects changed instance pixels even without a buffer upload, while ignoring identical uploads',()=>{

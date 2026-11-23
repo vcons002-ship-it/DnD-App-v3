@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react';
-import type Konva from 'konva';
+import Konva from 'konva';
 import { Circle, Group, Line, Rect, Text } from 'react-konva';
 import { tokenDistanceFt } from '../../../shared/distance';
 import { areaOrigin, areaPolygon, type SpellArea, type SpellAreaPlacement } from '../../../shared/spellAreas';
 import { tokenRadiusPx, visionLit, visionShowsAffinity, type PlayerVision } from '../../../shared/playerVision';
 import { useLegacyMode } from '../lib/useEnvironmentQuality';
 import { useMapAnimation } from '../lib/useMapAnimation';
-import { computeTetherPillPlacement, type TetherObstacleToken } from '../lib/tetherPillPlacement';
+import { computeTetherPillMetrics, computeTetherPillPlacement, type TetherObstacleToken } from '../lib/tetherPillPlacement';
 import { useStore } from '../state/socket';
 import { groundYScale } from './miniatureProjection';
 
@@ -275,6 +275,7 @@ export function SpellRayTargetShapes({
   obstacles,
   tiltDegrees = 0,
   rotationDegrees = 0,
+  onPillChange,
 }: {
   caster: { id?: string; x: number; y: number; widthFt: number; kind?: string; refId?: string; miniatureWidthFt?: number };
   targets: {
@@ -301,6 +302,7 @@ export function SpellRayTargetShapes({
   obstacles?: readonly RayToken[];
   tiltDegrees?: number;
   rotationDegrees?: number;
+  onPillChange?: () => void;
 }) {
   const groupRef = useRef<Konva.Group>(null);
   const legacyMode = useLegacyMode();
@@ -327,6 +329,7 @@ export function SpellRayTargetShapes({
     obstacles,
     tiltDegrees,
     rotationDegrees,
+    onPillChange,
   });
   latestRef.current = {
     caster,
@@ -347,6 +350,7 @@ export function SpellRayTargetShapes({
     obstacles,
     tiltDegrees,
     rotationDegrees,
+    onPillChange,
   };
 
   const defaultPalette = affinityPalette(affinity ?? targets[0]?.affinity ?? 'enemy');
@@ -370,7 +374,6 @@ export function SpellRayTargetShapes({
       midPill: Konva.Group | null;
       midPillRect: Konva.Rect | null;
       midPillText: Konva.Text | null;
-      midPillLeader: Konva.Line | null;
       prevOffsetUV: { du: number; dv: number } | null;
       sx: number;
       sy: number;
@@ -381,6 +384,7 @@ export function SpellRayTargetShapes({
       lastLabel: string;
       lastOutOfRange: boolean | undefined;
       lastPillScale: number;
+      lastPillPpf: number;
     };
     type CachedTarget = {
       targetIdx: number;
@@ -419,7 +423,6 @@ export function SpellRayTargetShapes({
           midPill,
           midPillRect: midPill?.findOne<Konva.Rect>('.ray-mid-pill-bg') ?? null,
           midPillText: midPill?.findOne<Konva.Text>('.ray-mid-pill-text') ?? null,
-          midPillLeader: bGroup.findOne<Konva.Line>('.ray-mid-pill-leader') ?? null,
           prevOffsetUV: null,
           sx: 0,
           sy: 0,
@@ -430,6 +433,7 @@ export function SpellRayTargetShapes({
           lastLabel: '',
           lastOutOfRange: undefined,
           lastPillScale: NaN,
+          lastPillPpf: NaN,
         };
       });
       return {
@@ -476,7 +480,7 @@ export function SpellRayTargetShapes({
         caster: curCaster,
         targets: curTargets,
         pxPerFoot: curPpf,
-        scale: curScale,
+        scale: propScale,
         getPosition: curGetPos,
         getBaseWidthFt: curGetBaseWidth,
         is3dToken: curIs3d,
@@ -491,9 +495,12 @@ export function SpellRayTargetShapes({
         tiltDegrees: curTilt,
         rotationDegrees: curRotation,
       } = latestRef.current;
+      const liveLayerScale = root.getLayer()?.scaleX();
+      const curScale = liveLayerScale && Number.isFinite(liveLayerScale) && liveLayerScale > 0 ? liveLayerScale : propScale;
       const effTilt = curTilt ?? 0;
       const effRot = curRotation ?? 0;
       const invSy = 1 / Math.max(0.25, groundYScale(effTilt));
+      let anyPillChanged = false;
       let obsChanged =
         curScale !== lastFrameScale ||
         curPpf !== lastFramePpf ||
@@ -675,25 +682,28 @@ export function SpellRayTargetShapes({
             const styleChanged =
               livePill.midLabel !== beam.lastLabel ||
               effOut !== beam.lastOutOfRange ||
-              curScale !== beam.lastPillScale;
-            const pillW = Math.max(44, livePill.midLabel.length * 7.1 + 14) / curScale;
-            const pillH = 19 / curScale;
+              curScale !== beam.lastPillScale ||
+              curPpf !== beam.lastPillPpf;
+            const metrics = computeTetherPillMetrics(livePill.midLabel, curPpf, curScale);
+            const textStrokeWidth = Math.max(0.8, metrics.fontSize * 0.14);
             if (styleChanged) {
               beam.lastLabel = livePill.midLabel;
               beam.lastOutOfRange = effOut;
               beam.lastPillScale = curScale;
+              beam.lastPillPpf = curPpf;
               if (beam.midPillRect) {
-                beam.midPillRect.width(pillW);
-                beam.midPillRect.height(pillH);
-                beam.midPillRect.cornerRadius(pillH / 2);
-                beam.midPillRect.strokeWidth(1.2 / curScale);
+                beam.midPillRect.width(metrics.pillW);
+                beam.midPillRect.height(metrics.pillH);
+                beam.midPillRect.cornerRadius(metrics.pillH / 2);
+                beam.midPillRect.strokeWidth(metrics.strokeWidth);
                 beam.midPillRect.stroke(effOut ? '#e07b67' : tPalette.border);
               }
               if (beam.midPillText) {
                 beam.midPillText.text(livePill.midLabel);
-                beam.midPillText.width(pillW);
-                beam.midPillText.height(pillH);
-                beam.midPillText.fontSize(11 / curScale);
+                beam.midPillText.width(metrics.pillW);
+                beam.midPillText.height(metrics.pillH);
+                beam.midPillText.fontSize(metrics.fontSize);
+                beam.midPillText.strokeWidth(textStrokeWidth);
                 beam.midPillText.fill(effOut ? '#ffb3a3' : tPalette.spark);
               }
             }
@@ -707,8 +717,8 @@ export function SpellRayTargetShapes({
                   ex: beam.ex,
                   ey: beam.ey,
                 },
-                pillW,
-                pillH,
+                pillW: metrics.pillW,
+                pillH: metrics.pillH,
                 pxPerFoot: curPpf,
                 scale: curScale,
                 tiltDegrees: effTilt,
@@ -717,29 +727,26 @@ export function SpellRayTargetShapes({
                 prevOffsetUV: beam.prevOffsetUV,
               });
               beam.prevOffsetUV = placement.offsetUV;
+              beam.midPill.setAttrs({
+                pillLabel: livePill.midLabel,
+                pillOutOfRange: effOut,
+                pillBorder: tPalette.border,
+                pillSpark: tPalette.spark,
+                pillW: metrics.pillW,
+                pillH: metrics.pillH,
+              });
               beam.midPill.position({ x: placement.x, y: placement.y });
-              beam.midPill.offsetX(pillW / 2);
-              beam.midPill.offsetY(pillH / 2);
+              beam.midPill.offsetX(metrics.pillW / 2);
+              beam.midPill.offsetY(metrics.pillH / 2);
               beam.midPill.rotation(-effRot);
               beam.midPill.scaleY(invSy);
-              if (beam.midPillLeader) {
-                beam.midPillLeader.visible(placement.showLeader);
-                if (placement.showLeader) {
-                  beam.midPillLeader.points([
-                    placement.anchorX,
-                    placement.anchorY,
-                    placement.x,
-                    placement.y,
-                  ]);
-                  beam.midPillLeader.stroke(effOut ? '#e07b67' : tPalette.border);
-                  beam.midPillLeader.strokeWidth(1.15 / curScale);
-                  beam.midPillLeader.dash([3.5 / curScale, 3 / curScale]);
-                }
-              }
+              beam.midPill.opacity(placement.overlaps2dToken ? 0.38 : 0.9);
+              anyPillChanged = true;
             }
           } else {
             beam.lastOutOfRange = effOut;
             beam.lastPillScale = curScale;
+            beam.lastPillPpf = curPpf;
           }
 
           if (curReduced) {
@@ -762,6 +769,9 @@ export function SpellRayTargetShapes({
       }
 
       root.getLayer()?.batchDraw();
+      if (anyPillChanged) {
+        latestRef.current.onPillChange?.();
+      }
     };
 
     let raf = 0;
@@ -832,6 +842,9 @@ export function SpellRayTargetShapes({
       clearScheduled();
       syncControllerRef.current = null;
       layer?.batchDraw();
+      if (hasPill) {
+        latestRef.current.onPillChange?.();
+      }
     };
   }, [structureKey, legacyMode, reducedMotion, hasDragPreview]);
 
@@ -1011,63 +1024,61 @@ export function SpellRayTargetShapes({
                     />
                   </Group>
                   {renderPill && k === 0 && (() => {
-                    const pillW = Math.max(44, renderPill.midLabel.length * 7.1 + 14) / scale;
-                    const pillH = 19 / scale;
+                    const metrics = computeTetherPillMetrics(renderPill.midLabel, pxPerFoot, scale);
                     const placement = computeTetherPillPlacement({
                       curve: { sx, sy, cx, cy, ex, ey },
-                      pillW,
-                      pillH,
+                      pillW: metrics.pillW,
+                      pillH: metrics.pillH,
                       pxPerFoot,
                       scale,
                       tiltDegrees,
                       rotationDegrees,
                       obstacles: initialObstacles,
                     });
+                    const textStrokeWidth = Math.max(0.8, metrics.fontSize * 0.14);
                     return (
-                      <>
-                        <Line
-                          name="ray-mid-pill-leader"
-                          visible={placement.showLeader}
-                          points={[placement.anchorX, placement.anchorY, placement.x, placement.y]}
+                      <Group
+                        name="ray-mid-pill"
+                        x={placement.x}
+                        y={placement.y}
+                        offsetX={metrics.pillW / 2}
+                        offsetY={metrics.pillH / 2}
+                        rotation={-rotationDegrees}
+                        scaleY={invSy}
+                        opacity={placement.overlaps2dToken ? 0.38 : 0.9}
+                        pillId={`tether-pill:${token.id}:${k}`}
+                        pillLabel={renderPill.midLabel}
+                        pillOutOfRange={effOutOfRange}
+                        pillBorder={tPalette.border}
+                        pillSpark={tPalette.spark}
+                        pillW={metrics.pillW}
+                        pillH={metrics.pillH}
+                      >
+                        <Rect
+                          name="ray-mid-pill-bg"
+                          width={metrics.pillW}
+                          height={metrics.pillH}
+                          fill="rgba(14, 17, 24, 0.62)"
+                          opacity={0.82}
                           stroke={effOutOfRange ? '#e07b67' : tPalette.border}
-                          strokeWidth={1.15 / scale}
-                          dash={[3.5 / scale, 3 / scale]}
-                          opacity={0.78}
-                          lineCap="round"
+                          strokeWidth={metrics.strokeWidth}
+                          cornerRadius={metrics.pillH / 2}
                         />
-                        <Group
-                          name="ray-mid-pill"
-                          x={placement.x}
-                          y={placement.y}
-                          offsetX={pillW / 2}
-                          offsetY={pillH / 2}
-                          rotation={-rotationDegrees}
-                          scaleY={invSy}
-                          pillW={pillW}
-                          pillH={pillH}
-                        >
-                          <Rect
-                            name="ray-mid-pill-bg"
-                            width={pillW}
-                            height={pillH}
-                            fill="rgba(16, 18, 25, 0.88)"
-                            stroke={effOutOfRange ? '#e07b67' : tPalette.border}
-                            strokeWidth={1.2 / scale}
-                            cornerRadius={pillH / 2}
-                          />
-                          <Text
-                            name="ray-mid-pill-text"
-                            width={pillW}
-                            height={pillH}
-                            align="center"
-                            verticalAlign="middle"
-                            text={renderPill.midLabel}
-                            fill={effOutOfRange ? '#ffb3a3' : tPalette.spark}
-                            fontStyle="bold"
-                            fontSize={11 / scale}
-                          />
-                        </Group>
-                      </>
+                        <Text
+                          name="ray-mid-pill-text"
+                          width={metrics.pillW}
+                          height={metrics.pillH}
+                          align="center"
+                          verticalAlign="middle"
+                          text={renderPill.midLabel}
+                          fill={effOutOfRange ? '#ffb3a3' : tPalette.spark}
+                          stroke="rgba(0, 0, 0, 0.72)"
+                          strokeWidth={textStrokeWidth}
+                          fillAfterStrokeEnabled
+                          fontStyle="bold"
+                          fontSize={metrics.fontSize}
+                        />
+                      </Group>
                     );
                   })()}
                 </Group>
@@ -1100,4 +1111,47 @@ export function SpellRayTargetShapes({
       })}
     </Group>
   );
+}
+
+/** Synchronize tether range pill dimensions and orientation during live zoom or
+ *  camera projection gestures without waiting for React state to commit. */
+export function syncTetherPillsOnLayer(
+  layer: Konva.Layer | null,
+  pxPerFoot: number,
+  scale: number,
+  tiltDegrees: number,
+  rotationDegrees: number,
+): boolean {
+  if (!layer) return false;
+  const pills = layer.find('.ray-mid-pill');
+  if (!pills.length) return false;
+  const invSy = 1 / Math.max(0.25, groundYScale(tiltDegrees));
+  let any = false;
+  for (const node of pills) {
+    if (!(node instanceof Konva.Group)) continue;
+    any = true;
+    const label = String(node.getAttr('pillLabel') ?? '');
+    if (!label) continue;
+    const metrics = computeTetherPillMetrics(label, pxPerFoot, scale);
+    node.setAttrs({ pillW: metrics.pillW, pillH: metrics.pillH });
+    node.offsetX(metrics.pillW / 2);
+    node.offsetY(metrics.pillH / 2);
+    node.rotation(-rotationDegrees);
+    node.scaleY(invSy);
+    const bg = node.findOne<Konva.Rect>('.ray-mid-pill-bg');
+    if (bg) {
+      bg.width(metrics.pillW);
+      bg.height(metrics.pillH);
+      bg.cornerRadius(metrics.pillH / 2);
+      bg.strokeWidth(metrics.strokeWidth);
+    }
+    const txt = node.findOne<Konva.Text>('.ray-mid-pill-text');
+    if (txt) {
+      txt.width(metrics.pillW);
+      txt.height(metrics.pillH);
+      txt.fontSize(metrics.fontSize);
+      txt.strokeWidth(Math.max(0.8, metrics.fontSize * 0.14));
+    }
+  }
+  return any;
 }

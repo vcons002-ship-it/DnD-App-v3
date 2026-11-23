@@ -144,6 +144,7 @@ export type MiniatureLayerHandle = {
   setProjection: (tilt:number, rotation:number, view:BattlefieldView) => void;
   moveToken: (id: string, x: number, y: number, finished: boolean, facing?: number) => void;
   previewMove: (id: string, point: {x:number;y:number;facing:number} | null) => void;
+  invalidate: () => void;
 };
 type FxManifest = {
   duration_seconds: number;
@@ -762,7 +763,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const sharedKey=visibleSharedIds.length?JSON.stringify([sw,sh,gpuCompositeActive,camera.projectionMatrix.elements,camera.matrixWorld.elements,
           useStore.getState().snapshot?.map?.explorationMode,environment?.heavyDarkness,ambient.intensity,key.intensity,scene.environmentIntensity,ambient.color.toArray(),key.color.toArray(),
           props.tokens.map(t=>{const i=instances.get(t.id);return [t.id,t.sharedSightOnly,t.tint,t.shade,t.mirrorImages,i?.root.visible,i?.root.position.toArray(),i?.root.rotation.y,i?.root.scale.x];}),
-          labels.map(l=>{if(!labelVersions.has(l.canvas))labelVersions.set(l.canvas,++nextLabelVersion);return [l.id,labelVersions.get(l.canvas),l.points,l.opacity];})]):'';
+          labels.filter(l=>!l.alwaysVisible).map(l=>{if(!labelVersions.has(l.canvas))labelVersions.set(l.canvas,++nextLabelVersion);return [l.id,labelVersions.get(l.canvas),l.points,l.opacity];})]):'';
         const renderSharedPass=()=>{
           const layers=camera.layers.mask,autoClear=renderer.autoClear;
           const ambientIntensity=ambient.intensity,keyIntensity=key.intensity,reflection=scene.environmentIntensity;
@@ -933,8 +934,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           if(timing){setHostData('gpuMs',String(timing.median===null?'unavailable':timing.median+(visionTiming?.median??0)));setHostData('gpuSamples',String(timing.count));
             setHostData('gpuSceneMs',String(timing.median??'unavailable'));setHostData('gpuVisionMs',String(visionTiming?.median??'unavailable'));}
         }
+        const tokenNameCount=labels.filter(l=>!l.alwaysVisible&&renderedNames.has(l.id)).length;
         props.onRenderedNames?.(renderedNames);
-        setHostData('nameRendering','per-pixel');setHostData('nameCount',String(renderedNames.size));
+        setHostData('nameRendering','per-pixel');setHostData('nameCount',String(tokenNameCount));
         publish();
       } catch(error) { console.error('Miniature WebGL rendering failed',error); fail(); }
     }
@@ -1714,6 +1716,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         fromX: token.x, fromY: token.y, until: finished ? performance.now() + 1500 : Infinity });
       invalidate();
     },
+    invalidate,
     dispose,
   };
 }
@@ -1743,6 +1746,7 @@ export const MiniatureLayer = forwardRef<MiniatureLayerHandle, Props>(function M
     setProjection: (tilt,rotation,view) => engine.current?.setProjection(tilt,rotation,view),
     moveToken: (id, x, y, finished, facing) => engine.current?.moveToken(id, x, y, finished, facing),
     previewMove: (id,point) => engine.current?.previewMove(id,point),
+    invalidate: () => engine.current?.invalidate(),
   }), []);
   useEffect(() => {
     if (!needsScene) {
