@@ -1,3 +1,4 @@
+import { withinDistanceFt } from './distance.js';
 import type { Weapon } from './types.js';
 
 export type ParsedWeaponRange = {
@@ -141,11 +142,10 @@ export function evaluateWeaponRange(
 ): WeaponRangeEvaluation {
   const parsed = parseWeaponRange(weapon);
   const roundedDist = Math.max(0, Math.round(distanceFt));
-  const eps = 0.05;
   let status: WeaponRangeStatus;
-  if (distanceFt <= parsed.normalFt + eps) {
+  if (withinDistanceFt(distanceFt, parsed.normalFt)) {
     status = 'normal';
-  } else if (parsed.longFt !== undefined && distanceFt <= parsed.longFt + eps) {
+  } else if (parsed.longFt !== undefined && withinDistanceFt(distanceFt, parsed.longFt)) {
     status = 'long';
   } else {
     status = 'out';

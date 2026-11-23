@@ -156,7 +156,10 @@ describe('Misty Step destination',()=>{
  });
  it('validates range/visibility/occupancy and crosses a window without walking through it',()=>{
   const f=fixture();const d={mapId:f.map.id,x:350,y:100};
+  expect(mistyStepError(f.session.id,'pc',f.caster.id,{...d,x:412})).toBeUndefined();
   expect(mistyStepError(f.session.id,'pc',f.caster.id,{...d,x:900})).toMatch(/30/);expect(mistyStepError(f.session.id,'pc',f.caster.id,{...d,x:200})).toMatch(/unoccupied/);
+  // Landing close beside the living enemy (4.5 ft away from x=200) succeeds while overlapping fails.
+  expect(mistyStepError(f.session.id,'pc',f.caster.id,{...d,x:245})).toBeUndefined();
   setWalls(f.map.id,[{id:'wall',ax:250,ay:0,bx:250,by:300}]);expect(mistyStepError(f.session.id,'pc',f.caster.id,d)).toMatch(/see/);
   setWalls(f.map.id,[{id:'window',ax:250,ay:0,bx:250,by:300,window:true}]);expect(teleportMistyStep(f.session.id,'pc',f.caster.id,d)).toBe(true);expect(getToken(f.actor.id)).toMatchObject({x:350,y:100});
   const deadTemplate=createMonsterTemplate(f.session.id,{name:'Fallen',maxHp:10}),deadMon=instantiateMonster(deadTemplate.id)!;

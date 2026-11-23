@@ -1,7 +1,7 @@
 import {materializeLiveDamage,presentAttackDamage} from './combat.js';
 import { abilityKey, hitFeature, hitSpell } from '../../shared/hitFeatures.js';
 import type { Character, Token, Weapon, SheetAbility, Condition } from '../../shared/types.js';
-import { tokenDistanceFt } from '../../shared/distance.js';
+import { tokensWithin5ft } from '../../shared/distance.js';
 import {tokenInSpellRadius} from '../../shared/spellAreas.js';
 import { rollDice, rollDicePool, withDiceMetadata, usingPhysicalDice } from '../../shared/dice.js';
 import { hasLineOfSight } from '../../shared/mapWalls.js';
@@ -43,7 +43,7 @@ export function hitOptions(sid:string,ch:Character,at:Token,target:Token,w:Weapo
     (t.kind==='pc'||getMonster(t.refId)?.disposition==='friendly') &&
     (markedEntity(t.kind,t.refId)?.curHp??0)>0 &&
     !markedEntity(t.kind,t.refId)?.conditions.some(c=>/^(Incapacitated|Unconscious|Paralyzed|Stunned)$/i.test(c.label)) &&
-    tokenDistanceFt(t,target,getMap(at.mapId))<=5);
+    tokensWithin5ft(t,target,getMap(at.mapId)));
   return ch.sheetAbilities.filter(ab=>{
     const key=hitFeature(ab); if(!key) return false;
     if(hitSpell(key)&&victim&&'objectKind' in victim&&victim.objectKind)return false;

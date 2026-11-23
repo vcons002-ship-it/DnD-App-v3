@@ -28,7 +28,29 @@ export function tokenDistanceFt(a: Tok, b: Tok, map: Scale): number {
   return Math.max(0, chebFt - extra);
 }
 
+/** Relaxed margin (ft) so slightly inexact free-placed tokens/spells and rounded
+ *  displays (e.g. 5.4 ft shown as "5 ft") never fail a range or reach check. */
+export const DISTANCE_TOLERANCE_FT = 1.5;
+
+export function withinDistanceFt(
+  distanceFt: number,
+  maxFt: number,
+  toleranceFt = DISTANCE_TOLERANCE_FT,
+): boolean {
+  return distanceFt <= maxFt + toleranceFt + 1e-6;
+}
+
+export function tokensWithinDistanceFt(
+  a: Tok,
+  b: Tok,
+  maxFt: number,
+  map: Scale,
+  toleranceFt = DISTANCE_TOLERANCE_FT,
+): boolean {
+  return withinDistanceFt(tokenDistanceFt(a, b, map), maxFt, toleranceFt);
+}
+
 /** Whether two tokens are within 5 ft (adjacent / in melee reach). */
 export function tokensWithin5ft(a: Tok, b: Tok, map: Scale): boolean {
-  return tokenDistanceFt(a, b, map) <= 5 + 1e-6;
+  return tokensWithinDistanceFt(a, b, 5, map);
 }

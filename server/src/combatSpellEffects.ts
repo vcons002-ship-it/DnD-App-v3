@@ -1,6 +1,6 @@
 import type { Character, Monster, SheetAbility, Token, TokenKind } from '../../shared/types.js';
 import { combatSpell, spareTheDyingRangeFt, type CombatSpellKey } from '../../shared/combatSpells.js';
-import { tokenDistanceFt } from '../../shared/distance.js';
+import { tokensWithinDistanceFt } from '../../shared/distance.js';
 import { hasLineOfSight } from '../../shared/mapWalls.js';
 import { effectiveStats, isWearingArmor } from '../../shared/modifiers.js';
 import { spellcastingKeyFor } from '../../shared/spellExecution.js';
@@ -55,7 +55,7 @@ function validateTargetReachAndSight(
   const map = getMap(tok.mapId);
   if (!map || map.sessionId !== sid) return `${spellName} requires a target on the active map.`;
   if (!hasLineOfSight(casterTok, tok, map.walls)) return 'A wall or closed door blocks this target.';
-  if (tokenDistanceFt(casterTok, tok, map) > rangeFt + 1e-6) {
+  if (!tokensWithinDistanceFt(casterTok, tok, rangeFt, map)) {
     return `${spellName} reaches up to ${rangeFt} feet.`;
   }
   return undefined;

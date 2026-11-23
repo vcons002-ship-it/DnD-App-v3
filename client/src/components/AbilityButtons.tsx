@@ -1,5 +1,5 @@
 import {advancedSpell} from '../../../shared/advancedSpells';
-import {tokenDistanceFt} from '../../../shared/distance';
+import {tokensWithin5ft} from '../../../shared/distance';
 import {partySpell} from '../../../shared/partySpells';
 import {COMMAND_WORDS,commandWord,commandInstruction,isCommandSpell} from '../../../shared/commandSpell';
 import {linkedSpellProfile,spellKey} from '../../../shared/linkedSpells';
@@ -197,7 +197,7 @@ export function AbilityButtons({
         {snapshot?.tokens.filter(t=>{
           const me=snapshot.tokens.find(t=>t.kind===kind&&t.refId===caster.id);
           const e=t.kind==='pc'?snapshot.characters.find(c=>c.id===t.refId):snapshot.monsters.find(m=>m.id===t.refId);
-          return me&&e&&(!('curHp'in e)||e.curHp>0)&&(!('objectKind'in e)||!e.objectKind)&&(!('disposition'in e)||e.disposition==='friendly')&&!t.sharedSightOnly&&!t.partiallyRevealed&&tokenDistanceFt(me,t,snapshot.map)<=5;
+          return me&&e&&(!('curHp'in e)||e.curHp>0)&&(!('objectKind'in e)||!e.objectKind)&&(!('disposition'in e)||e.disposition==='friendly')&&!t.sharedSightOnly&&!t.partiallyRevealed&&tokensWithin5ft(me,t,snapshot.map);
         }).map(t=>{const e=t.kind==='pc'?snapshot.characters.find(c=>c.id===t.refId):snapshot.monsters.find(m=>m.id===t.refId);return <label key={t.id}><input type="checkbox" checked={invisTargets.includes(t.id)} onChange={event=>setInvisTargets(ids=>event.target.checked?[...ids,t.id]:ids.filter(id=>id!==t.id))}/>{e?.name}</label>;})}
         <button className="btn" disabled={!invisTargets.length||invisTargets.length>invisLevel-1||selection(invisAbility).unavailable} onClick={()=>{cast(invisAbility,undefined,invisTargets);setInvisAbility(null);}}>Cast Invisibility · {costText(invisAbility)}</button>
         <button className="btn" onClick={()=>setInvisAbility(null)}>Cancel</button>

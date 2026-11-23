@@ -1,6 +1,6 @@
 import {rollD20Detail} from '../../shared/combatMath.js';
 import type {AbilityRollPayload,Condition,TokenKind} from '../../shared/types.js';
-import {tokenDistanceFt} from '../../shared/distance.js';
+import {tokensWithinDistanceFt} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import {effectiveStats} from '../../shared/modifiers.js';
 import {spellcastingMod} from '../../shared/spellMath.js';
@@ -29,7 +29,7 @@ export function dispelTargetError(sid:string,kind:TokenKind,id:string,target:Tar
  if('tokenId'in target){const t=typeof target.tokenId==='string'?getToken(target.tokenId):null;if(t?.mapId===map.id)point=t;}
  else if(typeof target.effectId==='string'&&target.mapId===map.id){point=subjects(sid).flatMap(({e})=>e.conditions).find(c=>c.id===target.effectId&&c.isConcentration&&c.combatEffect?.spikeArea?.mapId===map.id)?.combatEffect?.spikeArea;}
  if(!point)return 'That Dispel Magic target is unavailable on this map.';
- if(tokenDistanceFt(actor,{...actor,...point},map)>120+1e-6||!hasLineOfSight(actor,point,map.walls))return 'Dispel Magic requires a visible target within 120 ft.';
+ if(!tokensWithinDistanceFt(actor,{...actor,...point},120,map)||!hasLineOfSight(actor,point,map.walls))return 'Dispel Magic requires a visible target within 120 ft.';
 }
 
 type SpellGroup={name:string;level?:number;castId?:string;casterKind:TokenKind;casterId:string;conditions:{kind:TokenKind;id:string;c:Condition}[];area?:Condition;mark?:boolean};

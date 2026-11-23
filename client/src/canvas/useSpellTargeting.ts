@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { tokenDistanceFt } from '../../../shared/distance';
+import { tokensWithinDistanceFt } from '../../../shared/distance';
 import { hasLineOfSight } from '../../../shared/mapWalls';
 import { areaExcludesCaster, areaOrigin, tokenInSpellArea, type SpellAreaPlacement } from '../../../shared/spellAreas';
 import type { AbilityRollPayload, SpellAreaPreviewIntent, StateSnapshot } from '../../../shared/types';
@@ -44,7 +44,7 @@ export function useSpellTargeting(actionSnapshot: StateSnapshot, map: StateSnaps
   }, [teleportCast, teleportActor?.id, teleportActor?.mapId, map?.id, clearTeleportCast]);
   const teleportError =
     teleportPoint && teleportActor && map
-      ? tokenDistanceFt({ ...teleportActor, widthFt: 0 }, { ...teleportPoint, widthFt: 0 }, map) > 30
+      ? !tokensWithinDistanceFt({ ...teleportActor, widthFt: 0 }, { ...teleportPoint, widthFt: 0 }, 30, map)
         ? 'Choose a destination within 30 ft.'
         : !hasLineOfSight(teleportActor, teleportPoint, map.walls)
           ? 'Choose a destination you can see.'
@@ -111,7 +111,7 @@ export function useSpellTargeting(actionSnapshot: StateSnapshot, map: StateSnaps
       setRayError('Hold Person only affects Humanoids.');
       return;
     }
-    if (tokenDistanceFt(rayActor, tok, map) > rayCast.rangeFt + 1e-6) {
+    if (!tokensWithinDistanceFt(rayActor, tok, rayCast.rangeFt, map)) {
       setRayError(`Target is out of ${rayCast.rangeFt} ft range.`);
       return;
     }
@@ -283,7 +283,7 @@ export function useSpellTargeting(actionSnapshot: StateSnapshot, map: StateSnaps
     !areaCast.spec.self &&
     areaPoints.some(
       (p) =>
-        tokenDistanceFt({ ...areaActor, widthFt: 0 }, { ...p, widthFt: 0 }, map) > areaCast.spec.rangeFt + 1e-6 ||
+        !tokensWithinDistanceFt({ ...areaActor, widthFt: 0 }, { ...p, widthFt: 0 }, areaCast.spec.rangeFt, map) ||
         !hasLineOfSight(areaActor, p, map.walls),
     );
 

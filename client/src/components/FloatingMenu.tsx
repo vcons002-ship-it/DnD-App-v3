@@ -1,5 +1,5 @@
 import {partySpell} from '../../../shared/partySpells';
-import {tokenDistanceFt} from '../../../shared/distance';
+import {tokenDistanceFt,tokensWithin5ft} from '../../../shared/distance';
 import { formatTetherRangePill } from '../../../shared/weaponRange';
 import { AdvantageToggle } from './AdvantageToggle';
 import { targetLabel, previewAttackAdvantage } from '../lib/targets';
@@ -407,7 +407,7 @@ export function FloatingMenu({ snapshot, token, attacker: defaultAttacker, x, y,
 
       {!collapsed && (
         <div className="floating-menu-body">
-          {attacker&&attacker.id!==token.id&&d.conditions.some(c=>c.label==='Hypnotic Pattern')&&snapshot.map&&tokenDistanceFt(attacker,token,snapshot.map)<=5&&<button className="btn" onClick={()=>{useStore.getState().socket?.emit('spell:wake',{actorTokenId:attacker.id,targetTokenId:token.id});onClose();}}>Shake awake ? Action</button>}
+          {attacker&&attacker.id!==token.id&&d.conditions.some(c=>c.label==='Hypnotic Pattern')&&snapshot.map&&tokensWithin5ft(attacker,token,snapshot.map)&&<button className="btn" onClick={()=>{useStore.getState().socket?.emit('spell:wake',{actorTokenId:attacker.id,targetTokenId:token.id});onClose();}}>Shake awake ? Action</button>}
           {!!d.conditions.length && <p className="floating-menu-note fm-conditions-note">{d.conditions.map(c => c.label).join(', ')}</p>}
           {!targetObjectKind && (actors.length > 0 || ((canAttackAsSelected || canCastAsSelected) && attacker)) && (
             <div className={`fm-actor-bar${canAttackAsSelected || canCastAsSelected ? ' is-combat' : ''}`}>

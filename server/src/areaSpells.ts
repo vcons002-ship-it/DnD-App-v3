@@ -4,7 +4,7 @@ import {castSpikeGrowth} from './advancedSpells.js';
 import {syncPassWithoutTrace} from './partySpellEffects.js';
 import {spellAreaFor,tokenInSpellArea,areaExcludesCaster,areaOrigin,type SpellAreaPlacement} from '../../shared/spellAreas.js';
 import type {Character,Monster,SheetAbility,TokenKind} from '../../shared/types.js';
-import {tokenDistanceFt} from '../../shared/distance.js';
+import {tokensWithinDistanceFt} from '../../shared/distance.js';
 import {hasLineOfSight} from '../../shared/mapWalls.js';
 import {usingPhysicalDice} from '../../shared/dice.js';
 import {getMap,getCharacter,getMonster,getSessionById,listTokens,listRollLog,setRollApply,setRollReveal,isDeadEntity,addMeasurement,addRollLog,beginPlacedSpellImpact} from './sessions.js';
@@ -20,7 +20,7 @@ export function areaPlacementError(sid:string,kind:TokenKind,id:string,a:SheetAb
    p.points.some(q=>!q||!Number.isFinite(q.x)||!Number.isFinite(q.y))||
    [p.excluded,p.selected].some(ids=>ids!==undefined&&(!Array.isArray(ids)||ids.length>10000||ids.some(id=>typeof id!=='string'))))return 'Invalid spell area.';
  if(((p.excluded?.length??0)>0||p.selected!==undefined)&&!spec.selective)return 'This spell affects every creature in its area.';
- for(const q of p.points)if(!spec.self&&(tokenDistanceFt({...actor,widthFt:0},{...q,widthFt:0},map)>spec.rangeFt+1e-6||!hasLineOfSight(actor,q,map.walls)))return `Place ${a.name} within ${spec.rangeFt} feet and outside Total Cover.`;
+ for(const q of p.points)if(!spec.self&&(!tokensWithinDistanceFt({...actor,widthFt:0},{...q,widthFt:0},spec.rangeFt,map)||!hasLineOfSight(actor,q,map.walls)))return `Place ${a.name} within ${spec.rangeFt} feet and outside Total Cover.`;
  if(a.name.trim().toLowerCase()==='fire storm'){
   const px=spec.sizeFt*map.gridSizePx/map.feetPerSquare,visited=new Set([0]);
   for(let changed=true;changed;){changed=false;p.points.forEach((q,i)=>{if(!visited.has(i)&&[...visited].some(j=>{
