@@ -2,7 +2,7 @@ import {lightFalloffGlsl,LIGHT_SPILL_MULTIPLIER,lightBeamExtent} from '../../../
 import {wallVisibilityPolygon,type WallPoint} from '../../../shared/mapWalls';
 import {NEUTRAL_MINIATURE_LIGHTING} from './miniatureLightingDefaults';
 import {
-  AdditiveBlending, CustomBlending, OneFactor, BoxGeometry, BufferGeometry, Float32BufferAttribute, Color, ConeGeometry, CylinderGeometry, DynamicDrawUsage, HalfFloatType, InstancedBufferAttribute,
+  AdditiveBlending, CustomBlending, OneFactor, BoxGeometry, BufferGeometry, Float32BufferAttribute, Color, ConeGeometry, CylinderGeometry, DynamicDrawUsage, HalfFloatType, UnsignedByteType, InstancedBufferAttribute,
   Group, InstancedBufferGeometry, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, OrthographicCamera, TorusGeometry,
   PlaneGeometry, Scene, ShaderMaterial, Vector3, Vector4, WebGLRenderTarget,
   type DirectionalLight, type HemisphereLight, type Texture, type Vector2, type WebGLRenderer,
@@ -25,10 +25,11 @@ export const torchFieldGlsl=`
   uniform sampler2D torchField;
   uniform vec4 torchBounds;
   uniform float stormFlash;
+  uniform float torchFieldScale;
   vec4 torchFieldAt(vec2 point){
     vec2 uv=(point-torchBounds.xy)/torchBounds.zw;
     if(any(lessThan(uv,vec2(0.)))||any(greaterThan(uv,vec2(1.))))return vec4(0.);
-    return texture2D(torchField,uv);
+    return texture2D(torchField,uv)*torchFieldScale;
   }
   vec3 torchIllumination(vec2 point){return torchFieldAt(point).rgb;}
 `;
@@ -42,8 +43,9 @@ export function createBattlefieldLighting(scene:Scene,key:DirectionalLight,ambie
     return color;
   };
   const original={key:key.intensity,color:key.color.clone(),ambient:ambient?.intensity??NEUTRAL_MINIATURE_LIGHTING.ambient,sky:ambient?.color.clone()??new Color(0xffffff),ground:ambient?.groundColor.clone()??new Color(0xffffff),reflection:scene.environmentIntensity};
-  const field=new WebGLRenderTarget(512,512,{type:HalfFloatType,depthBuffer:false,stencilBuffer:false});
-  const fieldUniforms={torchField:{value:field.texture},torchBounds:{value:new Vector4()},stormFlash:{value:0}};
+  let field=new WebGLRenderTarget(512,512,{type:HalfFloatType,depthBuffer:false,stencilBuffer:false});
+  let fieldChecked=false;
+  const fieldUniforms={torchField:{value:field.texture},torchBounds:{value:new Vector4()},stormFlash:{value:0},torchFieldScale:{value:1}};
   const uniforms={...visibility,...fieldUniforms,figureDepth:{value:depth.texture},resolution:{value:depth.resolution},gradeColor:{value:new Color()},gradeOpacity:{value:0},sceneTint:{value:new Color(0xffffff)},sceneTintStrength:{value:0},wetness:{value:0},surfaceTime:{value:0},surfaceScale:{value:12.8},wetLight:{value:1}};
   const material=new ShaderMaterial({transparent:true,depthWrite:false,depthTest:false,toneMapped:false,uniforms,
     vertexShader:`varying vec3 world;void main(){world=(modelMatrix*vec4(position,1.)).xyz;gl_Position=projectionMatrix*viewMatrix*vec4(world,1.);}`,
@@ -99,12 +101,12 @@ export function createBattlefieldLighting(scene:Scene,key:DirectionalLight,ambie
       void main(){sourceShadow=wallGeometryMode>.5?wallShadowSlot:shadowSlot;lightSource=wallGeometryMode>.5?wallSource:source;lightRadiance=wallGeometryMode>.5?wallRadiance:radiance;lightBeam=wallGeometryMode>.5?wallBeam:beam;float extent=max(length(lightBeam.xy-lightSource.xz),length(lightBeam.zw-lightSource.xz));world=wallGeometryMode>.5?position.xy:source.xz+position.xy*(source.w*${LIGHT_SPILL_MULTIPLIER.toFixed(1)}+extent);
         gl_Position=vec4((world-torchBounds.xy)/torchBounds.zw*2.-1.,0.,1.);}`,
     fragmentShader:`${lightFalloffGlsl}${localShadowGlsl}
- varying vec2 world;varying vec4 lightSource;varying vec4 lightRadiance;varying vec4 lightBeam;varying float sourceShadow;
+ uniform float torchFieldScale;varying vec2 world;varying vec4 lightSource;varying vec4 lightRadiance;varying vec4 lightBeam;varying float sourceShadow;
       void main(){float d=lightSegmentDistance(vec3(world.x,0.,world.y),lightBeam,lightSource.y);float radius=lightSource.w;
         float irradiance=sourceShadow<-1.5?spellEmissionIrradiance(d,radius,lightRadiance.w):lightIrradiance(d,radius,lightRadiance.w);
         float visible=localLightVisibility(sourceShadow,vec3(world.x,.1,world.y),${localCreatureShadowStrength});
         float blocked=(1.-visible)*irradiance*max(lightRadiance.r,max(lightRadiance.g,lightRadiance.b));
-        gl_FragColor=vec4(lightRadiance.rgb*irradiance*visible,blocked);}`});
+        gl_FragColor=vec4(lightRadiance.rgb*irradiance*visible,blocked)/max(1.,torchFieldScale);}`});
   const splats=new Mesh(fieldGeometry,fieldMaterial);splats.frustumCulled=false;fieldScene.add(splats);
   const wallSplats=new Group();wallSplats.visible=false;fieldScene.add(wallSplats);
   type WallLight={mesh:Mesh<BufferGeometry,ShaderMaterial>;key:string;light:TorchLight;vertices:number;polygon?:WallPoint[]};
@@ -333,7 +335,28 @@ export function createBattlefieldLighting(scene:Scene,key:DirectionalLight,ambie
       lights.forEach((l,i)=>shadowAttribute.setX(i,l.transient?-2:l.shadowSlot??-1));shadowAttribute.needsUpdate=true;
       const previous=renderer.getRenderTarget(),pending=renderer.shadowMap.needsUpdate,clearAlpha=renderer.getClearAlpha();renderer.getClearColor(fieldClearColor);renderer.shadowMap.needsUpdate=false;
       // Alpha stores blocked irradiance, so start at zero even in opaque previews.
-      try{renderer.setClearColor(0,0);renderer.setRenderTarget(field);renderer.clear();renderer.render(fieldScene,fieldCamera);fieldKey=nextKey;fieldUpdates++;}
+      try{
+        renderer.setClearColor(0,0);
+        if(!fieldChecked){
+          fieldChecked=true;
+          const gl=renderer.getContext();
+          const hasHalfFloat=renderer.extensions.has('EXT_color_buffer_half_float')||renderer.extensions.has('EXT_color_buffer_float');
+          const hasFloatBlend=renderer.extensions.has('EXT_float_blend');
+          renderer.setRenderTarget(field);
+          const complete=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;
+          if(!complete||(!hasHalfFloat&&!hasFloatBlend)){
+            const w=field.width,h=field.height;
+            field.dispose();
+            field=new WebGLRenderTarget(w,h,{type:UnsignedByteType,depthBuffer:false,stencilBuffer:false});
+            fieldUniforms.torchField.value=field.texture;
+            fieldUniforms.torchFieldScale.value=4;
+            renderer.setRenderTarget(field);
+          }
+        }else{
+          renderer.setRenderTarget(field);
+        }
+        renderer.clear();renderer.render(fieldScene,fieldCamera);fieldKey=nextKey;fieldUpdates++;
+      }
       finally{renderer.setRenderTarget(previous);renderer.setClearColor(fieldClearColor,clearAlpha);renderer.shadowMap.needsUpdate=pending;}
     },
     get animated(){return plane.visible&&((settings?.lights??[]).some(l=>l.flicker)||(settings?.groundWetness??0)>0||!!settings?.lightning);},

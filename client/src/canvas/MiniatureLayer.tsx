@@ -1140,7 +1140,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     publishPreloads();
     const advance=async()=>{
       preloadTimer=undefined;
-      if(disposed||failed||preloadRunning)return;
+      if(disposed||failed||preloadRunning||document.hidden)return;
       // Visible figures get first use of the network and decoder. Background
       // work is serial so a crowded map doesn't flood a phone with GLB decodes.
       if(loading.size){preloadTimer=setTimeout(()=>void advance(),100);return;}
@@ -1568,9 +1568,12 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   };
   const contextRecovery = attachWebglContextRecovery(renderer.domElement, {
     onContextLost: () => {
+      // Pause rendering without disposing the renderer so the browser can
+      // restore the WebGL context instead of permanently killing 3D tokens.
+      failed = true;
+      setGpuFloorActive(false);
       cancelBattlefieldFrame(frame);
       frame = 0;
-      fail();
     },
     onContextRestored: () => {
       if (disposed) return;
@@ -1581,7 +1584,15 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       invalidate();
     },
   });
-  const visibility = () => { invalidate(); };
+  const visibility = () => {
+    if (!document.hidden && !disposed && !failed) {
+      if (preloadQueue.size && !preloadRunning && !preloadTimer) {
+        queuePreloads((props.preloadDefinitions ?? []).map((d) => miniatureForPreload(d, props.graphics?.modelQuality ?? 'high')));
+      }
+      scheduleLod();
+    }
+    invalidate();
+  };
   const dispose = () => {
     if (disposed) return;
     disposed = true;
@@ -1637,8 +1648,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   // Throttle rather than debounce: a continuous wheel/pinch gesture must not
   // postpone preparation until the user has already finished zooming. Full
   // scene sync is only needed when the display/preparation decision changes.
-  const scheduleLod=()=>{if(lodTimer)return;lodTimer=setTimeout(()=>{
-    lodTimer=undefined;if(disposed||failed)return;
+  const scheduleLod=()=>{if(lodTimer||document.hidden)return;lodTimer=setTimeout(()=>{
+    lodTimer=undefined;if(disposed||failed||document.hidden)return;
     const plan=planLod(sourceProps);
     setHostData('lodOnScreenIds',JSON.stringify(plan.onScreenIds));
     if(plan.key!==lodDecisionKey)sync(sourceProps,true);

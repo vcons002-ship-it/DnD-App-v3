@@ -58,6 +58,10 @@ const server = http.createServer(app);
 const io: IOServer = new Server(server, {
   // Behind a tunnel the Origin varies; the session code is the real gate.
   cors: { origin: true, credentials: true },
+  // Tolerate background-tab timer throttling and heavy 3D asset decoding when
+  // DM and Player windows share one browser process.
+  pingInterval: 25_000,
+  pingTimeout: 60_000,
   // Snapshots are large and highly repetitive (fog cell strings, duplicated
   // stat blocks) — compress them on the wire. Off by default in Socket.IO v4;
   // a ~1 KB threshold skips tiny ephemeral events (cursors, typing) where the
