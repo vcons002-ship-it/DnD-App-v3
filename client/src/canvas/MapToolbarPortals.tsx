@@ -63,6 +63,7 @@ export function MapToolbarPortals({
   setWallPointer,
   hideCursor,
   cancelWallStroke,
+  onSelectAllLights,
   tool,
   snap,
   setSnap,
@@ -144,6 +145,7 @@ export function MapToolbarPortals({
   setWallPointer: (p: Pt | null) => void;
   hideCursor: () => void;
   cancelWallStroke: () => void;
+  onSelectAllLights?: () => void;
   tool: MeasureTool | null;
   snap: boolean;
   setSnap: React.Dispatch<React.SetStateAction<boolean>>;
@@ -336,9 +338,9 @@ export function MapToolbarPortals({
                   hideCursor();
                 }}
                 onFinish={cancelWallStroke}
+                onSelectAllLights={onSelectAllLights}
                 onUndo={() => {
-                  const last = map?.walls?.at(-1);
-                  if (map && last) useStore.getState().editMapWalls(map.id, { removeId: last.id });
+                  useStore.getState().undo();
                   setWallAnchor(null);
                 }}
               />

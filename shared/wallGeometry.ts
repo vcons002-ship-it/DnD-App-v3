@@ -98,6 +98,61 @@ export function translateWall(w:MapWall,dx:number,dy:number):MapWall {
  const shift=(p:WallPoint)=>({x:p.x+dx,y:p.y+dy});
  return {...w,ax:w.ax+dx,ay:w.ay+dy,bx:w.bx+dx,by:w.by+dy,...(w.points?{points:w.points.map(shift)}:{}),...(w.holes?{holes:w.holes.map(r=>r.map(shift))}:{})};
 }
+/** Lock a dragged direction to 0° / 45° / 90° multiples from anchor. */
+export function snapAngle45(anchor:WallPoint,p:WallPoint):WallPoint {
+ const dx=p.x-anchor.x,dy=p.y-anchor.y,dist=Math.hypot(dx,dy);
+ if(dist<1e-6)return p;
+ const a=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4);
+ return {x:anchor.x+Math.cos(a)*dist,y:anchor.y+Math.sin(a)*dist};
+}
+/** Editable world-space endpoint/corner/vertex handles for a selected wall. */
+export function wallEndpointHandles(w:MapWall):WallPoint[]{
+ if(w.door)return [];
+ if(!w.kind)return [rotateWallPoint({x:w.ax,y:w.ay},w),rotateWallPoint({x:w.bx,y:w.by},w)];
+ if(w.kind==='rectangle'){
+  const x0=Math.min(w.ax,w.bx),x1=Math.max(w.ax,w.bx),y0=Math.min(w.ay,w.by),y1=Math.max(w.ay,w.by);
+  return [{x:x0,y:y0},{x:x1,y:y0},{x:x1,y:y1},{x:x0,y:y1}].map(p=>rotateWallPoint(p,w));
+ }
+ if(w.kind==='circle'){
+  const c=wallCenter(w),rx=Math.abs(w.bx-w.ax)/2,ry=Math.abs(w.by-w.ay)/2;
+  return [{x:c.x+rx,y:c.y},{x:c.x,y:c.y+ry},{x:c.x-rx,y:c.y},{x:c.x,y:c.y-ry}].map(p=>rotateWallPoint(p,w));
+ }
+ if((w.kind==='path'||(w.kind==='polygon'&&!w.holes?.length))&&(w.points?.length??0)<=24){
+  return (w.points??[]).map(p=>rotateWallPoint(p,w));
+ }
+ return [];
+}
+/** Move one handle returned by `wallEndpointHandles` to world-space `target`. */
+export function moveWallEndpoint(w:MapWall,index:number,target:WallPoint):MapWall {
+ const handles=wallEndpointHandles(w);
+ if(index<0||index>=handles.length)return w;
+ if(!w.kind){
+  const other=handles[index===0?1:0];
+  if(Math.hypot(target.x-other.x,target.y-other.y)<1)return w;
+  const a=index===0?target:other,b=index===0?other:target;
+  const {rotation:_rot,...rest}=w;
+  return {...rest,ax:a.x,ay:a.y,bx:b.x,by:b.y};
+ }
+ if(w.kind==='rectangle'){
+  const opp=handles[(index+2)%4];
+  const a=(w.rotation??0)*Math.PI/180,ux=Math.cos(a),uy=Math.sin(a),vx=-uy,vy=ux;
+  const dx=target.x-opp.x,dy=target.y-opp.y;
+  const spanU=dx*ux+dy*uy,spanV=dx*vx+dy*vy;
+  if(Math.abs(spanU)<1||Math.abs(spanV)<1)return w;
+  const cx=(opp.x+target.x)/2,cy=(opp.y+target.y)/2,hw=Math.abs(spanU)/2,hh=Math.abs(spanV)/2;
+  return {...w,ax:cx-hw,ay:cy-hh,bx:cx+hw,by:cy+hh};
+ }
+ if(w.kind==='circle'){
+  const c=wallCenter(w),r=Math.max((w.thickness??1)+1,Math.hypot(target.x-c.x,target.y-c.y));
+  return {...w,ax:c.x-r,ay:c.y-r,bx:c.x+r,by:c.y+r};
+ }
+ if(w.kind==='path'||w.kind==='polygon'){
+  const pts=handles.map((p,i)=>i===index?{x:target.x,y:target.y}:p);
+  const {rotation:_rot,...rest}=w;
+  return {...rest,points:pts,ax:Math.min(...pts.map(p=>p.x)),ay:Math.min(...pts.map(p=>p.y)),bx:Math.max(...pts.map(p=>p.x)),by:Math.max(...pts.map(p=>p.y))};
+ }
+ return w;
+}
 /** Iterative Ramer-Douglas-Peucker; bounded deviation and no recursion overflow. */
 export function simplifyWallPath(points:readonly WallPoint[],tolerance:number):WallPoint[]{
  if(points.length<3)return [...points];

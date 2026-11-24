@@ -13,10 +13,10 @@ import {useEffect,useRef,useState} from 'react';
 
 export type WallTool='off'|'rectangle'|'draw'|'circle'|'freehand'|'edit'|'erase'|'erase-area'|'door';
 const toolNames:Record<WallTool,string>={off:'',rectangle:'Rectangle',draw:'Line',circle:'Circle',freehand:'Free draw',edit:'Move / rotate',erase:'Delete wall','erase-area':'Erase section',door:'Door'};
-export function WallMenu({map,tool,count,snap,onTool,onSnap,onUndo,onFinish,doors=[],onDoor,canGenerateDecal=false,onGenerateDecal,tiles=[],arrangingTiles=false,onToggleArrangeTiles,onAddTileFile,onReorderTile,onRemoveTile}:{
+export function WallMenu({map,tool,count,snap,onTool,onSnap,onUndo,onFinish,onSelectAllLights,doors=[],onDoor,canGenerateDecal=false,onGenerateDecal,tiles=[],arrangingTiles=false,onToggleArrangeTiles,onAddTileFile,onReorderTile,onRemoveTile}:{
   map?:MapState|null;
   tool:WallTool;count:number;snap:boolean;onTool:(tool:WallTool)=>void;
-  onSnap:(snap:boolean)=>void;onUndo:()=>void;onFinish:()=>void;doors?:{id:string;open?:boolean}[];onDoor?:(id:string,open:boolean)=>void;
+  onSnap:(snap:boolean)=>void;onUndo:()=>void;onFinish:()=>void;onSelectAllLights?:()=>void;doors?:{id:string;open?:boolean}[];onDoor?:(id:string,open:boolean)=>void;
   canGenerateDecal?:boolean;onGenerateDecal?:(prompt:string)=>Promise<boolean>;
   tiles?:MapImage[];arrangingTiles?:boolean;onToggleArrangeTiles?:()=>void;onAddTileFile?:(file:File)=>void;onReorderTile?:(id:string,to:'front'|'back')=>void;onRemoveTile?:(id:string)=>void;
 }){
@@ -97,7 +97,7 @@ export function WallMenu({map,tool,count,snap,onTool,onSnap,onUndo,onFinish,door
         {decalControls}
         <label className="measure-row"><span>Snap to grid corners</span><input type="checkbox" checked={snap} onChange={e=>onSnap(e.target.checked)}/></label>
         </div>}
-        {section==='lights'&&map&&<div id="wall-menu-lights" className="wall-menu-section" role="region" aria-label="Lights"><MapLightControls map={map} onPlace={startLight}/></div>}
+        {section==='lights'&&map&&<div id="wall-menu-lights" className="wall-menu-section" role="region" aria-label="Lights"><MapLightControls map={map} onPlace={startLight} onSelectAllLights={onSelectAllLights?()=>{onSelectAllLights();setPosition(null);}:undefined}/></div>}
         {section==='tiles'&&<div id="wall-menu-tiles" className="wall-menu-section tiles-menu" role="region" aria-label="Tiles">
           <p className="hint">Add images or muted MP4/WebM videos and arrange them on the map to build a bigger battlemap. The grid, fog, and scale span all the tiles.</p>
           <input ref={tileFileRef} type="file" accept="image/*,video/mp4,video/webm,.mp4,.webm" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0];if(f)onAddTileFile?.(f);if(tileFileRef.current)tileFileRef.current.value='';}}/>
@@ -120,7 +120,8 @@ export function WallMenu({map,tool,count,snap,onTool,onSnap,onUndo,onFinish,door
         <button className={`measure-row ${tool==='edit'?'on':''}`} onClick={()=>{onTool('edit');setPosition(null);}}>Select / move / rotate features</button>
         <button className={`measure-row ${tool==='erase-area'?'on':''}`} onClick={()=>{onTool('erase-area');setPosition(null);}}>Erase wall section</button>
         <button className={`measure-row ${tool==='erase'?'on':''}`} onClick={()=>{onTool('erase');setPosition(null);}}>Delete entire wall</button>
-        <button className="measure-row" disabled={!count} onClick={onUndo}>Undo last wall</button>
+        {!!map?.environment?.lights.length&&onSelectAllLights&&<button className="measure-row" onClick={()=>{onSelectAllLights();setPosition(null);}}>Select all lights ({map.environment.lights.length})</button>}
+        <button className="measure-row" onClick={()=>{onUndo();setPosition(null);}}>Undo last action</button>
         {!!doors.length&&<details className="wall-menu-list"><summary>Door controls ({doors.length})</summary>
           {doors.map((d,i)=><button key={d.id} className="measure-row" onClick={()=>{onDoor?.(d.id,!d.open);setPosition(null);onTool('off');}}>Door {i+1}: {d.open?'open':'closed'} - Controls</button>)}
         </details>}
