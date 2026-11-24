@@ -652,7 +652,11 @@ export function createSnapshotBuilder(
           }
         }
         return partyVisible?[{...t,sharedSightOnly:true}]:[];
-      });
+      }).map(t =>
+        t.kind === 'monster' && monById.get(t.refId)?.disposition !== 'friendly' && t.darkvisionFt !== undefined
+          ? { ...t, darkvisionFt: undefined }
+          : t,
+      );
       // Sources were fog/hidden-gated in createPlayerVision. A placed source
       // around a corner can illuminate a visible doorway; do not remove it
       // simply because its fixture is outside this viewer's line of sight.

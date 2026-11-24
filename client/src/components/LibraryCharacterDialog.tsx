@@ -36,6 +36,7 @@ export function LibraryCharacterDialog({
     curHp: character.curHp,
     armorClass: character.armorClass,
     speed: character.speed,
+    darkvisionFt: character.darkvisionFt,
     stats: character.stats,
     spellSlots: character.spellSlots,
     resources: character.resources,

@@ -12,6 +12,7 @@ import type {
 import { SKILLS, abilityMod, proficiencyBonus } from './skills.js';
 import { FEAT_LIBRARY } from './featLibrary.js';
 import { portableLeveling } from './portableLeveling.js';
+import { sanitizeDarkvisionFt } from './darkvision.js';
 
 /** Everything an import may set (a character:update without the id). */
 export type SheetPatch = Omit<CharacterUpdatePayload, 'characterId'>;
@@ -294,6 +295,11 @@ export function parseSheetText(text: string): SheetPatch {
   if (ac) patch.armorClass = ac;
   const sp = num1(t, /(?:\bspeed\b|\bwalking\b)\D{0,8}(\d+)\s*(?:ft|feet)?/i);
   if (sp) patch.speed = `${sp} ft.`;
+  const dv = num1(t, /\b(?:superior\s+)?darkvision\b[^.\n;]{0,30}?(\d+)\s*(?:ft\.?|feet)\b/i);
+  if (dv !== undefined) {
+    const cleanDv = sanitizeDarkvisionFt(dv);
+    if (cleanDv !== undefined) patch.darkvisionFt = cleanDv;
+  }
 
   const stats: Record<string, number> = {};
   for (const [ab, labels] of Object.entries(ABILITY_LABELS)) {
@@ -380,6 +386,7 @@ export function exportSheetJSON(c: Character): string {
       curHp: c.curHp,
       armorClass: c.armorClass,
       speed: c.speed,
+      ...(c.darkvisionFt !== undefined ? { darkvisionFt: c.darkvisionFt } : {}),
       stats: c.stats,
       resistances: c.resistances,
       immunities: c.immunities ?? [],
@@ -424,6 +431,13 @@ export function parseSheetJSON(text: string): SheetPatch | null {
   if (str('className') !== undefined) patch.className = str('className');
   if (str('subclass') !== undefined) patch.subclass = str('subclass');
   if (str('speed') !== undefined) patch.speed = str('speed');
+  if (o.darkvisionFt !== undefined) {
+    if (o.darkvisionFt === null) patch.darkvisionFt = null;
+    else {
+      const cleanDv = sanitizeDarkvisionFt(o.darkvisionFt);
+      if (cleanDv !== undefined) patch.darkvisionFt = cleanDv;
+    }
+  }
   if (int('level') !== undefined) patch.level = int('level');
   if (int('maxHp') !== undefined) patch.maxHp = int('maxHp');
   if (int('curHp') !== undefined) patch.curHp = int('curHp');

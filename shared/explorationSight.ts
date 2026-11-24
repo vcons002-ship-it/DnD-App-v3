@@ -1,5 +1,5 @@
 import clipping from 'polygon-clipping';
-import {createPlayerVision,lightCoverage,TOKEN_TARGETABLE_FRACTION,tokenFootprintPoints,type PlayerVision} from './playerVision.js';
+import {createPlayerVision,lightCoverage,originVisionRadius,TOKEN_TARGETABLE_FRACTION,tokenFootprintPoints,type PlayerVision} from './playerVision.js';
 import {wallVisibilityPolygon,SIGHT_EXTENT} from './mapWalls.js';
 import type {ExploredTerrain} from './exploration.js';
 import type {MapState,Token} from './types.js';
@@ -37,20 +37,21 @@ export function visibleTerrain(vision:PlayerVision,cache=terrainCacheFor(vision.
  };
  if(!vision.origins.length)return [];
  if(!vision.heavy)return combine(vision.origins.map(o=>polygon(o,SIGHT_EXTENT)));
- const nearby=combine(vision.origins.map(o=>polygon(o,vision.radius)));
+ const nearbyParts=vision.origins.flatMap(o=>{const r=originVisionRadius(vision,o);return r>0?[polygon(o,r)]:[];});
+ const nearby=combine(nearbyParts);
  // A carried light inside its carrier's darkvision changes color, not terrain
  // visibility. Avoid unlimited sight rays and polygon intersections when the
  // near-sight polygon already contains its whole contribution.
  const extending=vision.lights.flatMap(light=>{
   const lo=terrainLightReach(light);
-  const covered=vision.origins.some(o=>o.x===light.x&&o.y===light.y&&lo+1/64<=vision.radius)||vision.origins.length===1&&Math.hypot(vision.origins[0].x-light.x,vision.origins[0].y-light.y)+lo<=vision.radius*Math.cos(Math.PI/96)-1/64;
+  const covered=vision.origins.some(o=>{const r=originVisionRadius(vision,o);return r>0&&o.x===light.x&&o.y===light.y&&lo+1/64<=r;})||vision.origins.length===1&&(()=>{const r=originVisionRadius(vision,vision.origins[0]);return r>0&&Math.hypot(vision.origins[0].x-light.x,vision.origins[0].y-light.y)+lo<=r*Math.cos(Math.PI/96)-1/64;})();
   return covered?[]:[{light,radius:lo}];
  });
- if(!extending.length)return vision.origins.length===1?nearby:unionTerrain([nearby]);
+ if(!extending.length)return nearbyParts.length<=1?nearby:unionTerrain([nearby]);
  const sight=combine(vision.origins.map(o=>polygon(o,SIGHT_EXTENT)));
  const key='lights:'+JSON.stringify(extending);let lights=cache.get(key);
  if(!lights){lights=combine(extending.map(({light,radius})=>polygon(light,radius)));cache.set(key,lights);}
- return combine([nearby,...(lights.length?[clipping.intersection(sight,lights)]:[])]);
+ return combine([...(nearby.length?[nearby]:[]),...(lights.length?[clipping.intersection(sight,lights)]:[])]);
 }
 export function fogTerrain(map:MapState):ExploredTerrain{
  const rows=new Map<number,number[]>();for(const key of map.mapFogRevealed){const [x,y]=key.split(',').map(Number);if(!Number.isFinite(x)||!Number.isFinite(y))continue;const row=rows.get(y)??[];row.push(x);rows.set(y,row);}
@@ -78,7 +79,7 @@ export function walkingTerrain({walkSight:{map,tokens,owned:ownedIds,tokenId,fro
  if(baseVision?.heavy&&baseVision.lights.length){
   const extending=baseVision.lights.flatMap(light=>{
    const lo=terrainLightReach(light);
-   const covered=baseVision.origins.some(o=>o.id===light.id&&lo+1/64<=baseVision.radius||o.id!==tokenId&&Math.hypot(o.x-light.x,o.y-light.y)+lo<=baseVision.radius*Math.cos(Math.PI/96)-1/64);
+   const covered=baseVision.origins.some(o=>{const r=originVisionRadius(baseVision,o);return r>0&&(o.id===light.id&&lo+1/64<=r||o.id!==tokenId&&Math.hypot(o.x-light.x,o.y-light.y)+lo<=r*Math.cos(Math.PI/96)-1/64);});
    return covered?[]:[{light,radius:lo}];
   });
   if(extending.length){
@@ -98,7 +99,8 @@ export function walkingTerrain({walkSight:{map,tokens,owned:ownedIds,tokenId,fro
     for(const o of baseVision.origins){
      const pt=o.id===tokenId?{x,y}:o,share=o.id!==tokenId||i===0||i===steps;
      if(!baseVision.heavy){nearSet.add(polygon(pt,SIGHT_EXTENT,share));continue;}
-     nearSet.add(polygon(pt,baseVision.radius,share));
+     const r=originVisionRadius(baseVision,o);
+     if(r>0)nearSet.add(polygon(pt,r,share));
      if(staticLights.length)staticSights.add(polygon(pt,SIGHT_EXTENT,share));
     }
     continue;
@@ -107,10 +109,10 @@ export function walkingTerrain({walkSight:{map,tokens,owned:ownedIds,tokenId,fro
    const vision=createPlayerVision(map,at,owned)??{rangeFt:60 as const,radius:60*map.gridSizePx/map.feetPerSquare,heavy:false,origins:fallbackOrigins(at),lights:[],daylight:true};
    if(!vision.origins.length)continue;
    if(!vision.heavy){for(const o of vision.origins)nearSet.add(polygon(o,SIGHT_EXTENT));continue;}
-   for(const o of vision.origins)nearSet.add(polygon(o,vision.radius));
+   for(const o of vision.origins){const r=originVisionRadius(vision,o);if(r>0)nearSet.add(polygon(o,r));}
    const extending=vision.lights.flatMap(light=>{
     const lo=terrainLightReach(light);
-    const covered=vision.origins.some(o=>o.x===light.x&&o.y===light.y&&lo+1/64<=vision.radius)||vision.origins.length===1&&Math.hypot(vision.origins[0].x-light.x,vision.origins[0].y-light.y)+lo<=vision.radius*Math.cos(Math.PI/96)-1/64;
+    const covered=vision.origins.some(o=>{const r=originVisionRadius(vision,o);return r>0&&o.x===light.x&&o.y===light.y&&lo+1/64<=r;})||vision.origins.length===1&&(()=>{const r=originVisionRadius(vision,vision.origins[0]);return r>0&&Math.hypot(vision.origins[0].x-light.x,vision.origins[0].y-light.y)+lo<=r*Math.cos(Math.PI/96)-1/64;})();
     return covered?[]:[{light,radius:lo}];
    });
    if(!extending.length)continue;

@@ -1,6 +1,6 @@
 import {forwardRef,memo,useEffect,useId,useImperativeHandle,useLayoutEffect,useMemo,useRef} from 'react';
 import type {PlayerVisionHandle} from './PlayerVisionOverlay';
-import type {PlayerVision} from '../../../shared/playerVision';
+import {originVisionRadius,type PlayerVision} from '../../../shared/playerVision';
 import type {ExploredTerrain} from '../../../shared/exploration';
 import type {BattlefieldView} from './miniatureProjection';
 import {legacyPath,createLegacyVisionGeometry} from './legacyVision';
@@ -29,7 +29,7 @@ function rasterCover(bounds:Omit<RasterAsset,'key'>,view:BattlefieldView,width:n
 function worldBounds(terrain:Props['terrain'],vision:PlayerVision){
  let minX=0,minY=0,maxX=2048,maxY=2048;
  for(const t of terrain?.tiles??[]){minX=Math.min(minX,t.x);minY=Math.min(minY,t.y);maxX=Math.max(maxX,t.x+t.w);maxY=Math.max(maxY,t.y+t.h);}
- for(const o of vision.origins){minX=Math.min(minX,o.x-vision.radius);minY=Math.min(minY,o.y-vision.radius);maxX=Math.max(maxX,o.x+vision.radius);maxY=Math.max(maxY,o.y+vision.radius);}
+ for(const o of vision.origins){const r=originVisionRadius(vision,o);minX=Math.min(minX,o.x-r);minY=Math.min(minY,o.y-r);maxX=Math.max(maxX,o.x+r);maxY=Math.max(maxY,o.y+r);}
  for(const l of vision.lights){minX=Math.min(minX,l.x-l.radius);minY=Math.min(minY,l.y-l.radius);maxX=Math.max(maxX,l.x+l.radius);maxY=Math.max(maxY,l.y+l.radius);}
  for(const w of vision.walls??[]){minX=Math.min(minX,w.ax,w.bx);minY=Math.min(minY,w.ay,w.by);maxX=Math.max(maxX,w.ax,w.bx);maxY=Math.max(maxY,w.ay,w.by);}
  const pad=512;

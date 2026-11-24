@@ -1,5 +1,5 @@
 import {forwardRef,useEffect,useId,useImperativeHandle,useLayoutEffect,useRef} from 'react';
-import type {VisionLight,PlayerVision} from '../../../shared/playerVision';
+import {originVisionRadius,type VisionLight,type PlayerVision} from '../../../shared/playerVision';
 import {lightBeamOutline,type LightBeam} from '../../../shared/lightFalloff';
 import {groundYScale,groundPerspectiveCss,perspectiveSlope,type BattlefieldView} from './miniatureProjection';
 import type {ExploredTerrain} from '../../../shared/exploration';
@@ -253,7 +253,7 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
   const worldKey=[
    wallsKey,vision.heavy,!!vision.daylight,vision.radius,wallFog,!!state.current.keepRevealed,
    state.current.serverGeometry?.outlines?.wallsKey??'',
-   vision.origins.map(o=>{const p=livePoint(o);return `${o.id}:${p.x},${p.y}`;}).join('|'),
+   vision.origins.map(o=>{const p=livePoint(o);return `${o.id}:${p.x},${p.y}:${originVisionRadius(vision,o)}`;}).join('|'),
    ordinaryLights.map(l=>`${l.id}:${l.x},${l.y},${l.radius},${l.height},${l.strength},${l.beam?`${l.beam.ax},${l.beam.ay},${l.beam.bx},${l.beam.by}`:''}`).join('|'),
   ].join('~'),baseKey=`${projectionKey}~${worldKey}`;
   if(coverFrame.current&&lastBaseDraw.current?.key===baseKey&&lastBaseDraw.current.geometry===geometry&&lastBaseDraw.current.memory===memoryCanvas.current&&(gpuFull||svgSyncedKey.current===baseKey)){
@@ -265,14 +265,16 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    const p=livePoint(o);
    return wallFog?polygon({...p,id:o.id},radius):circleVertices.map(v=>({x:p.x+v.x*radius,y:p.y+v.y*radius}));
   };
+  const nearPolygons=()=>!vision.daylight&&!vision.heavy?vision.origins.flatMap(o=>{const r=originVisionRadius(vision,o);return r>0?[originPolygon(o,r)]:[];}):[];
+  const coverOrigins=()=>vision.origins.flatMap(o=>{if(!vision.heavy)return [originPolygon(o,SIGHT_EXTENT)];const r=originVisionRadius(vision,o);return r>0?[originPolygon(o,r)]:[];});
   if(gpuFull){
    if(!coverFrame.current||lastWorldDraw.current?.key!==worldKey||lastWorldDraw.current.geometry!==geometry||lastWorldDraw.current.memory!==memoryCanvas.current){
     lastWorldDraw.current={key:worldKey,geometry,memory:memoryCanvas.current};
     coverFrame.current={enabled:wallFog||vision.heavy,
-     grade:{heavy:vision.heavy,daylight:!!vision.daylight,near:!vision.daylight&&!vision.heavy?vision.origins.map(o=>originPolygon(o,vision.radius)):[]},
+     grade:{heavy:vision.heavy,daylight:!!vision.daylight,near:nearPolygons()},
      explored:geometry??[],memory:memoryCanvas.current,keepRevealed:!!state.current.keepRevealed,
      memoryRange:undefined,
-     origins:vision.origins.map(o=>originPolygon(o,vision.heavy?vision.radius:SIGHT_EXTENT)),
+     origins:coverOrigins(),
      sight:vision.origins.map(o=>originPolygon(o,SIGHT_EXTENT)),
      lights:ordinaryLights.map(source=>({source,polygon:polygon(source,SIGHT_EXTENT)}))};
     for(const slot of polygonCache.current.keys())if(!activeKeys.has(slot))polygonCache.current.delete(slot);
@@ -280,7 +282,7 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    if(svgSyncedWorldKey.current!==worldKey){
     svgSyncedWorldKey.current=worldKey;
     if(originPaths.current.hasAttribute('transform'))originPaths.current.removeAttribute('transform');
-    syncPaths(originPaths.current,vision.origins.map(o=>({d:worldPath(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length),fill:'black'})));
+    syncPaths(originPaths.current,vision.origins.flatMap(o=>{const r=vision.heavy?originVisionRadius(vision,o):SIGHT_EXTENT;return r>0?[{d:worldPath(o,r,false,wallFog&&!!vision.walls?.length),fill:'black'}]:[];}));
    }
    finish();return;
   }
@@ -304,15 +306,17 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
   const sightD=vision.origins.map(o=>path(o,SIGHT_EXTENT,false,wallFog));
   syncPaths(sightPaths.current,sightD.map(d=>({d})));
   setWorldTransform(originPaths.current,orthoUnrotated);
-  const circleItems=vision.origins.map((o,i)=>{
+  const circleItems=vision.origins.flatMap((o,i)=>{
    const useSight=!vision.heavy&&(wallFog&&!!vision.walls?.length===wallFog);
+   const r=vision.heavy?originVisionRadius(vision,o):SIGHT_EXTENT;
+   if(!(r>0))return [];
    const d=orthoUnrotated
-    ?(useSight?worldPath(o,SIGHT_EXTENT,false,wallFog):worldPath(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length))
-    :(useSight?sightD[i]:path(o,vision.heavy?vision.radius:SIGHT_EXTENT,false,wallFog&&!!vision.walls?.length));
-   return {d,fill:'black'};
+    ?(useSight?worldPath(o,SIGHT_EXTENT,false,wallFog):worldPath(o,r,false,wallFog&&!!vision.walls?.length))
+    :(useSight?sightD[i]:path(o,r,false,wallFog&&!!vision.walls?.length));
+   return [{d,fill:'black'}];
   });
   setWorldTransform(nearPaths.current,orthoUnrotated);
-  syncPaths(nearPaths.current,!vision.daylight&&!vision.heavy?vision.origins.map(o=>({d:orthoUnrotated?worldPath(o,vision.radius,false,wallFog):path(o,vision.radius,false,wallFog)})):[]);
+  syncPaths(nearPaths.current,!vision.daylight&&!vision.heavy?vision.origins.flatMap(o=>{const r=originVisionRadius(vision,o);return r>0?[{d:orthoUnrotated?worldPath(o,r,false,wallFog):path(o,r,false,wallFog)}]:[];}):[]);
   // Ordinary lanterns keep steady nominal vision geometry while the 3D renderer
   // and cosmetic spell-light bands animate independently.
   ordinaryMask.current.sync(ordinaryLights,projection);
@@ -320,15 +324,15 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
   // Encoding/decoding two large SVG image URLs per frame caused mobile stalls.
   syncPaths(originPaths.current,circleItems);
   setWorldTransform(retainedRange.current,orthoUnrotated&&vision.heavy);
-  if(vision.heavy)syncPaths(retainedRange.current,vision.origins.map(o=>({d:orthoUnrotated?worldPath(o,vision.radius):path(o,vision.radius),fill:'white'})));
+  if(vision.heavy)syncPaths(retainedRange.current,vision.origins.flatMap(o=>{const r=originVisionRadius(vision,o);return r>0?[{d:orthoUnrotated?worldPath(o,r):path(o,r),fill:'white'}]:[];}));
   else syncCoverRect(retainedRange.current,width,height);
   if(svgSyncedWorldKey.current!==worldKey)svgSyncedWorldKey.current=worldKey;
   svgSyncedKey.current=baseKey;
   if(!coverFrame.current||lastWorldDraw.current?.key!==worldKey||lastWorldDraw.current.geometry!==geometry||lastWorldDraw.current.memory!==memoryCanvas.current){lastWorldDraw.current={key:worldKey,geometry,memory:memoryCanvas.current};coverFrame.current={enabled:wallFog||vision.heavy,
-   grade:{heavy:vision.heavy,daylight:!!vision.daylight,near:!vision.daylight&&!vision.heavy?vision.origins.map(o=>originPolygon(o,vision.radius)):[]},
+   grade:{heavy:vision.heavy,daylight:!!vision.daylight,near:!vision.daylight&&!vision.heavy?vision.origins.flatMap(o=>{const r=originVisionRadius(vision,o);return r>0?[originPolygon(o,r)]:[];}):[]},
    explored:geometry??[],memory:memoryCanvas.current,keepRevealed:!!state.current.keepRevealed,
    memoryRange:undefined,
-   origins:vision.origins.map(o=>originPolygon(o,vision.heavy?vision.radius:SIGHT_EXTENT)),
+   origins:vision.origins.flatMap(o=>{if(!vision.heavy)return [originPolygon(o,SIGHT_EXTENT)];const r=originVisionRadius(vision,o);return r>0?[originPolygon(o,r)]:[];}),
    sight:vision.origins.map(o=>originPolygon(o,SIGHT_EXTENT)),
    lights:ordinaryLights.map(source=>({source,polygon:polygon(source,SIGHT_EXTENT)}))};
   for(const slot of polygonCache.current.keys())if(!activeKeys.has(slot))polygonCache.current.delete(slot);}

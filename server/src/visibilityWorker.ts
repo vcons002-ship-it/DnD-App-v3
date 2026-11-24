@@ -6,7 +6,7 @@ import {SIGHT_EXTENT} from '../../shared/mapWalls.js';
 import type {GeometryJob,RasterJob,MaskTilesJob,MaskTilesResult,WorkerCacheSync} from './visibilityWorkers.js';
 import {createHash} from 'node:crypto';
 import sharp from 'sharp';
-import {visionShowsAffinity} from '../../shared/playerVision.js';
+import {originVisionRadius,visionShowsAffinity} from '../../shared/playerVision.js';
 import {movementPreview,type MovementPreviewJob} from '../../shared/movementPreview.js';
 import {walkingTerrain,seedTerrainCache,type WalkSightJob} from '../../shared/explorationSight.js';
 import type {ExploredTerrain} from '../../shared/exploration.js';
@@ -143,7 +143,7 @@ parentPort!.on('message',async(msg:{id?:number;job?:GeometryJob|MovementPreviewJ
     const shape=old?.x===p.x&&old.y===p.y?old:{x:p.x,y:p.y,points:geometry.points(p,radius,job.vision.walls)};
     prepared!.shapes[key]=shape;cached!.shapes[key]=shape;
    };
-   for(const p of job.vision.origins){add(p,SIGHT_EXTENT);add(p,job.vision.radius);}
+   for(const p of job.vision.origins){add(p,SIGHT_EXTENT);const r=originVisionRadius(job.vision,p);if(r>0)add(p,r);}
    for(const p of job.vision.lights)if(!p.transient)add(p,SIGHT_EXTENT);
    cached.shapes={...prepared.shapes};
   }

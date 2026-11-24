@@ -1,5 +1,5 @@
 import type { MapWall } from './mapWalls.js';
-import type { PlayerVision } from './playerVision.js';
+import { originVisionRadius, type PlayerVision } from './playerVision.js';
 import { wallBoundarySegments } from './wallGeometry.js';
 
 export type WallShadowSegment = {
@@ -140,7 +140,7 @@ export function computeVisionStencilCacheKey(params: {
 }): string {
   const { key: wallKey } = extractActiveWallSegments(params.vision.walls ?? []);
   const originsKey = (params.vision.origins ?? [])
-    .map((o) => `${o.id}@${Math.round(o.x)},${Math.round(o.y)}`)
+    .map((o) => `${o.id}@${Math.round(o.x)},${Math.round(o.y)}:${Math.round(originVisionRadius(params.vision, o))}`)
     .sort()
     .join(';');
   const lightsKey = (params.vision.lights ?? [])

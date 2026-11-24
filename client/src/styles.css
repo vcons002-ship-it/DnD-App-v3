@@ -320,7 +320,7 @@ textarea:hover:not(:disabled) {
   border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
 }
 .sb-type { font-style: italic; color: var(--muted); }
-.sb-meta { display: flex; gap: 12px; margin: 4px 0; font-weight: 600; }
+.sb-meta { display: flex; gap: 12px; flex-wrap: wrap; margin: 4px 0; font-weight: 600; }
 .haste-stat-boost { color: var(--stat-boost); }
 .haste-save-indicator { font-size: .85em; font-weight: 700; }
 .player-fantasy .hud-orb-cluster .hud-armor.haste-stat-boost strong { color: var(--stat-boost); }

@@ -575,6 +575,10 @@ ensureColumn('library_characters', 'model_type', "model_type TEXT NOT NULL DEFAU
 ensureColumn('library_characters', 'appearance', "appearance TEXT NOT NULL DEFAULT ''");
 ensureColumn('characters','height_inches','height_inches INTEGER');
 ensureColumn('library_characters','height_inches','height_inches INTEGER');
+ensureColumn('characters','darkvision_ft','darkvision_ft INTEGER');
+ensureColumn('monsters','darkvision_ft','darkvision_ft INTEGER');
+ensureColumn('library_characters','darkvision_ft','darkvision_ft INTEGER');
+ensureColumn('library_creatures','darkvision_ft','darkvision_ft INTEGER');
 // Character templates retain completed progression, never a session's pending grant.
 ensureColumn('library_characters', 'leveling', "leveling TEXT NOT NULL DEFAULT '{}'");
 // Durable per-browser id of whoever first saved a library entry. Lets a player
@@ -831,7 +835,7 @@ export function rowToToken(r: TokenRow): Token {
 }
 
 type CharacterRow = {
-  model_type?:string; appearance?:string;height_inches?:number;
+  model_type?:string; appearance?:string;height_inches?:number;darkvision_ft?:number|null;
   id: string;
   session_id: string;
   name: string;
@@ -919,6 +923,7 @@ export function rowToCharacter(r: CharacterRow): Character {
     hitDiceUsedByDie: parseJsonColumn(r.hit_dice_used_by_die, {}, 'characters.hit_dice_used_by_die ' + r.id),
     icon: r.icon ?? '',
     modelType:r.model_type||undefined,appearance:r.appearance||undefined,heightInches:r.height_inches??undefined,
+    ...(r.darkvision_ft!=null?{darkvisionFt:r.darkvision_ft}:{}),
   };
 }
 
@@ -927,6 +932,7 @@ type MonsterRow = {
   model_type?: string;
   model_color?: string;
   visual_tags?: string;
+  darkvision_ft?: number | null;
   id: string;
   session_id: string;
   name: string;
@@ -973,6 +979,7 @@ export function rowToMonster(r: MonsterRow): Monster {
     tempHp: r.temp_hp ?? 0,
     armorClass: r.armor_class ?? 0,
     speed: r.speed ?? '',
+    ...(r.darkvision_ft != null ? { darkvisionFt: r.darkvision_ft } : {}),
     stats: parseJsonColumn(r.stats, DEFAULT_STATS, 'monsters.stats ' + r.id),
     resistances: parseJsonColumn(r.resistances, [], 'monsters.resistances ' + r.id),
     immunities: parseJsonColumn(r.immunities, [], 'monsters.immunities ' + r.id),

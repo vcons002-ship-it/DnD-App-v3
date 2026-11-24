@@ -5,6 +5,7 @@ import { signed } from '../../../shared/skills';
 import { type ModSource, effectiveAc, effectiveStats } from '../../../shared/modifiers';
 import { damageParts, weaponAttackBonusDetail } from '../../../shared/combatMath';
 import { DAMAGE_TYPES } from '../../../shared/damage';
+import { resolveBaseDarkvisionFt, resolveCreatureDarkvisionFt } from '../../../shared/darkvision';
 import { activeHasteCondition, effectiveSpeed, hasteAcBonus, speedIsZero } from '../../../shared/spellBuffs';
 import { formatDiceRulesSummary, formatWeaponTriggersSummary, hasActiveDiceRules } from '../../../shared/diceRules';
 import { NumberInput } from './NumberInput';
@@ -35,6 +36,8 @@ export type StatSheet = {
   tempHp: number;
   armorClass: number;
   speed: string;
+  darkvisionFt?: number;
+  race?: string;
   conditions?: Condition[];
   stats: Record<string, number>;
   resistances: string[];
@@ -109,6 +112,7 @@ function masteryNamesForWeapon(w: Weapon, masteries: SheetAbility[]): string[] {
 }
 
 type Draft = Omit<StatSheet, 'id' | 'resistances' | 'immunities' | 'weaknesses'> & {
+  darkvisionFt?: number;
   resistances: string;
   immunities: string;
   weaknesses: string;
@@ -145,6 +149,7 @@ export function StatBlock({
       tempHp: c.tempHp,
       armorClass: c.armorClass,
       speed: c.speed,
+      darkvisionFt: c.darkvisionFt,
       stats: { ...c.stats },
       resistances: c.resistances.join(', '),
       immunities: (c.immunities ?? []).join(', '),
@@ -177,6 +182,7 @@ export function StatBlock({
     tempHp: d.tempHp,
     armorClass: d.armorClass,
     speed: d.speed.trim(),
+    darkvisionFt: d.darkvisionFt === undefined ? null : d.darkvisionFt,
     stats: d.stats,
     resistances: splitList(d.resistances),
     immunities: splitList(d.immunities),
@@ -204,6 +210,7 @@ export function StatBlock({
         creature={creature}
         subtitle={subtitle}
         levelLabel={levelLabel}
+        monster={monster}
         onEdit={onSave ? startEdit : undefined}
         onAiFill={onAiFill}
         aiBusy={aiBusy}
@@ -295,6 +302,28 @@ export function StatBlock({
         <label className="mini">
           Speed
           <input value={d.speed} onChange={(e) => set({ speed: e.target.value })} />
+        </label>
+        <label
+          className="mini"
+          title="Darkvision distance in feet (0 = none; leave blank to auto-detect from species/traits)"
+        >
+          Darkvision
+          <NumberInput
+            min={0}
+            max={600}
+            step={5}
+            allowEmpty
+            value={d.darkvisionFt ?? ''}
+            placeholder={String(
+              resolveBaseDarkvisionFt({
+                kind: monster ? 'monster' : 'pc',
+                race: d.identity.race ?? creature.race,
+                abilities: d.abilities,
+                sheetAbilities: creature.sheetAbilities,
+              }),
+            )}
+            onValueChange={(n) => set({ darkvisionFt: n })}
+          />
         </label>
       </div>
 
@@ -403,6 +432,7 @@ function ReadView({
   creature,
   subtitle,
   levelLabel,
+  monster = false,
   onEdit,
   onAiFill,
   aiBusy,
@@ -414,6 +444,7 @@ function ReadView({
   creature: StatSheet;
   subtitle?: string;
   levelLabel: string;
+  monster?: boolean;
   onEdit?: () => void;
   onAiFill?: () => void;
   aiBusy?: boolean;
@@ -432,6 +463,22 @@ function ReadView({
   const eff = effectiveStats(m as unknown as ModSource);
   const effAc = effectiveAc(m as unknown as ModSource) || m.armorClass;
   const speed = effectiveSpeed(m);
+  const dvArgs = {
+    kind: (monster ? 'monster' : 'pc') as 'pc' | 'monster',
+    race: m.race,
+    abilities: m.abilities,
+    sheetAbilities: m.sheetAbilities,
+    conditions: m.conditions,
+  };
+  const autoDarkvisionFt = resolveBaseDarkvisionFt(dvArgs);
+  const baseDarkvisionFt = resolveBaseDarkvisionFt({ ...dvArgs, darkvisionFt: m.darkvisionFt });
+  const darkvisionFt = resolveCreatureDarkvisionFt({ ...dvArgs, darkvisionFt: m.darkvisionFt });
+  const dvTitle =
+    darkvisionFt !== baseDarkvisionFt
+      ? `Darkvision ${darkvisionFt} ft (base ${baseDarkvisionFt} ft boosted by active condition)`
+      : m.darkvisionFt !== undefined
+        ? `Explicit Darkvision ${darkvisionFt} ft (auto: ${autoDarkvisionFt} ft)`
+        : `Auto-detected Darkvision ${darkvisionFt} ft`;
   const hastened = !!activeHasteCondition(m);
   const hasteSpeedBoosted = hastened && !speedIsZero(m) && speed !== m.speed;
   // PCs (masteries passed) store dice-only damage; show it with the live ability
@@ -500,6 +547,14 @@ function ReadView({
           {m.tempHp > 0 && <span className="temp-hp"> +{m.tempHp} temp</span>}
         </span>
         {speed && <span className={hasteSpeedBoosted ? 'haste-stat-boost' : undefined} title={speed !== m.speed ? `Base speed: ${m.speed}${hasteSpeedBoosted ? ' · Doubled by Haste' : ''}` : undefined}>Speed {speed}</span>}
+        {(!monster || darkvisionFt > 0 || m.darkvisionFt !== undefined) && (
+          <span title={dvTitle}>
+            Darkvision {darkvisionFt} ft
+            {(m.darkvisionFt !== undefined || darkvisionFt !== baseDarkvisionFt) && (
+              <span className="sb-ab-mod-dot">•</span>
+            )}
+          </span>
+        )}
         {!!m.killCount && m.killCount > 0 && (
           <span className="kill-badge" title="Enemies this character has defeated">
             💀 {m.killCount}

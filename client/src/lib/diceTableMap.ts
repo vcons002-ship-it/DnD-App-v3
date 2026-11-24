@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type {StateSnapshot} from '../../../shared/types';
 import {wallVisibilityPolygon} from '../../../shared/mapWalls';
-import {fogVisionContains,lightCoverage,usesMapVision,usesTokenVision} from '../../../shared/playerVision';
+import {fogVisionContains,lightCoverage,originVisionRadius,usesMapVision,usesTokenVision} from '../../../shared/playerVision';
 import {tokenVisibleAt} from '../../../shared/fog';
 
 const images=new Map<string,Promise<HTMLImageElement|null>>();
@@ -43,7 +43,7 @@ export function createDiceTableMap(){
      ctx.save();transform();ctx.beginPath();
      const walls=usesMapVision(map)?vision.walls??[]:[];
      for(const origin of vision.origins){const points=wallVisibilityPolygon(origin,walls,Math.hypot(w,h)*2);points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();}ctx.clip();
-     if(vision.heavy){ctx.beginPath();for(const origin of vision.origins){ctx.moveTo(origin.x+vision.radius,origin.y);ctx.arc(origin.x,origin.y,vision.radius,0,Math.PI*2);}for(const light of vision.lights){let low=0,high=light.radius*2;for(let i=0;i<20;i++){const mid=(low+high)/2;if(lightCoverage(mid,light)>.10)low=mid;else high=mid;}if(low<=0)continue;const points=wallVisibilityPolygon(light,vision.walls??[],low);points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();}ctx.clip();}
+     if(vision.heavy){ctx.beginPath();for(const origin of vision.origins){const r=originVisionRadius(vision,origin);if(r>0){ctx.moveTo(origin.x+r,origin.y);ctx.arc(origin.x,origin.y,r,0,Math.PI*2);}}for(const light of vision.lights){let low=0,high=light.radius*2;for(let i=0;i<20;i++){const mid=(low+high)/2;if(lightCoverage(mid,light)>.10)low=mid;else high=mid;}if(low<=0)continue;const points=wallVisibilityPolygon(light,vision.walls??[],low);points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();}ctx.clip();}
      terrainCopy();ctx.restore();
     }else ctx.drawImage(terrain,0,0);
     ctx.save();transform();

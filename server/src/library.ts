@@ -1,5 +1,6 @@
 import { readCreatureBaseline } from "../../shared/creatureScaling.js";
 import { normalizeModelType, normalizeModelColor, normalizeVisualTags, resolveMonsterModelType, LIBRARY_FAMILY_UPGRADES } from '../../shared/monsterAppearance.js';
+import { sanitizeDarkvisionFt } from '../../shared/darkvision.js';
 import { db, newId, getMeta, setMeta } from './db.js';
 import { SRD_ITEMS } from './items/srd.js';
 import type {
@@ -109,6 +110,7 @@ type LibCreatureRow = {
   max_hp: number;
   armor_class: number;
   speed: string;
+  darkvision_ft?: number | null;
   stats: string;
   resistances: string;
   immunities?: string | null;
@@ -132,6 +134,7 @@ function rowToTemplate(r: LibCreatureRow): CreatureTemplate {
     maxHp: r.max_hp,
     armorClass: r.armor_class,
     speed: r.speed,
+    ...(r.darkvision_ft != null ? { darkvisionFt: r.darkvision_ft } : {}),
     stats: JSON.parse(r.stats ?? '{}'),
     resistances: JSON.parse(r.resistances ?? '[]'),
     immunities: JSON.parse(r.immunities ?? '[]'),
@@ -187,6 +190,7 @@ export type SaveCreatureInput = {
   maxHp?: number;
   armorClass?: number;
   speed?: string;
+  darkvisionFt?: number;
   stats?: Record<string, number>;
   resistances?: string[];
   immunities?: string[];
@@ -249,6 +253,8 @@ export function saveLibraryCreature(
   );
   const importedBaseline = readCreatureBaseline(input.crBaseline);
   if (importedBaseline) db.prepare("UPDATE library_creatures SET cr_baseline = ? WHERE id = ?").run(JSON.stringify(importedBaseline), id);
+  const darkvisionFt = sanitizeDarkvisionFt(input.darkvisionFt);
+  db.prepare('UPDATE library_creatures SET darkvision_ft = ? WHERE id = ?').run(darkvisionFt ?? null, id);
   return { saved: getLibraryCreature(name)! };
 }
 
@@ -272,6 +278,7 @@ type LibCharacterRow = {
   cur_hp: number;
   armor_class: number;
   speed: string;
+  darkvision_ft?: number | null;
   stats: string;
   spell_slots: string;
   resources: string;
@@ -302,6 +309,7 @@ function rowToLibraryCharacter(r: LibCharacterRow): LibraryCharacter {
     curHp: r.cur_hp,
     armorClass: r.armor_class,
     speed: r.speed,
+    ...(r.darkvision_ft != null ? { darkvisionFt: r.darkvision_ft } : {}),
     stats: JSON.parse(r.stats ?? '{}'),
     spellSlots: JSON.parse(r.spell_slots ?? '{}'),
     resources: JSON.parse(r.resources ?? '{}'),
@@ -418,6 +426,8 @@ export function saveLibraryCharacter(
     typeof input.modelType==='string'&&/^[a-z0-9-]{1,48}$/.test(input.modelType)?input.modelType:'',
     typeof input.appearance==='string'?input.appearance.slice(0,600):'',id);
   if(typeof input.heightInches==='number'&&Number.isInteger(input.heightInches)&&input.heightInches>=6&&input.heightInches<=240)db.prepare('UPDATE library_characters SET height_inches=? WHERE id=?').run(input.heightInches,id);
+  const darkvisionFt=sanitizeDarkvisionFt(input.darkvisionFt);
+  db.prepare('UPDATE library_characters SET darkvision_ft=? WHERE id=?').run(darkvisionFt??null,id);
   return { saved: getLibraryCharacter(name)! };
 }
 
