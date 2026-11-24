@@ -1,22 +1,22 @@
-/* Player-only: retain the existing d20 art and quick-button palette. A connected
-   padded region owns the space between the trigger and the responsive popup. */
-.player-fantasy .dice-button-overlay.player-dice-picker {
+/* Shared player & DM dice picker: retain the existing d20 art and quick-button palette.
+   A connected padded region owns the space between the trigger and the responsive popup. */
+:is(.player-fantasy, .dm-fantasy) .dice-button-overlay.player-dice-picker {
   width: 174px;
   height: 54px;
   display: block;
 }
-.player-fantasy .dice-button-overlay.player-dice-picker.open {
+:is(.player-fantasy, .dm-fantasy) .dice-button-overlay.player-dice-picker.open {
   z-index: 46;
 }
 /* Keep the upstream per-entity ADV/DIS controls legible alongside the die.
    They never fade with the d20, and the target label stays within this corner. */
-.player-fantasy .player-dice-picker .dice-adv-row {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-adv-row {
   position: absolute;
   left: 64px;
   top: 3px;
   gap: 4px;
 }
-.player-fantasy .player-dice-picker .dice-adv-btn {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-adv-btn {
   min-width: 48px;
   min-height: 26px;
   padding: 4px 6px;
@@ -24,11 +24,11 @@
   line-height: 14px;
   opacity: 1;
 }
-.player-fantasy .player-dice-picker .dice-adv-btn:focus-visible {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-adv-btn:focus-visible {
   outline: 2px solid #e2c796;
   outline-offset: 2px;
 }
-.player-fantasy .player-dice-picker .dice-adv-armed {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-adv-armed {
   position: absolute;
   left: 64px;
   top: 32px;
@@ -54,7 +54,7 @@
     display: none;
   }
 }
-.player-fantasy .player-dice-picker .dice-picker-disclosure {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-picker-disclosure {
   position: absolute;
   top: 32px;
   left: 37px;
@@ -70,11 +70,11 @@
   cursor: pointer;
   box-shadow: 0 2px 4px #0009;
 }
-.player-fantasy .player-dice-picker .dice-picker-disclosure:hover {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-picker-disclosure:hover {
   color: #fff0c9;
   border-color: #e2c796;
 }
-.player-fantasy .player-dice-picker .dice-picker-disclosure svg {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-picker-disclosure svg {
   width: 13px;
   height: 13px;
   fill: none;
@@ -82,10 +82,10 @@
   stroke-width: 1.6;
   transition: transform .12s;
 }
-.player-fantasy .player-dice-picker .dice-picker-disclosure[aria-expanded='true'] svg {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-picker-disclosure[aria-expanded='true'] svg {
   transform: rotate(180deg);
 }
-.player-fantasy .player-dice-picker .player-dice-menu-region {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .player-dice-menu-region {
   position: absolute;
   left: 0;
   top: 100%;
@@ -93,8 +93,8 @@
   width: min(232px, calc((100vw - 20px) / var(--player-ui-scale, .85)));
   box-sizing: border-box;
 }
-.player-fantasy .player-dice-picker .player-dice-menu-region[hidden] { display: none; }
-.player-fantasy .dice-button-overlay.player-dice-picker .player-dice-menu-region .dice-quick-menu {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .player-dice-menu-region[hidden] { display: none; }
+:is(.player-fantasy, .dm-fantasy) .dice-button-overlay.player-dice-picker .player-dice-menu-region .dice-quick-menu {
   position: static;
   top: auto;
   left: auto;
@@ -114,7 +114,7 @@
   border-color: #786348;
   box-shadow: 0 5px 16px #0009;
 }
-.player-fantasy .player-dice-picker .dice-quick-menu .btn {
+:is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-quick-menu .btn {
   min-width: 0;
   min-height: 28px;
   padding: 4px 6px;
@@ -124,15 +124,15 @@
   /* A narrow hover bridge passes down the die's own lane, to the left of the
      zoom buttons. Map view controls live in the main toolbar; the card opens in the dice lane, so neither the visible menu
      nor an invisible padded rectangle steals a zoom/fit click. */
-  .player-fantasy .player-dice-picker .player-dice-menu-region {
+  :is(.player-fantasy, .dm-fantasy) .player-dice-picker .player-dice-menu-region {
     width: 59px;
     padding-top: 8px;
   }
-  .player-fantasy .dice-button-overlay.player-dice-picker .player-dice-menu-region .dice-quick-menu {
+  :is(.player-fantasy, .dm-fantasy) .dice-button-overlay.player-dice-picker .player-dice-menu-region .dice-quick-menu {
     width: min(232px, calc((100vw - 20px) / var(--player-ui-scale, .85)));
     max-height: min(300px, calc((100dvh - 250px) / var(--player-ui-scale, .85)), var(--dice-menu-available-height, 300px));
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .player-fantasy .player-dice-picker .dice-picker-disclosure svg { transition: none; }
+  :is(.player-fantasy, .dm-fantasy) .player-dice-picker .dice-picker-disclosure svg { transition: none; }
 }

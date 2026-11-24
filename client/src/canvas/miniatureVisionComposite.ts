@@ -122,17 +122,17 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
   const inside=(p:WallPoint,polygon:WallPoint[])=>{let yes=false;for(let i=0,j=polygon.length-1;i<polygon.length;j=i++){
     const a=polygon[i],b=polygon[j];if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)yes=!yes;
   }return yes;};
-  const composite = new ShaderMaterial({uniforms:{frame:{value:null as Texture|null},cover:{value:cover.texture},body:{value:body},bodyDepth:{value:bodyDepth??body},hasBodyDepth:{value:bodyDepth?1:0},bodyCenters:{value:bodyCenters},memory:{value:body},hasMemory:{value:0},fogEnabled:{value:0},gradeMode:{value:0},retained:{value:0},fullFloor:{value:0},bodyGrades:{value:bodyGrades},groundLight:{value:body},hasGroundLight:{value:0},lightBounds:{value:new Vector4()},cameraWorld:{value:new Matrix4()},projectionInverse:{value:new Matrix4()},viewProjection:{value:new Matrix4()}},
+  const composite = new ShaderMaterial({uniforms:{frame:{value:null as Texture|null},cover:{value:cover.texture},body:{value:body},bodyDepth:{value:bodyDepth??body},hasBodyDepth:{value:bodyDepth?1:0},bodyCenters:{value:bodyCenters},memory:{value:body},hasMemory:{value:0},fogEnabled:{value:0},gradeMode:{value:0},retained:{value:0},fullFloor:{value:0},bodyGrades:{value:bodyGrades},groundLight:{value:body},groundLightScale:{value:1},hasGroundLight:{value:0},lightBounds:{value:new Vector4()},cameraWorld:{value:new Matrix4()},projectionInverse:{value:new Matrix4()},viewProjection:{value:new Matrix4()}},
     depthTest:false,depthWrite:false,toneMapped:false,blending:NoBlending,
     vertexShader:'varying vec2 uvScreen;void main(){uvScreen=uv;gl_Position=vec4(position.xy,0.,1.);}',
     // The finished framebuffer already has output color conversion and premultiplied alpha.
-    fragmentShader:`${lightFalloffGlsl}uniform sampler2D frame,cover,body,bodyDepth,bodyCenters,memory,bodyGrades,groundLight;uniform float hasBodyDepth,hasMemory,fogEnabled,gradeMode,retained,fullFloor,hasGroundLight;uniform mat4 cameraWorld,projectionInverse,viewProjection;uniform vec4 lightBounds;varying vec2 uvScreen;
+    fragmentShader:`${lightFalloffGlsl}uniform sampler2D frame,cover,body,bodyDepth,bodyCenters,memory,bodyGrades,groundLight;uniform float hasBodyDepth,hasMemory,fogEnabled,gradeMode,retained,fullFloor,hasGroundLight,groundLightScale;uniform mat4 cameraWorld,projectionInverse,viewProjection;uniform vec4 lightBounds;varying vec2 uvScreen;
       float lightCoverage(){
         vec4 n=cameraWorld*projectionInverse*vec4(uvScreen*2.-1.,-1.,1.),f=cameraWorld*projectionInverse*vec4(uvScreen*2.-1.,1.,1.);
         vec3 a=n.xyz/n.w,b=f.xyz/f.w,d=b-a;
         vec2 world=(a+d*(-a.y/(abs(d.y)<.0001?.0001:d.y))).xz,uv=(world-lightBounds.xy)/max(lightBounds.zw,vec2(.001));
         if(any(lessThan(uv,vec2(0.)))||any(greaterThan(uv,vec2(1.))))return 0.;
-        vec4 light=texture2D(groundLight,uv);return lightColorCoverage(max(light.r,max(light.g,light.b))+light.a);
+        vec4 light=texture2D(groundLight,uv)*groundLightScale;return lightColorCoverage(max(light.r,max(light.g,light.b))+light.a);
       }
       vec3 grade(vec3 c,float unlit,float near){
         float saturation=gradeMode>1.5?${HEAVY_DARKVISION_DESATURATION}:mix(.88,${REGULAR_DARKVISION_DESATURATION},near);
@@ -282,9 +282,9 @@ export function createMiniatureVisionComposite(renderer:WebGLRenderer, host:HTML
   let lastZ=originalZ,lastCompositeAttr='',lastGradingAttr='',lastFullAttr='',lastCoverUpdates=-1,lastSpellFlashes=-1;
   let lastGradeCover:VisionCoverFrame|undefined,lastBodiesKey='',lastGradeFlashes=false;
   return {
-    gradeBodies(next:VisionCoverFrame|undefined,bodies:readonly {slot:number;x:number;y:number;radius?:number}[],field?:{torchField:{value:Texture};torchBounds:{value:Vector4}},flashes:readonly VisionLight[]=[],walls:import('../../../shared/mapWalls').MapWall[]=[]){
+    gradeBodies(next:VisionCoverFrame|undefined,bodies:readonly {slot:number;x:number;y:number;radius?:number}[],field?:{torchField:{value:Texture};torchBounds:{value:Vector4};torchFieldScale?:{value:number}},flashes:readonly VisionLight[]=[],walls:import('../../../shared/mapWalls').MapWall[]=[]){
       composite.uniforms.hasGroundLight.value=field?1:0;
-      if(field){composite.uniforms.groundLight.value=field.torchField.value;composite.uniforms.lightBounds.value.copy(field.torchBounds.value);}
+      if(field){composite.uniforms.groundLight.value=field.torchField.value;composite.uniforms.groundLightScale.value=field.torchFieldScale?.value??1;composite.uniforms.lightBounds.value.copy(field.torchBounds.value);}
       let centersChanged=false;
       for(const p of bodies){
         if(!p.slot)continue;

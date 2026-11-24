@@ -579,7 +579,7 @@ function TokenShapeInner({
     }
     invalidateRetainedToken(art);art.getLayer()?.batchDraw();
     return()=>{art.clearCache();};
-  },[cacheArtwork,appearance,iconImg,serverBody,serverHud,reducedEffects]);
+  },[cacheArtwork,appearance,iconImg,serverBody,serverHud,serverLayer,reducedEffects]);
 
   return (
     <>

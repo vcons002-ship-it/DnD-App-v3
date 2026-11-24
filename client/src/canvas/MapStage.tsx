@@ -1318,11 +1318,16 @@ function MapStageInner({
   // Flat tokens belong to the ground plane, beneath miniature geometry.
   // Only ready miniature HUDs and shared tools belong above WebGL. Konva
   // keeps all hit regions so changing visual depth never changes input ownership.
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (legacy && containerRef.current) {
+      delete containerRef.current.dataset.gpuFloorActive;
+      delete containerRef.current.dataset.gpuVisionFull;
+      delete containerRef.current.dataset.gpuVisionGrade;
+    }
     const background = layerRef.current?.getNativeCanvasElement();
     const groundTokens = groundTokenLayerRef.current?.getNativeCanvasElement();
     const foreground = tokenLayerRef.current?.getNativeCanvasElement();
-    const gpuFloor = containerRef.current?.dataset.gpuFloorActive === 'true';
+    const gpuFloor = !legacy && containerRef.current?.dataset.gpuFloorActive === 'true';
     if (background) {
       background.style.zIndex = legacyTerrain ? '1' : '0';
       background.style.opacity = gpuFloor ? '0' : '';
@@ -2151,8 +2156,9 @@ function MapStageInner({
   };
 
   const entities=tokenEntityIndex(snapshot),myClaimedCharId=snapshot.characters.find(ch=>ch.claimedBy===mySocketId)?.id;
+  const tokenLayerImg=legacy&&snapshot.tokenLayerRaster?renderedImage(snapshot.tokenLayerRaster.key):undefined;
   const renderTokens = (miniatures: boolean, shared = false) => snapshot.tokens.filter(t=>!!t.sharedSightOnly===shared).filter(t=>!doorTokenIds.has(t.id)).filter((token) =>
-    !hiddenGhosts.has(token.id) && (readyMiniatures.has(token.id) && miniatureIds.has(token.id)) === miniatures,
+    !hiddenGhosts.has(token.id) && (!legacy && readyMiniatures.has(token.id) && miniatureIds.has(token.id)) === miniatures,
   ).map((t) => {
     const d = resolveToken(snapshot, t);
     const creature = t.kind === 'pc' ? entities.characters.get(t.refId) : entities.monsters.get(t.refId);
@@ -2170,7 +2176,7 @@ function MapStageInner({
       <TokenShape
         key={t.id}
         token={t}
-        serverLayer={legacy&&!!snapshot.tokenLayerRaster&&serverTokenLayerSet.has(t.id)}
+        serverLayer={!!tokenLayerImg&&serverTokenLayerSet.has(t.id)}
         serverSprite={snapshot.tokenSprites?.[t.id]}
         cacheArtwork={snapshot.serverRendering?.enabled===true}
         presentation={presentation}
@@ -2440,7 +2446,7 @@ function MapStageInner({
               onDragMove={handleLayerDragMove}
               onDragEnd={handleLayerDragEnd}
             >
-              {legacy&&snapshot.tokenLayerRaster&&<KonvaImage name="server-token-layer" image={renderedImage(snapshot.tokenLayerRaster.key)} x={snapshot.tokenLayerRaster.x} y={snapshot.tokenLayerRaster.y} width={snapshot.tokenLayerRaster.width/snapshot.tokenLayerRaster.scale} height={snapshot.tokenLayerRaster.height/snapshot.tokenLayerRaster.scale} listening={false} perfectDrawEnabled={false}/>}
+              {tokenLayerImg&&snapshot.tokenLayerRaster&&<KonvaImage name="server-token-layer" image={tokenLayerImg} x={snapshot.tokenLayerRaster.x} y={snapshot.tokenLayerRaster.y} width={snapshot.tokenLayerRaster.width/snapshot.tokenLayerRaster.scale} height={snapshot.tokenLayerRaster.height/snapshot.tokenLayerRaster.scale} listening={false} perfectDrawEnabled={false}/>}
               {renderTokens(false)}
             </Layer>
             <Layer

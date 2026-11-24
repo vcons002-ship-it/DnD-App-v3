@@ -406,8 +406,8 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
     <rect width={props.width} height={props.height} fill="white"/><rect width={props.width} height={props.height} fill="black" mask={`url(#${coverId})`}/>
    </mask>
   </defs></svg>
-  <div data-testid="automatic-map-fog" style={{display:props.mapFogOfWar===false&&!props.vision.heavy?'none':undefined,position:'absolute',inset:0,background:'#050608',maskImage:`url(#${coverId})`}}>
-   {terrain&&b&&<div data-testid="explored-terrain" style={{position:'absolute',inset:0,overflow:'hidden',clipPath:`url(#${memoryId})`}}>
+  <div data-testid="automatic-map-fog" style={{display:props.mapFogOfWar===false&&!props.vision.heavy?'none':undefined,position:'absolute',inset:0,background:'#050608',maskImage:`url(#${coverId})`,WebkitMaskImage:`url(#${coverId})`}}>
+   {terrain&&b&&<div data-testid="explored-terrain" style={{position:'absolute',inset:0,overflow:'hidden',clipPath:`url(#${memoryId})`,WebkitClipPath:`url(#${memoryId})`}}>
     <div ref={memoryPlane} data-testid="explored-terrain-grade" style={{position:'absolute',width:props.width,height:props.height,overflow:props.tilt?undefined:'hidden',transformOrigin:'50% 50%',filter:props.keepRevealed?'none':`grayscale(1) brightness(${exploredTerrainBrightness(terrain.environment,props.vision.heavy)})`}}>
      <div ref={memoryMap} style={{position:'absolute',transformOrigin:'0 0'}}>
       {!terrain.tiles.length&&<div style={{position:'absolute',left:b.x,top:b.y,width:b.w,height:b.h,background:'#2a2f3a'}}/>}
@@ -419,7 +419,7 @@ export const PlayerVisionOverlay=forwardRef<PlayerVisionHandle,Camera&{vision:Pl
    </div>}
   </div>
  </div>
-  <div ref={shade} data-testid="player-vision-shade" style={{position:'absolute',inset:0,zIndex:4,pointerEvents:'none',maskImage:`url(#${shadeId})`}}/>
-  <div ref={nearShade} data-testid="dim-light-darkvision" style={{position:'absolute',inset:0,zIndex:4,pointerEvents:'none',maskImage:`url(#${nearId})`}}/>
+  <div ref={shade} data-testid="player-vision-shade" style={{position:'absolute',inset:0,zIndex:4,pointerEvents:'none',maskImage:`url(#${shadeId})`,WebkitMaskImage:`url(#${shadeId})`}}/>
+  <div ref={nearShade} data-testid="dim-light-darkvision" style={{position:'absolute',inset:0,zIndex:4,pointerEvents:'none',maskImage:`url(#${nearId})`,WebkitMaskImage:`url(#${nearId})`}}/>
  </>;
 });
