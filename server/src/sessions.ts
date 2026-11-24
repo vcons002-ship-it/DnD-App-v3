@@ -48,6 +48,7 @@ import { tokenVisibleAt } from '../../shared/fog.js';
 import {createPlayerVision,fogVisionContainsToken,tokenRadiusPx,usesTokenVision} from '../../shared/playerVision.js';
 import {isInvisible} from '../../shared/advancedSpells.js';
 import {isBlindCondition,seesInvisible} from '../../shared/invisibleSight.js';
+import {resolveCreatureDarkvisionFt,sanitizeDarkvisionFt} from '../../shared/darkvision.js';
 import {tokenDistanceFt} from '../../shared/distance.js';
 import { weaponsFromActions, actionsToSheetAbilities, isCleanAttackDuplicate, effectiveRecharge } from '../../shared/monsterAttacks.js';
 import { isDamageType } from '../../shared/damage.js';
@@ -504,37 +505,71 @@ export function getActiveMapId(sessionId: string): string | null {
 
 // ---- Tokens ----
 
-export function listTokens(mapId: string): Token[] {
-  const rows = db
-    .prepare(
-      `SELECT tokens.*, CASE WHEN tokens.kind = 'pc' THEN (SELECT conditions FROM characters WHERE id = tokens.ref_id) ELSE NULL END AS pc_conditions
-       FROM tokens WHERE map_id = ? ORDER BY created_at ASC`,
-    )
-    .all(mapId) as (Parameters<typeof rowToToken>[0] & { pc_conditions?: string | null })[];
-  return rows.map((row) => {
-    const blind = row.pc_conditions ? isBlindCondition(parseJsonColumn<Condition[]>(row.pc_conditions, [], 'characters.conditions')) : false;
-    return {
-      ...rowToToken(row),
-      teleportedAt: teleportTime(row.id),
-      ...(blind ? { blind: true } : {}),
-    };
-  });
-}
+type TokenWithSensesRow = Parameters<typeof rowToToken>[0] & {
+  pc_conditions?: string | null;
+  pc_darkvision_ft?: number | null;
+  pc_race?: string | null;
+  pc_abilities?: string | null;
+  pc_sheet_abilities?: string | null;
+  mon_conditions?: string | null;
+  mon_darkvision_ft?: number | null;
+  mon_abilities?: string | null;
+  mon_sheet_abilities?: string | null;
+};
 
-export function getToken(tokenId: string): Token | null {
-  const row = db
-    .prepare(
-      `SELECT tokens.*, CASE WHEN tokens.kind = 'pc' THEN (SELECT conditions FROM characters WHERE id = tokens.ref_id) ELSE NULL END AS pc_conditions
-       FROM tokens WHERE id = ?`,
-    )
-    .get(tokenId) as (Parameters<typeof rowToToken>[0] & { pc_conditions?: string | null }) | undefined;
-  if (!row) return null;
-  const blind = row.pc_conditions ? isBlindCondition(parseJsonColumn<Condition[]>(row.pc_conditions, [], 'characters.conditions')) : false;
+function hydrateToken(row: TokenWithSensesRow): Token {
+  const pcConditions = row.pc_conditions
+    ? parseJsonColumn<Condition[]>(row.pc_conditions, [], 'characters.conditions')
+    : [];
+  const blind = row.kind === 'pc' && row.pc_conditions ? isBlindCondition(pcConditions) : false;
+  let darkvisionFt: number | undefined;
+  if (row.kind === 'pc' && row.pc_abilities != null) {
+    darkvisionFt = resolveCreatureDarkvisionFt({
+      kind: 'pc',
+      darkvisionFt: row.pc_darkvision_ft,
+      race: row.pc_race,
+      abilities: parseJsonColumn(row.pc_abilities, [], 'characters.abilities'),
+      sheetAbilities: parseJsonColumn(row.pc_sheet_abilities, [], 'characters.sheet_abilities'),
+      conditions: pcConditions,
+    });
+  } else if (row.kind === 'monster' && row.mon_abilities != null) {
+    darkvisionFt = resolveCreatureDarkvisionFt({
+      kind: 'monster',
+      darkvisionFt: row.mon_darkvision_ft,
+      abilities: parseJsonColumn(row.mon_abilities, [], 'monsters.abilities'),
+      sheetAbilities: parseJsonColumn(row.mon_sheet_abilities, [], 'monsters.sheet_abilities'),
+      conditions: row.mon_conditions
+        ? parseJsonColumn<Condition[]>(row.mon_conditions, [], 'monsters.conditions')
+        : [],
+    });
+  }
   return {
     ...rowToToken(row),
     teleportedAt: teleportTime(row.id),
     ...(blind ? { blind: true } : {}),
+    ...(darkvisionFt !== undefined ? { darkvisionFt } : {}),
   };
+}
+
+const TOKEN_SELECT_SQL = `SELECT tokens.*,
+  c.conditions AS pc_conditions, c.darkvision_ft AS pc_darkvision_ft, c.race AS pc_race, c.abilities AS pc_abilities, c.sheet_abilities AS pc_sheet_abilities,
+  m.conditions AS mon_conditions, m.darkvision_ft AS mon_darkvision_ft, m.abilities AS mon_abilities, m.sheet_abilities AS mon_sheet_abilities
+  FROM tokens
+  LEFT JOIN characters c ON tokens.kind = 'pc' AND c.id = tokens.ref_id
+  LEFT JOIN monsters m ON tokens.kind = 'monster' AND m.id = tokens.ref_id`;
+
+export function listTokens(mapId: string): Token[] {
+  const rows = db
+    .prepare(`${TOKEN_SELECT_SQL} WHERE tokens.map_id = ? ORDER BY tokens.created_at ASC`)
+    .all(mapId) as TokenWithSensesRow[];
+  return rows.map(hydrateToken);
+}
+
+export function getToken(tokenId: string): Token | null {
+  const row = db
+    .prepare(`${TOKEN_SELECT_SQL} WHERE tokens.id = ?`)
+    .get(tokenId) as TokenWithSensesRow | undefined;
+  return row ? hydrateToken(row) : null;
 }
 
 export function createToken(opts: {
@@ -2368,6 +2403,7 @@ export type CharacterInput = {
   modelType?:string;
   appearance?:string;
   heightInches?:number;
+  darkvisionFt?:number;
 };
 
 /** Create a player character (DM or a player may add one). */
@@ -2449,6 +2485,8 @@ export function createCharacter(
     .run(typeof opts.modelType==='string'&&/^[a-z0-9-]{1,48}$/.test(opts.modelType)?opts.modelType:'',typeof opts.appearance==='string'?opts.appearance.slice(0,600):'',id);
   if(opts.gold!==undefined)db.prepare('UPDATE characters SET gold=? WHERE id=?').run(Number.isFinite(opts.gold)?Math.max(0,Math.round(opts.gold*100)/100):0,id);
   if(typeof opts.heightInches==='number'&&Number.isInteger(opts.heightInches)&&opts.heightInches>=6&&opts.heightInches<=240)db.prepare('UPDATE characters SET height_inches=? WHERE id=?').run(opts.heightInches,id);
+  const darkvisionFt=sanitizeDarkvisionFt(opts.darkvisionFt);
+  if(darkvisionFt!==undefined)db.prepare('UPDATE characters SET darkvision_ft=? WHERE id=?').run(darkvisionFt,id);
   return getCharacter(id)!;
 }
 
@@ -2903,6 +2941,7 @@ export function updateCharacter(
     spellSlots: Character['spellSlots'];
     resources: Character['resources'];
     icon: string;
+    darkvisionFt: number | null;
   }>,
   options: { skipRosterSync?: boolean } = {},
 ): Character | null {
@@ -2943,6 +2982,9 @@ export function updateCharacter(
   if (patch.tempHp !== undefined) put('temp_hp', Math.max(0, patch.tempHp));
   if (patch.armorClass !== undefined) put('armor_class', patch.armorClass);
   if (patch.speed !== undefined) put('speed', patch.speed);
+  if (patch.darkvisionFt !== undefined) {
+    put('darkvision_ft', patch.darkvisionFt === null ? null : (sanitizeDarkvisionFt(patch.darkvisionFt) ?? null));
+  }
   if (patch.icon !== undefined) put('icon', patch.icon);
   if (patch.stats !== undefined) put('stats', JSON.stringify(patch.stats));
   if (patch.resistances !== undefined)
@@ -3187,6 +3229,7 @@ export type MonsterInput = {
   level?: number;
   armorClass?: number;
   speed?: string;
+  darkvisionFt?: number;
   stats?: Record<string, number>;
   resistances?: string[];
   immunities?: string[];
@@ -3219,6 +3262,7 @@ function toMonsterInput(m: Monster): MonsterInput {
     visualTags: [...(m.visualTags ?? [])],
     armorClass: m.armorClass,
     speed: m.speed,
+    ...(m.darkvisionFt !== undefined ? { darkvisionFt: m.darkvisionFt } : {}),
     stats: { ...m.stats },
     resistances: [...m.resistances],
     immunities: [...(m.immunities ?? [])],
@@ -3309,6 +3353,8 @@ function insertMonster(
   );
   const importedBaseline = readCreatureBaseline(opts.crBaseline);
   if (importedBaseline) db.prepare("UPDATE monsters SET cr_baseline = ? WHERE id = ?").run(JSON.stringify(importedBaseline), id);
+  const darkvisionFt = sanitizeDarkvisionFt(opts.darkvisionFt);
+  if (darkvisionFt !== undefined) db.prepare('UPDATE monsters SET darkvision_ft = ? WHERE id = ?').run(darkvisionFt, id);
   const creature = getMonster(id)!;
   requestCreatureAsset(creature);
   return creature;
@@ -3384,6 +3430,7 @@ export function updateMonster(
     visualTags: string[];
     armorClass: number;
     speed: string;
+    darkvisionFt: number | null;
     stats: Record<string, number>;
     resistances: string[];
     immunities: string[];
@@ -3456,6 +3503,9 @@ export function updateMonster(
   if (patch.tempHp !== undefined) put('temp_hp', Math.max(0, patch.tempHp));
   if (patch.armorClass !== undefined) put('armor_class', patch.armorClass);
   if (patch.speed !== undefined) put('speed', patch.speed);
+  if (patch.darkvisionFt !== undefined) {
+    put('darkvision_ft', patch.darkvisionFt === null ? null : (sanitizeDarkvisionFt(patch.darkvisionFt) ?? null));
+  }
   if (patch.icon !== undefined) put('icon', patch.icon);
   if (patch.stats !== undefined) put('stats', JSON.stringify(patch.stats));
   if (patch.resistances !== undefined)

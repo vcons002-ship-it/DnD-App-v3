@@ -3,13 +3,13 @@ export type OutlineSet={wallsKey:string;shapes:Record<string,{x:number;y:number;
 export type LegacyGeometry=LegacyVisionPaths&{memory:string[];affinity:string[];outlines?:OutlineSet};
 export type CachedPolygon={points:WallPoint[];path:string};
 import {wallVisibilityPolygon,SIGHT_EXTENT,type WallPoint} from './mapWalls.js';
-import {lightCoverage,type PlayerVision} from './playerVision.js';
+import {lightCoverage,originVisionRadius,type PlayerVision} from './playerVision.js';
 import {boundedPaths} from './legacyMaskSvg.js';
 
 export const legacyPath=(points:readonly WallPoint[])=>points.length?'M'+points.map(p=>`${p.x.toFixed(2)},${p.y.toFixed(2)}`).join('L')+'Z':'';
 export function visionBounds(vision:PlayerVision){
  let minX=0,minY=0,maxX=4096,maxY=4096;
- for(const o of vision.origins){minX=Math.min(minX,o.x-vision.radius);minY=Math.min(minY,o.y-vision.radius);maxX=Math.max(maxX,o.x+vision.radius);maxY=Math.max(maxY,o.y+vision.radius);}
+ for(const o of vision.origins){const r=originVisionRadius(vision,o);minX=Math.min(minX,o.x-r);minY=Math.min(minY,o.y-r);maxX=Math.max(maxX,o.x+r);maxY=Math.max(maxY,o.y+r);}
  for(const l of vision.lights){minX=Math.min(minX,l.x-l.radius);minY=Math.min(minY,l.y-l.radius);maxX=Math.max(maxX,l.x+l.radius);maxY=Math.max(maxY,l.y+l.radius);}
  for(const w of vision.walls??[]){minX=Math.min(minX,w.ax,w.bx);minY=Math.min(minY,w.ay,w.by);maxX=Math.max(maxX,w.ax,w.bx);maxY=Math.max(maxY,w.ay,w.by);}
  const pad=2048;
@@ -33,7 +33,7 @@ export function createLegacyVisionGeometry(onNew?:(wallsKey:string,key:string,en
   const key=JSON.stringify(vision.walls??[]);if(key!==wallsKey){wallsKey=key;cache.clear();}
   const bounds=visionBounds(vision);
   const sight=boundedPaths(vision.origins.map(o=>polygon(o,SIGHT_EXTENT,wallFog,vision.walls).path),bounds);
-  const near=vision.heavy?vision.origins.map(o=>polygon(o,vision.radius,wallFog,vision.walls).path):[];
+  const near=vision.heavy?vision.origins.flatMap(o=>{const r=originVisionRadius(vision,o);return r>0?[polygon(o,r,wallFog,vision.walls).path]:[];}):[];
   const lights=vision.lights.filter(l=>!l.transient).map(l=>{
    let low=0,high=l.radius*1.5;
    for(let i=0;i<18;i++){const mid=(low+high)/2;if(lightCoverage(mid,l)>.10)low=mid;else high=mid;}

@@ -42,6 +42,7 @@ export function LibrarySaveDialog({
     maxHp: monster.maxHp,
     armorClass: monster.armorClass,
     speed: monster.speed,
+    darkvisionFt: monster.darkvisionFt,
     stats: monster.stats,
     resistances: monster.resistances,
     immunities: monster.immunities,

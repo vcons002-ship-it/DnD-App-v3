@@ -3,15 +3,21 @@ import {lightIrradiance,lightColorCoverage,spellEmissionIrradiance} from './ligh
 import {tokenVisibleAt} from './fog.js';
 import {hasPotentialSightBlockers,type MapWall} from './mapWalls.js';
 import {createLightSightCache} from './lightSightCache.js';
+import {DEFAULT_PC_DARKVISION_FT} from './darkvision.js';
 const sightCache=createLightSightCache(16384);
 import type {MapState,Token} from './types.js';
-export type VisionPoint={id:string;x:number;y:number};
+export type VisionPoint={id:string;x:number;y:number;radius?:number;rangeFt?:number};
 export type VisionLight=VisionPoint&{radius:number;height:number;strength:number;transient?:boolean;carried?:boolean;beam?:LightBeam};
 /** Same ground irradiance and coverage as battlefieldLighting torch-field shader. */
 export function lightCoverage(distance:number,light:Pick<VisionLight,'radius'|'height'|'strength'|'transient'>){
  return lightColorCoverage((light.transient?spellEmissionIrradiance:lightIrradiance)(Math.hypot(distance,light.height),light.radius,light.strength));
 }
-export type PlayerVision={rangeFt:60;radius:number;heavy:boolean;origins:VisionPoint[];lights:VisionLight[];walls?:MapWall[];daylight?:boolean};
+export type PlayerVision={rangeFt:number;radius:number;heavy:boolean;origins:VisionPoint[];lights:VisionLight[];walls?:MapWall[];daylight?:boolean};
+/** Darkvision radius in map pixels for one vision origin (falls back to the shared vision radius). */
+export function originVisionRadius(vision:Pick<PlayerVision,'radius'>,origin:{id?:string;radius?:number}):number{
+ const r=origin.radius??vision.radius;
+ return Number.isFinite(r)&&r>0?r:0;
+}
 /** Map cover also conceals creatures on unseen terrain. Painted cover is separate. */
 export const usesMapVision=(map:Pick<MapState,'mapVisionEnabled'>|null|undefined)=>map?.mapVisionEnabled!==false;
 export const usesTokenVision=(map:Pick<MapState,'mapVisionEnabled'|'tokenVisionEnabled'>|null|undefined)=>usesMapVision(map)||map?.tokenVisionEnabled!==false;
@@ -40,11 +46,12 @@ export function visionContains(vision:PlayerVision|undefined|null,x:number,y:num
 export function fogVisionContains(vision:PlayerVision|undefined|null,x:number,y:number,wallFog:boolean):boolean{
  if(!vision)return true;
  const point={x,y},walls=vision.walls??[],seen=(o:VisionPoint)=>!wallFog||!walls.length||sightCache.visible(`o:${o.id}:${x},${y}`,o,point,walls);
+ const inDarkvision=(o:VisionPoint)=>{const r=originVisionRadius(vision,o);return r>0&&Math.hypot(x-o.x,y-o.y)<=r+1e-6;};
  // Same answer, cheapest tests first: distances before any wall ray cast.
  if(!vision.heavy)return vision.origins.some(seen);
- if(!vision.origins.some(o=>Math.hypot(x-o.x,y-o.y)<=vision.radius+1e-6))return visionLit(vision,x,y)&&vision.origins.some(seen);
+ if(!vision.origins.some(inDarkvision))return visionLit(vision,x,y)&&vision.origins.some(seen);
  const visibleOrigins=vision.origins.filter(seen);
- return visibleOrigins.length>0&&(!vision.heavy||visibleOrigins.some(o=>Math.hypot(x-o.x,y-o.y)<=vision.radius+1e-6)||visionLit(vision,x,y));
+ return visibleOrigins.length>0&&(visibleOrigins.some(inDarkvision)||visionLit(vision,x,y));
 }
 export const TOKEN_TARGETABLE_FRACTION=0.35;
 const TOKEN_FOOTPRINT_UNIT_OFFSETS:readonly {dx:number;dy:number}[]=(()=>{
@@ -64,7 +71,7 @@ function tokenMayIntersectVision(vision:PlayerVision|undefined|null,x:number,y:n
  if(!vision.origins.length)return false;
  if(!vision.heavy||vision.daylight)return true;
  const r=Math.max(0,radiusPx);
- if(vision.origins.some(o=>Math.hypot(x-o.x,y-o.y)<=vision.radius+r+1e-6))return true;
+ if(vision.origins.some(o=>{const dr=originVisionRadius(vision,o);return dr>0&&Math.hypot(x-o.x,y-o.y)<=dr+r+1e-6;}))return true;
  return vision.lights.some(l=>lightCoverage(Math.max(0,Math.hypot(x-l.x,y-l.y)-r),l)>.10);
 }
 export function tokenFootprintPoints(x:number,y:number,radiusPx:number):{x:number;y:number}[]{
@@ -130,7 +137,7 @@ export function visionInSight(vision:PlayerVision|undefined|null,x:number,y:numb
  const point={x,y},walls=vision.walls??[];return vision.origins.some(o=>!walls.length||sightCache.visible(`o:${o.id}:${x},${y}`,o,point,walls));
 }
 export function visionHasDarkvision(vision:PlayerVision|undefined|null,x:number,y:number):boolean{
- return !!vision?.origins.some(o=>Math.hypot(x-o.x,y-o.y)<=vision.radius+1e-6);
+ return !!vision?.origins.some(o=>{const r=originVisionRadius(vision,o);return r>0&&Math.hypot(x-o.x,y-o.y)<=r+1e-6;});
 }
 /** Dim-light darkvision shows affinity; heavy-darkness affinity needs actual light. */
 export function visionShowsAffinity(vision:PlayerVision|undefined|null,x:number,y:number,radiusPx=0):boolean{
@@ -150,15 +157,17 @@ export function visionShowsAffinity(vision:PlayerVision|undefined|null,x:number,
   }
  }
  if(!vision.heavy){
-  const darkOuter=vision.radius+r+1e-6;
   for(const o of vision.origins){
+   const dr=originVisionRadius(vision,o);
+   if(!(dr>0))continue;
+   const darkOuter=dr+r+1e-6;
    const dx=x-o.x,dy=y-o.y;
    if(dx*dx+dy*dy>darkOuter*darkOuter)continue;
-   if(Math.hypot(dx,dy)<=vision.radius+1e-6)return true;
+   if(Math.hypot(dx,dy)<=dr+1e-6)return true;
    if(r>0){
     for(let i=1;i<TOKEN_FOOTPRINT_UNIT_OFFSETS.length;i++){
      const u=TOKEN_FOOTPRINT_UNIT_OFFSETS[i];
-     if(Math.hypot(x+u.dx*r-o.x,y+u.dy*r-o.y)<=vision.radius+1e-6)return true;
+     if(Math.hypot(x+u.dx*r-o.x,y+u.dy*r-o.y)<=dr+1e-6)return true;
     }
    }
   }
@@ -183,12 +192,16 @@ export function createSceneVision(map:MapState|null|undefined,tokens:Token[]):Pl
 export function createPlayerVision(map:MapState|null|undefined,tokens:Token[],owned:Set<string>,lightTokenAllowed?:(token:Token)=>boolean):PlayerVision|undefined{
  if(!map)return undefined;
  const ownedPcs=tokens.filter(t=>t.kind==='pc'&&owned.has(t.refId)&&!t.isHidden);
- const origins=ownedPcs.filter(t=>!t.blind).map(t=>({id:t.id,x:t.x,y:t.y}));
+ const px=map!.gridSizePx/Math.max(.001,map!.feetPerSquare);
+ const origins:VisionPoint[]=ownedPcs.filter(t=>!t.blind).map(t=>{
+  const rangeFt=typeof t.darkvisionFt==='number'&&Number.isFinite(t.darkvisionFt)?Math.max(0,t.darkvisionFt):DEFAULT_PC_DARKVISION_FT;
+  return {id:t.id,x:t.x,y:t.y,rangeFt,radius:rangeFt*px};
+ });
  const allBlind=ownedPcs.length>0&&origins.length===0;
  if(!allBlind&&!usesDarknessVision(map)&&!map.walls?.length)return undefined;
- const px=map!.gridSizePx/Math.max(.001,map!.feetPerSquare);
  const darkness=usesDarknessVision(map);
- const vision:PlayerVision={rangeFt:60,radius:60*px,heavy:(darkness&&!!map.environment?.heavyDarkness)||allBlind,origins,lights:[],walls:map.walls,daylight:!darkness&&!allBlind};
+ const maxRangeFt=origins.length?Math.max(...origins.map(o=>o.rangeFt??DEFAULT_PC_DARKVISION_FT)):DEFAULT_PC_DARKVISION_FT;
+ const vision:PlayerVision={rangeFt:maxRangeFt,radius:maxRangeFt*px,heavy:(darkness&&!!map.environment?.heavyDarkness)||allBlind,origins,lights:[],walls:map.walls,daylight:!darkness&&!allBlind};
  const fog=map!.mapFogEnabled?new Set(map!.mapFogRevealed):null;
  const permitted=(x:number,y:number)=>origins.length>0&&(!fog||fog.has(`${Math.floor(x/map!.gridSizePx)},${Math.floor(y/map!.gridSizePx)}`));
  const tokenFog=map!.tokenFogEnabled?new Set(map!.tokenFogRevealed):null;

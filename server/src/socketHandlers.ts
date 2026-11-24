@@ -1543,6 +1543,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         className: className ?? '',
         maxHp: p.maxHp,
         stats: p.stats,
+        darkvisionFt: p.darkvisionFt,
       });
       // A player's new character is theirs from the start.
       const pid = commandConnection()?.playerId;
@@ -2561,6 +2562,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
         level: p.level,
         armorClass: p.armorClass,
         speed: p.speed,
+        darkvisionFt: p.darkvisionFt,
         stats: p.stats,
         resistances: p.resistances,
         immunities: p.immunities,

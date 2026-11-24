@@ -316,6 +316,8 @@ export type Token = {
   leavesNoTracks?: boolean;
   /** True when the represented character has a Blinded/Blind condition (no sight). */
   blind?: boolean;
+  /** Effective darkvision radius in feet (including species/traits/conditions). */
+  darkvisionFt?: number;
   /** Derived active spell marks; display only, never a persisted condition. */
   markLabels?: string[];
   /** Viewer-only live party awareness. Render grayscale; never a direct target.
@@ -466,6 +468,8 @@ export type Character = {
   modelType?: string;
   appearance?: string;
   heightInches?:number;
+  /** Explicit base darkvision radius in feet (undefined = auto from species/traits). */
+  darkvisionFt?: number;
 };
 
 export type CreatureAbility = {
@@ -864,6 +868,8 @@ export type Monster = {
   tempHp: number;
   armorClass: number;
   speed: string;
+  /** Explicit base darkvision radius in feet (undefined = auto from traits). */
+  darkvisionFt?: number;
   /** Ability scores, e.g. { STR: 16, DEX: 12, … }. */
   stats: Record<string, number>;
   resistances: string[];
@@ -914,6 +920,8 @@ export type CreatureTemplate = {
   maxHp: number;
   armorClass: number;
   speed: string;
+  /** Default base darkvision radius in feet (undefined = derive from traits). */
+  darkvisionFt?: number;
   stats: Record<string, number>;
   resistances: string[];
   /** Damage types it takes NO damage from (immunity beats resistance and
@@ -960,6 +968,8 @@ export type LibraryCharacter = {
   curHp: number;
   armorClass: number;
   speed: string;
+  /** Default base darkvision radius in feet (undefined = derive from traits). */
+  darkvisionFt?: number;
   stats: Record<string, number>;
   spellSlots: Record<string, { max: number; used: number }>;
   resources: Record<string, { max: number; used: number }>;
@@ -1747,6 +1757,7 @@ export type CharacterCreatePayload = {
   level?: number;
   maxHp?: number;
   stats?: Record<string, number>;
+  darkvisionFt?: number;
 };
 /** Load a saved character from the cross-session library into this session.
  *  `claim` (player) also claims the new character for the caller. */
@@ -1788,6 +1799,8 @@ export type CharacterUpdatePayload = {
   gold?: number;
   /** Rich rollable spells/abilities (e.g. set in bulk by AI back-fill). */
   sheetAbilities?: SheetAbility[];
+  /** Explicit base darkvision in feet (`null` clears override back to auto-detect). */
+  darkvisionFt?: number | null;
 };
 /** Adjust or add/remove a limited-use counter (spell slot or class resource). */
 export type ResourceSetPayload = {
@@ -1965,6 +1978,7 @@ export type MonsterCreatePayload = {
   disposition?: Disposition;
   objectKind?: ObjectKind;
   objectDc?: number;
+  darkvisionFt?: number;
   source?: 'srd' | 'gemini' | 'manual';
 };
 /** Roll a character's check to disarm a trap object; on success the server flips
@@ -2010,6 +2024,8 @@ export type MonsterUpdatePayload = {
   icon?: string;
   /** Disarm DC for a trap object. */
   objectDc?: number;
+  /** Explicit base darkvision in feet (`null` clears override back to auto-detect). */
+  darkvisionFt?: number | null;
 };
 export type MonsterDeletePayload = { monsterId: string };
 /** Shared party notes on a creature/NPC — writable by the DM AND players. */
