@@ -55,6 +55,10 @@ app.use(['/api/maps/:mapId/wall-draft/apply','/api/maps/:mapId/door-draft/apply'
 app.use(express.json());
 
 const server = http.createServer(app);
+// Keep HTTP keep-alive longer than Cloudflare Tunnel / reverse-proxy idle pools
+// (Node defaults to 5s) so reused render/polling connections don't hit ECONNRESET.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
 const io: IOServer = new Server(server, {
   // Behind a tunnel the Origin varies; the session code is the real gate.
   cors: { origin: true, credentials: true },
@@ -62,6 +66,9 @@ const io: IOServer = new Server(server, {
   // DM and Player windows share one browser process.
   pingInterval: 25_000,
   pingTimeout: 60_000,
+  // Allow larger map/decal/sheet payloads without Engine.IO dropping the socket
+  // at its 1 MB default limit.
+  maxHttpBufferSize: 10e6,
   // Snapshots are large and highly repetitive (fog cell strings, duplicated
   // stat blocks) — compress them on the wire. Off by default in Socket.IO v4;
   // a ~1 KB threshold skips tiny ephemeral events (cursors, typing) where the

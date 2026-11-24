@@ -1,1 +1,1 @@
-export {polygonWall,cutPolygonDoor} from '../../shared/wallPolygonDoor.js';
+export {polygonWall,cutPolygonDoor,cutDoorAcrossWalls} from '../../shared/wallPolygonDoor.js';

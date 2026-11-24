@@ -2098,6 +2098,8 @@ export interface ClientToServerEvents {
   'map:placeLight': (payload: {mapId:string;x:number;y:number;lightId?:string}) => void;
   'map:editWalls': (payload: {mapId: string} & import('./mapWalls.js').WallEdit) => void;
   'map:deleteFeatures': (payload:{mapId:string;wallIds:string[];lightIds:string[]})=>void;
+  'map:duplicateFeatures': (payload:{mapId:string;walls?:{sourceId:string;newId:string}[];lights?:{sourceId:string;newId:string}[];dx:number;dy:number})=>void;
+  'map:moveFeatures': (payload:{mapId:string;wallIds:string[];lightIds:string[];dx:number;dy:number})=>void;
   'map:setDoor': (payload:{mapId:string;doorId:string;open:boolean})=>void;
   'measure:add': (payload: MeasureAddPayload) => void;
   'measure:remove': (payload: MeasureRemovePayload) => void;

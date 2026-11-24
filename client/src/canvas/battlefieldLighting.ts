@@ -221,14 +221,15 @@ export function createBattlefieldLighting(scene:Scene,key:DirectionalLight,ambie
       scene.environmentIntensity=baseLight.reflection+flash*.45;
     }
     flame.uniforms.flameTime.value=time;
-    const movingLight=(settings.lights??[]).some(l=>l.flicker);
+    const activeMapLights=(settings.lights??[]).filter(l=>l.enabled!==false);
+    const movingLight=activeMapLights.some(l=>l.flicker);
     const carriedKey=carried.map(c=>`${c.id}:${c.x}:${c.y}:${c.height}:${c.fixtureX??''}:${c.fixtureY??''}:${c.fixtureHeight}:${c.facing}`).join('|');
     const transientKey=transient.map(l=>`${l.id}:${l.x}:${l.y}:${l.height}:${l.radius}:${l.strength}:${l.color.x}:${l.color.y}:${l.color.z}:${l.beam?`${l.beam.ax},${l.beam.ay},${l.beam.bx},${l.beam.by}`:''}:${l.visibleTorch?1:0}:${l.fixture??''}:${l.fixtureX??''}:${l.fixtureY??''}:${l.fixtureHeight??''}:${l.carried?1:0}:${l.facing??0}`).join('|');
     const sourceKey=`${sourceSettingsVersion}|${carriedKey}|${transientKey}|${movingLight?Math.round(seconds*12):0}`;
     if(sourceKey===lastSourceKey)return;
     lastSourceKey=sourceKey;lightVersion++;
     const ppf=settings.pixelsPerFoot??12.8;
-    const sources=[...(settings.lights??[]).map(l=>({...l,height:l.heightFt*ppf,fixtureHeight:l.heightFt*ppf,carried:false,facing:0})),
+    const sources=[...activeMapLights.map(l=>({...l,height:l.heightFt*ppf,fixtureHeight:l.heightFt*ppf,carried:false,facing:0})),
       ...carried.map(l=>({...l,radiusFt:20,intensity:.85,color:'warm' as const,flicker:false,visibleTorch:false,fixture:'lantern' as const,carried:true}))];
     lights=plane.visible?sources.map(source=>{
       const seed=phase(source.id),f=Math.sin(time*6.3+seed)*.10+Math.sin(time*11.1+seed*3)*.06+Math.sin(time*2.7+seed)*.08;

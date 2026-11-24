@@ -43,8 +43,8 @@ export function mapLightColorHex(value:unknown):string {
   const color=sanitizeMapLightColor(value);
   return color.startsWith('#')?color:MAP_LIGHT_COLOR_PRESETS[color as keyof typeof MAP_LIGHT_COLOR_PRESETS];
 }
-export type MapEnvironmentLight = {id:string;x:number;y:number;radiusFt:number;heightFt:number;color:MapLightColor;intensity:number;flicker:boolean;visibleTorch?:boolean;fixture?:'torch'|'lantern'};
-export type MapLightDefaults = Omit<MapEnvironmentLight,'id'|'x'|'y'|'color'>;
+export type MapEnvironmentLight = {id:string;x:number;y:number;radiusFt:number;heightFt:number;color:MapLightColor;intensity:number;flicker:boolean;visibleTorch?:boolean;fixture?:'torch'|'lantern';enabled?:boolean};
+export type MapLightDefaults = Omit<MapEnvironmentLight,'id'|'x'|'y'|'color'|'enabled'>;
 export const DEFAULT_LIGHT_DEFAULTS:Readonly<MapLightDefaults>={radiusFt:15,heightFt:6,intensity:1,flicker:true,visibleTorch:true,fixture:'torch'};
 export function newMapLightSettings(settings:Pick<MapEnvironment,'newLightColor'|'newLightDefaults'>){
   return {...DEFAULT_LIGHT_DEFAULTS,...settings.newLightDefaults,color:settings.newLightColor??'warm'};
@@ -115,7 +115,7 @@ export function sanitizeMapEnvironment(input: unknown, previous: Readonly<MapEnv
       if(typeof v.id!=='string'||!v.id||v.id.length>80||seen.has(v.id)||typeof v.x!=='number'||!Number.isFinite(v.x)||typeof v.y!=='number'||!Number.isFinite(v.y))return [];
       seen.add(v.id);
       return [{id:v.id,x:number(v.x,-1e6,1e6,0),y:number(v.y,-1e6,1e6,0),radiusFt:number(v.radiusFt,3,60,15),heightFt:number(v.heightFt,.5,30,6),
-        color:sanitizeMapLightColor(v.color),intensity:number(v.intensity,.1,2,1),flicker:v.flicker===true,...(v.visibleTorch===true?{visibleTorch:true}:{}),...(v.fixture==='lantern'?{fixture:'lantern' as const}:{})}];
+        color:sanitizeMapLightColor(v.color),intensity:number(v.intensity,.1,2,1),flicker:v.flicker===true,...(v.visibleTorch===true?{visibleTorch:true}:{}),...(v.fixture==='lantern'?{fixture:'lantern' as const}:{}),...(v.enabled===false?{enabled:false}:{})}];
     });
   }
   return result;

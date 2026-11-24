@@ -497,8 +497,8 @@ export function createSnapshotBuilder(
         if (loaded.previewVisionCache?.key !== visionDepKey) {
           const v = computePersonalVision();
           let litMap = map;
-          if (litMap?.environment && mapFog) {
-            litMap = { ...litMap, environment: { ...litMap.environment, lights: litMap.environment.lights.filter(light => mapFog.has(`${Math.floor(light.x / grid)},${Math.floor(light.y / grid)}`)) } };
+          if (litMap?.environment) {
+            litMap = { ...litMap, environment: { ...litMap.environment, lights: litMap.environment.lights.filter(light => light.enabled !== false && (!mapFog || mapFog.has(`${Math.floor(light.x / grid)},${Math.floor(light.y / grid)}`))) } };
           }
           if (litMap?.environment && v) {
             const wallVis = usesMapVision(litMap);
@@ -544,8 +544,8 @@ export function createSnapshotBuilder(
       const partyVision = !sharedPartyVision||sameAsParty ? playerVision : getPartyVision();
       // A concealed torch must not leak its position or light nearby visible figures.
       // Clone the viewer's map; never mutate the shared map used by DM snapshots.
-      if (!previewVisionHit && map?.environment && mapFog) map = { ...map, environment: { ...map.environment,
-        lights: map.environment.lights.filter(light => mapFog.has(`${Math.floor(light.x / grid)},${Math.floor(light.y / grid)}`)) } };
+      if (!previewVisionHit && map?.environment) map = { ...map, environment: { ...map.environment,
+        lights: map.environment.lights.filter(light => light.enabled !== false && (!mapFog || mapFog.has(`${Math.floor(light.x / grid)},${Math.floor(light.y / grid)}`))) } };
       const manualVisible=(t:Token)=>tokenVisibleAt({role,hidden:t.isHidden,owned:t.kind==='pc',foe:t.kind==='monster'&&monById.get(t.refId)?.disposition!=='friendly',mapFog,tokenFog,grid,x:t.x,y:t.y});
       const partySeesRaw=(t:Token)=>manualVisible(t)&&fogVisionContainsToken(partyVision,t.x,t.y,tokenRadiusPx(t,map),usesTokenVision(map))&&(!isInvisible(monById.get(t.refId)!)||data.tokens.some(o=>o.kind==='pc'&&!o.blind&&(sharedPartyVision?party:owned).has(o.refId)&&seesInvisible(charById.get(o.refId)!,tokenDistanceFt(o,t,map))));
       const partySees=(t:Token):boolean=>{

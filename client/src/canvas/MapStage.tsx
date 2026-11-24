@@ -35,7 +35,7 @@ import {reduceRollBackground} from '../lib/rollBackgroundBudget';
 import type {WallTool} from '../components/WallMenu';
 import {doorApproachPoints,distanceToWall,sanitizeWalls,type MapWall} from '../../../shared/mapWalls';
 import {doorInReach} from '../../../shared/doorInteraction';
-import {wallVertices,wallCenter,translateWall,simplifyWallPath} from '../../../shared/wallGeometry';
+import {wallVertices,wallCenter,translateWall,simplifyWallPath,wallEndpointHandles,moveWallEndpoint,snapAngle45} from '../../../shared/wallGeometry';
 import {createSceneVision,fogVisionContains,fogVisionContainsToken,fogVisionIntersectsToken,tokenRadiusPx,visionShowsAffinity,needsVisibilityLayer,usesMapVision,usesTokenVision,usesDarknessVision} from '../../../shared/playerVision';
 import {presentAuras,AURA_HEX} from '../lib/conditions';
 import { miniatureBaseWidthFt } from '../../../shared/monsterAppearance';
@@ -418,41 +418,185 @@ function MapStageInner({
   const [dismissedDoors,setDismissedDoors]=useState<string[]>([]);
   const openDoorControls=(id:string)=>{setDismissedDoors(old=>old.filter(key=>key!==id));setSelectedDoor(id);};
   const [wallSnap,setWallSnap]=useState(false);
+  const [wallChain,setWallChain]=useState(false);
   const [wallAnchor,setWallAnchor]=useState<Pt|null>(null),[wallPointer,setWallPointer]=useState<Pt|null>(null);
   const [wallThickness,setWallThickness]=useState(1);
   const [featureSelection,setFeatureSelection]=useState<string[]>([]),[wallPreview,setWallPreview]=useState<MapWall|null>(null);
+  const [featureDragDelta,setFeatureDragDelta]=useState<Pt|null>(null);
+  const [featureDuplicatePreview,setFeatureDuplicatePreview]=useState(false);
+  const [lightEditorOpen,setLightEditorOpen]=useState(false);
+  const [lightEditorPos,setLightEditorPos]=useState<Pt|null>(null);
+  const [doorEditorOpen,setDoorEditorOpen]=useState(false);
+  const [doorEditorPos,setDoorEditorPos]=useState<Pt|null>(null);
   const wallSelection=featureSelection.length===1&&featureSelection[0].startsWith('wall:')?featureSelection[0].slice(5):null;
-  const setWallSelection=(id:string|null)=>setFeatureSelection(id?[`wall:${id}`]:[]);
   const wallStroke=useRef<Pt[]>([]);
-  const wallGesture=useRef<{mode:'move'|'rotate';wall:MapWall;start:Pt}|null>(null);
+  const wallChainActiveRef=useRef(false);
+  const justChainedSegmentRef=useRef(false);
+  const wallGesture=useRef<{mode:'move'|'rotate';wall:MapWall;start:Pt}|{mode:'vertex';wall:MapWall;handleIndex:number;start:Pt}|null>(null);
+  const groupGesture=useRef<{start:Pt;moved:boolean;duplicate:boolean;selection:string[]}|null>(null);
   const wallActive=actualDm&&wallTool!=='off';
+  const featureEditorActive=wallActive||placingLight;
   const selectedWall=wallPreview??map?.walls?.find(w=>w.id===wallSelection);
   const rotationHandle=(w:MapWall)=>{const c=wallCenter(w),r=Math.max(...wallVertices(w).map(p=>Math.hypot(p.x-c.x,p.y-c.y)))+26/view.scale,a=((w.rotation??0)-90)*Math.PI/180;return {x:c.x+Math.cos(a)*r,y:c.y+Math.sin(a)*r};};
-  const cancelWallStroke=()=>{setWallAnchor(null);setWallPointer(null);setWallPreview(null);wallGesture.current=null;wallStroke.current=[];};
-  useEffect(()=>{cancelWallStroke();setWallSelection(null);},[wallTool,map?.id]);
+  const cancelWallStroke=()=>{
+    setWallAnchor(null);setWallPointer(null);setWallPreview(null);
+    setFeatureDragDelta(null);setFeatureDuplicatePreview(false);
+    wallGesture.current=null;groupGesture.current=null;wallStroke.current=[];
+    wallChainActiveRef.current=false;justChainedSegmentRef.current=false;
+  };
+  useEffect(()=>{cancelWallStroke();},[wallTool,map?.id]);
+  useEffect(()=>{if(!featureEditorActive){setFeatureSelection([]);setLightEditorOpen(false);setDoorEditorOpen(false);}},[featureEditorActive]);
   useEffect(()=>{if(editMapId===map?.id&&actualDm){setWallTool('edit');requestFeatureEdit(null);}},[editMapId,map?.id,actualDm,requestFeatureEdit]);
   useEffect(()=>{if(wallActive){if(onSelectTokens)onSelectTokens([]);else onSelectToken(null);}},[wallActive]);
+  const pickLight=(p:Pt)=>map?.environment?.lights.filter(l=>Math.hypot(l.x-p.x,l.y-p.y)<16/view.scale).sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y))[0]??null;
   const pickFeature=(p:Pt):string|null=>{
-    const light=map?.environment?.lights.filter(l=>Math.hypot(l.x-p.x,l.y-p.y)<14/view.scale).sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y))[0];
+    const light=pickLight(p);
     if(light)return `light:${light.id}`;
     const wall=[...(map?.walls??[])].filter(w=>distanceToWall(p,w)<14/view.scale).sort((a,b)=>Number(!!b.window||!!b.door||!!b.arch)-Number(!!a.window||!!a.door||!!a.arch)||distanceToWall(p,a)-distanceToWall(p,b))[0];
     return wall?`wall:${wall.id}`:null;
   };
+  const openLightEditorFor=useStableCallback((lightId:string,clientX?:number,clientY?:number,additive=false)=>{
+    const key=`light:${lightId}`;
+    placeLight(null);
+    if(wallTool!=='edit')setWallTool('edit');
+    setDoorEditorOpen(false);
+    setFeatureSelection(old=>{
+      if(additive)return old.includes(key)?old:[...old,key];
+      if(old.includes(key))return old;
+      return [key];
+    });
+    if(clientX!==undefined&&clientY!==undefined&&containerRef.current){
+      const rect=containerRef.current.getBoundingClientRect();
+      setLightEditorPos({x:clientX-rect.left,y:clientY-rect.top});
+    }else{
+      setLightEditorPos(null);
+    }
+    setLightEditorOpen(true);
+  });
+  const openDoorEditorFor=useStableCallback((doorId:string,clientX?:number,clientY?:number,additive=false)=>{
+    const key=`wall:${doorId}`;
+    placeLight(null);
+    if(wallTool!=='edit')setWallTool('edit');
+    setLightEditorOpen(false);
+    setFeatureSelection(old=>{
+      if(additive)return old.includes(key)?old:[...old,key];
+      if(old.includes(key))return old;
+      return [key];
+    });
+    if(clientX!==undefined&&clientY!==undefined&&containerRef.current){
+      const rect=containerRef.current.getBoundingClientRect();
+      setDoorEditorPos({x:clientX-rect.left,y:clientY-rect.top});
+    }else{
+      setDoorEditorPos(null);
+    }
+    setDoorEditorOpen(true);
+  });
+  const selectAllLights=useStableCallback(()=>{
+    const lights=map?.environment?.lights??[];
+    if(!lights.length)return;
+    placeLight(null);
+    setWallTool('edit');
+    setDoorEditorOpen(false);
+    setFeatureSelection(lights.map(l=>`light:${l.id}`));
+    setLightEditorPos(null);
+    setLightEditorOpen(true);
+  });
+  const selectAllDoors=useStableCallback(()=>{
+    const allDoors=(map?.walls??[]).filter(w=>w.door);
+    if(!allDoors.length)return;
+    placeLight(null);
+    setWallTool('edit');
+    setLightEditorOpen(false);
+    setFeatureSelection(allDoors.map(d=>`wall:${d.id}`));
+    setDoorEditorPos(null);
+    setDoorEditorOpen(true);
+  });
+  const duplicateFeaturesBy=useStableCallback((selection:string[],dx:number,dy:number)=>{
+    if(!actualDm||!map||!selection.length)return;
+    const wallById=new Map((map.walls??[]).map(w=>[w.id,w]));
+    const wallCopies=selection
+      .filter(id=>id.startsWith('wall:'))
+      .map(id=>id.slice(5))
+      .filter(id=>{const w=wallById.get(id);return !!w&&!w.door;})
+      .map(sourceId=>({sourceId,newId:crypto.randomUUID()}));
+    const lightCopies=selection
+      .filter(id=>id.startsWith('light:'))
+      .map(id=>({sourceId:id.slice(6),newId:crypto.randomUUID()}));
+    if(!wallCopies.length&&!lightCopies.length){
+      notify('Doors must be cut into a wall; select walls, windows, arches, or lights to duplicate.');
+      return;
+    }
+    useStore.getState().socket?.emit('map:duplicateFeatures',{mapId:map.id,walls:wallCopies,lights:lightCopies,dx,dy});
+    placeLight(null);
+    if(wallTool!=='edit')setWallTool('edit');
+    setFeatureSelection([...wallCopies.map(c=>`wall:${c.newId}`),...lightCopies.map(c=>`light:${c.newId}`)]);
+  });
+  const duplicateSelectedFeatures=useStableCallback(()=>{
+    const step=Math.max(16,Math.round(grid/2));
+    duplicateFeaturesBy(featureSelection,step,step);
+  });
   const selectFeature=(id:string|null,additive=false)=>setFeatureSelection(old=>!id?additive?old:[]:additive?old.includes(id)?old.filter(x=>x!==id):[...old,id]:[id]);
   const deleteFeatures=useStableCallback(()=>{
     if(!actualDm||!map||!featureSelection.length)return;
     useStore.getState().socket?.emit('map:deleteFeatures',{mapId:map.id,wallIds:featureSelection.filter(id=>id.startsWith('wall:')).map(id=>id.slice(5)),lightIds:featureSelection.filter(id=>id.startsWith('light:')).map(id=>id.slice(6))});
-    setFeatureSelection([]);cancelWallStroke();
+    setFeatureSelection([]);setLightEditorOpen(false);setDoorEditorOpen(false);cancelWallStroke();
   });
   useEffect(()=>{
-    if(!wallActive||wallTool!=='edit')return;
+    if(!featureEditorActive)return;
     const key=(e:KeyboardEvent)=>{
-      const el=e.target as HTMLElement|null;if(el?.closest('input,textarea,select,[contenteditable=true]')||document.querySelector('[role=dialog]'))return;
-      if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();e.stopImmediatePropagation();if(!e.repeat)deleteFeatures();}
-      else if(e.key==='Escape'&&featureSelection.length){e.preventDefault();e.stopImmediatePropagation();setFeatureSelection([]);cancelWallStroke();}
+      const el=e.target as HTMLElement|null;if(el?.closest('input,textarea,select,[contenteditable=true]')||document.querySelector('dialog[open]'))return;
+      const lower=e.key.toLowerCase();
+      if((e.ctrlKey||e.metaKey)&&lower==='d'){
+        if(featureSelection.length){e.preventDefault();e.stopImmediatePropagation();if(!e.repeat)duplicateSelectedFeatures();}
+        return;
+      }
+      if((e.ctrlKey||e.metaKey)&&lower==='a'){
+        e.preventDefault();e.stopImmediatePropagation();
+        placeLight(null);setWallTool('edit');
+        setFeatureSelection([...(map?.walls??[]).map(w=>`wall:${w.id}`),...(map?.environment?.lights??[]).map(l=>`light:${l.id}`)]);
+        return;
+      }
+      if(e.key==='Delete'||e.key==='Backspace'){
+        if(featureSelection.length){e.preventDefault();e.stopImmediatePropagation();if(!e.repeat)deleteFeatures();return;}
+        if(map&&wallPointer&&!e.repeat){
+          const hovered=pickFeature(wallPointer);
+          if(hovered){
+            e.preventDefault();e.stopImmediatePropagation();
+            useStore.getState().socket?.emit('map:deleteFeatures',{mapId:map.id,wallIds:hovered.startsWith('wall:')?[hovered.slice(5)]:[],lightIds:hovered.startsWith('light:')?[hovered.slice(6)]:[]});
+          }
+        }
+        return;
+      }
+      if(e.key==='Enter'&&wallAnchor&&wallChainActiveRef.current){
+        e.preventDefault();e.stopImmediatePropagation();cancelWallStroke();return;
+      }
+      if(e.key==='Escape'){
+        if(wallAnchor){e.preventDefault();e.stopImmediatePropagation();cancelWallStroke();return;}
+        if(lightEditorOpen||doorEditorOpen){e.preventDefault();e.stopImmediatePropagation();setLightEditorOpen(false);setDoorEditorOpen(false);return;}
+        if(featureSelection.length){e.preventDefault();e.stopImmediatePropagation();setFeatureSelection([]);cancelWallStroke();return;}
+      }
+      if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat){
+        const toolMap:Record<string,WallTool>={v:'edit',l:'draw',r:'rectangle',c:'circle',f:'freehand',d:'door'};
+        if(lower in toolMap){
+          e.preventDefault();e.stopImmediatePropagation();
+          placeLight(null);cancelWallStroke();setWallTool(toolMap[lower]);
+          return;
+        }
+        if(lower==='e'){
+          e.preventDefault();e.stopImmediatePropagation();
+          placeLight(null);cancelWallStroke();setWallTool(e.shiftKey?'erase':'erase-area');
+          return;
+        }
+        if(lower==='g'&&map){
+          e.preventDefault();e.stopImmediatePropagation();
+          cancelWallStroke();
+          if(placingLight){placeLight(null);setWallTool('edit');}
+          else{setWallTool('off');placeLight({mapId:map.id});}
+        }
+      }
     };
     window.addEventListener('keydown',key,true);return()=>window.removeEventListener('keydown',key,true);
-  },[wallActive,wallTool,featureSelection,deleteFeatures]);
+  },[featureEditorActive,featureSelection,deleteFeatures,duplicateSelectedFeatures,map,wallPointer,wallAnchor,lightEditorOpen,doorEditorOpen,placingLight,placeLight]);
   const strokeWall=(a:Pt,b:Pt):MapWall=>{
     const thickness=wallThickness*grid/(map?.feetPerSquare??5),id=crypto.randomUUID();
     if(wallTool==='circle'){const r=Math.hypot(b.x-a.x,b.y-a.y);return {id,kind:'circle',ax:a.x-r,ay:a.y-r,bx:a.x+r,by:a.y+r,thickness};}
@@ -467,6 +611,16 @@ function MapStageInner({
       if(Math.hypot(p.x-point.x,p.y-point.y)<10/view.scale)return point;
     const ox=map?.gridOffsetX??0,oy=map?.gridOffsetY??0;
     return wallSnap?{x:Math.round((p.x-ox)/grid)*grid+ox,y:Math.round((p.y-oy)/grid)*grid+oy}:p;
+  };
+  const constrainWallEnd=(anchor:Pt,rawPt:Pt,shift:boolean):Pt=>{
+    const p=wallTool==='freehand'?rawPt:wallPoint(rawPt);
+    if(!shift)return p;
+    if(wallTool==='draw'||wallTool==='door')return snapAngle45(anchor,p);
+    if(wallTool==='rectangle'){
+      const dx=p.x-anchor.x,dy=p.y-anchor.y,side=Math.max(Math.abs(dx),Math.abs(dy));
+      return {x:anchor.x+(dx<0?-side:side),y:anchor.y+(dy<0?-side:side)};
+    }
+    return p;
   };
   useEffect(()=>{setWallTool('off');setWallAnchor(null);setWallPointer(null);setSelectedDoor(null);setDismissedDoors([]);setDoorWallId(null);},[map?.id,mySocketId]);
   useEffect(()=>{
@@ -1643,9 +1797,31 @@ function MapStageInner({
       setPinching(true);
       return;
     }
+    if(placingLight&&map&&lightPlacement&&(!('button' in e.evt)||e.evt.button===0)){
+      const pos=pointerToImage(stage);
+      if(pos){
+        if('altKey' in e.evt&&e.evt.altKey){
+          const targetId=pickFeature(pos);
+          if(targetId)useStore.getState().socket?.emit('map:deleteFeatures',{mapId:map.id,wallIds:targetId.startsWith('wall:')?[targetId.slice(5)]:[],lightIds:targetId.startsWith('light:')?[targetId.slice(6)]:[]});
+          return;
+        }
+        useStore.getState().placeMapLight(map.id,pos.x,pos.y,lightPlacement.lightId);
+        if(lightPlacement.lightId)placeLight(null);
+      }
+      return;
+    }
     if(wallActive&&map){
       if('button' in e.evt&&e.evt.button!==0)return;
       const raw=pointerToImage(stage);if(!raw)return;
+      const shift='shiftKey' in e.evt&&!!e.evt.shiftKey;
+      const alt='altKey' in e.evt&&!!e.evt.altKey;
+      if(alt&&wallTool!=='edit'){
+        const targetId=pickFeature(raw);
+        if(targetId){
+          useStore.getState().socket?.emit('map:deleteFeatures',{mapId:map.id,wallIds:targetId.startsWith('wall:')?[targetId.slice(5)]:[],lightIds:targetId.startsWith('light:')?[targetId.slice(6)]:[]});
+        }
+        return;
+      }
       if(wallTool==='erase'){
         const wall=(map.walls??[]).reduce<import('../../../shared/mapWalls').MapWall|undefined>((best,w)=>!best||distanceToWall(raw,w)<distanceToWall(raw,best)?w:best,undefined);
         if(wall&&distanceToWall(raw,wall)<14/view.scale)useStore.getState().editMapWalls(map.id,{removeId:wall.id});
@@ -1653,25 +1829,48 @@ function MapStageInner({
         setWallAnchor(raw);setWallPointer(raw);
       }else if(wallTool==='door'){
         const wall=(map.walls??[]).filter(w=>!w.door).sort((a,b)=>distanceToWall(raw,a)-distanceToWall(raw,b))[0];
-        if(!wall||distanceToWall(raw,wall)>14/view.scale){notify('Start the door on an existing wall, then drag along its width.');return;}
+        if(!wall||distanceToWall(raw,wall)>22/view.scale){notify('Start the door on an existing wall, then drag along its width.');return;}
         setDoorWallId(wall.id);setWallAnchor(raw);setWallPointer(raw);
       }else if(wallTool==='edit'){
-        const additive='shiftKey'in e.evt&&(e.evt.shiftKey||e.evt.ctrlKey||e.evt.metaKey);
+        const additive=!alt&&'shiftKey'in e.evt&&(e.evt.shiftKey||e.evt.ctrlKey||e.evt.metaKey);
         if(additive){selectFeature(pickFeature(raw),true);return;}
-        if(selectedWall&&Math.hypot(raw.x-rotationHandle(selectedWall).x,raw.y-rotationHandle(selectedWall).y)<14/view.scale){wallGesture.current={mode:'rotate',wall:selectedWall,start:raw};return;}
-        const id=pickFeature(raw);selectFeature(id);
-        const wall=id?.startsWith('wall:')?map.walls?.find(w=>w.id===id.slice(5)):undefined;
-        if(wall)wallGesture.current={mode:'move',wall,start:raw};
+        if(!alt&&selectedWall){
+          if(Math.hypot(raw.x-rotationHandle(selectedWall).x,raw.y-rotationHandle(selectedWall).y)<14/view.scale){
+            wallGesture.current={mode:'rotate',wall:selectedWall,start:raw};return;
+          }
+          const handles=wallEndpointHandles(selectedWall);
+          let bestIdx=-1,bestDist=13/view.scale;
+          handles.forEach((h,i)=>{const d=Math.hypot(raw.x-h.x,raw.y-h.y);if(d<bestDist){bestDist=d;bestIdx=i;}});
+          if(bestIdx>=0){
+            wallGesture.current={mode:'vertex',wall:selectedWall,handleIndex:bestIdx,start:raw};return;
+          }
+        }
+        const id=pickFeature(raw);
+        if(!id){
+          selectFeature(null);
+          setLightEditorOpen(false);
+          setDoorEditorOpen(false);
+          return;
+        }
+        const nextSel=featureSelection.includes(id)?featureSelection:[id];
+        if(!featureSelection.includes(id))setFeatureSelection(nextSel);
+        if(!alt&&nextSel.length===1&&nextSel[0].startsWith('wall:')){
+          const wall=map.walls?.find(w=>w.id===nextSel[0].slice(5));
+          if(wall)wallGesture.current={mode:'move',wall,start:raw};
+          return;
+        }
+        groupGesture.current={start:raw,moved:false,duplicate:alt,selection:nextSel};
+      }else if(wallTool==='draw'&&wallAnchor&&wallChainActiveRef.current){
+        const p=constrainWallEnd(wallAnchor,raw,shift);
+        const [wall]=sanitizeWalls([strokeWall(wallAnchor,p)]);
+        if(wall){
+          useStore.getState().editMapWalls(map.id,{add:wall});
+          setWallAnchor(p);setWallPointer(p);wallStroke.current=[p];
+          justChainedSegmentRef.current=true;
+        }
       }else{
         const p=wallPoint(raw);setWallAnchor(p);setWallPointer(p);wallStroke.current=[p];
-      }
-      return;
-    }
-    if(placingLight&&map&&lightPlacement&&(!('button' in e.evt)||e.evt.button===0)){
-      const pos=pointerToImage(stage);
-      if(pos){
-        useStore.getState().placeMapLight(map.id,pos.x,pos.y,lightPlacement.lightId);
-        if(lightPlacement.lightId)placeLight(null);
+        wallChainActiveRef.current=false;justChainedSegmentRef.current=false;
       }
       return;
     }
@@ -1739,30 +1938,66 @@ function MapStageInner({
   // deselect; a press that moved was a pan → keep the selection. Then run the
   // normal stroke-end handling.
   const handlePointerUp = (e: KonvaEventObject<MouseEvent | TouchEvent>) => {
+    const shift='shiftKey' in e.evt&&!!e.evt.shiftKey;
     if(wallActive&&wallTool==='erase-area'&&wallAnchor&&map&&!pinchRef.current){
       const stage=e.target.getStage(),p=stage?pointerToImage(stage):null;
       if(p&&Math.abs(p.x-wallAnchor.x)>=1&&Math.abs(p.y-wallAnchor.y)>=1)useStore.getState().editMapWalls(map.id,{eraseArea:{ax:wallAnchor.x,ay:wallAnchor.y,bx:p.x,by:p.y}});
       setWallAnchor(null);setWallPointer(null);
     }
     if(wallActive&&wallTool==='door'&&wallAnchor&&doorWallId&&map&&!pinchRef.current){
-      const stage=e.target.getStage(),p=stage?pointerToImage(stage):null;
+      const stage=e.target.getStage(),raw=stage?pointerToImage(stage):null;
+      const p=raw?constrainWallEnd(wallAnchor,raw,shift):null;
       if(p)useStore.getState().editMapWalls(map.id,{door:{wallId:doorWallId,id:crypto.randomUUID(),tokenId:snapshot.tokens.find(t=>selectedIds.includes(t.id)&&snapshot.monsters.some(m=>m.id===t.refId&&m.objectKind==='door'))?.id,ax:wallAnchor.x,ay:wallAnchor.y,bx:p.x,by:p.y}});
       setWallAnchor(null);setWallPointer(null);setDoorWallId(null);
+    }
+    if(wallActive&&wallTool==='edit'&&groupGesture.current&&map){
+      const gg=groupGesture.current;
+      groupGesture.current=null;
+      if(gg.moved&&featureDragDelta){
+        if(gg.duplicate){
+          duplicateFeaturesBy(gg.selection,featureDragDelta.x,featureDragDelta.y);
+        }else{
+          const wallIds=gg.selection.filter(id=>id.startsWith('wall:')).map(id=>id.slice(5));
+          const lightIds=gg.selection.filter(id=>id.startsWith('light:')).map(id=>id.slice(6));
+          useStore.getState().socket?.emit('map:moveFeatures',{mapId:map.id,wallIds,lightIds,dx:featureDragDelta.x,dy:featureDragDelta.y});
+        }
+      }
+      setFeatureDragDelta(null);
+      setFeatureDuplicatePreview(false);
     }
     if(wallActive&&wallTool==='edit'&&wallGesture.current&&map){
       if(wallPreview)useStore.getState().editMapWalls(map.id,{update:wallPreview});
       wallGesture.current=null;setWallPreview(null);
     }
     if(wallActive&&['rectangle','draw','circle','freehand'].includes(wallTool)&&wallAnchor&&map&&!pinchRef.current){
-      const stage=e.target.getStage(),raw=stage?pointerToImage(stage):null;
-      if(raw){
-        const p=wallTool==='freehand'?raw:wallPoint(raw),[wall]=sanitizeWalls([strokeWall(wallAnchor,p)]);
-        if(wall){
-          useStore.getState().editMapWalls(map.id,{add:wall});
-        }else if(Math.hypot(p.x-wallAnchor.x,p.y-wallAnchor.y)>2/view.scale){notify('Invalid wall shape. Try drawing the stroke again.');
+      if(justChainedSegmentRef.current){
+        justChainedSegmentRef.current=false;
+      }else{
+        const stage=e.target.getStage(),raw=stage?pointerToImage(stage):null;
+        if(raw){
+          const p=constrainWallEnd(wallAnchor,raw,shift);
+          const dragDist=Math.hypot(raw.x-wallAnchor.x,raw.y-wallAnchor.y);
+          if(wallTool==='draw'&&dragDist<4/view.scale){
+            wallChainActiveRef.current=true;
+          }else{
+            const [wall]=sanitizeWalls([strokeWall(wallAnchor,p)]);
+            if(wall){
+              useStore.getState().editMapWalls(map.id,{add:wall});
+              if(wallTool==='draw'&&wallChain){
+                setWallAnchor(p);setWallPointer(p);wallStroke.current=[p];
+                wallChainActiveRef.current=true;
+              }else{
+                setWallAnchor(null);setWallPointer(null);wallChainActiveRef.current=false;
+              }
+            }else{
+              if(dragDist>2/view.scale)notify('Invalid wall shape. Try drawing the stroke again.');
+              setWallAnchor(null);setWallPointer(null);wallChainActiveRef.current=false;
+            }
+          }
+        }else{
+          setWallAnchor(null);setWallPointer(null);wallChainActiveRef.current=false;
         }
       }
-      setWallAnchor(null);setWallPointer(null);
     }
     const start = clickStart.current;
     clickStart.current = null;
@@ -1786,14 +2021,43 @@ function MapStageInner({
       pinchRef.current = next;
       return;
     }
-    if(wallActive){const stage=e.target.getStage(),p=stage?pointerToImage(stage):null;
+    if(featureEditorActive){const stage=e.target.getStage(),p=stage?pointerToImage(stage):null;
+      const shift='shiftKey' in e.evt&&!!e.evt.shiftKey;
       if(p){
-        setWallPointer(wallTool==='freehand'||wallTool==='edit'||wallTool==='erase-area'?p:wallPoint(p));
+        const nextPtr=placingLight||wallTool==='freehand'||wallTool==='edit'||wallTool==='erase-area'
+          ? p
+          : wallAnchor
+            ? constrainWallEnd(wallAnchor,p,shift)
+            : wallPoint(p);
+        setWallPointer(nextPtr);
         if(wallTool==='freehand'&&wallAnchor){const last=wallStroke.current.at(-1)!;if(Math.hypot(p.x-last.x,p.y-last.y)>2/view.scale)wallStroke.current.push(p);}
+        const gg=groupGesture.current;
+        if(gg){
+          const q=wallSnap?wallPoint(p):p;
+          const dx=q.x-gg.start.x,dy=q.y-gg.start.y;
+          if(gg.moved||Math.hypot(dx,dy)>2/view.scale){
+            gg.moved=true;
+            setFeatureDragDelta({x:dx,y:dy});
+            setFeatureDuplicatePreview(gg.duplicate);
+          }
+        }
         const g=wallGesture.current;
         if(g){
           if(g.mode==='move'){const q=wallSnap?wallPoint(p):p;setWallPreview(translateWall(g.wall,q.x-g.start.x,q.y-g.start.y));}
-          else{const c=wallCenter(g.wall),delta=(Math.atan2(p.y-c.y,p.x-c.x)-Math.atan2(g.start.y-c.y,g.start.x-c.x))*180/Math.PI;setWallPreview({...g.wall,rotation:((g.wall.rotation??0)+delta+360)%360});}
+          else if(g.mode==='vertex'){
+            let q=wallPoint(p);
+            if(shift&&!g.wall.kind){
+              const handles=wallEndpointHandles(g.wall);
+              const opp=handles[g.handleIndex===0?1:0];
+              if(opp)q=snapAngle45(opp,q);
+            }
+            setWallPreview(moveWallEndpoint(g.wall,g.handleIndex,q));
+          }else{
+            const c=wallCenter(g.wall);
+            let rot=((g.wall.rotation??0)+(Math.atan2(p.y-c.y,p.x-c.x)-Math.atan2(g.start.y-c.y,g.start.x-c.x))*180/Math.PI+360)%360;
+            if(shift)rot=Math.round(rot/15)*15%360;
+            setWallPreview({...g.wall,rotation:rot});
+          }
         }
       }hideCursor();return;}
     // Live "laser pointer": broadcast my cursor (throttled ~20/s) so others see
@@ -2134,6 +2398,10 @@ function MapStageInner({
     const stage=stageRef.current;stage?.setPointersPositions(event.nativeEvent);
     const point=stage?.getPointerPosition();
     if(point && stage?.getIntersection(point)?.findAncestor('.token',true))return false;
+    if(featureEditorActive && stage){
+      const raw=pointerToImage(stage);
+      if(raw && pickFeature(raw))return false;
+    }
     event.preventDefault();event.stopPropagation();cancelBattlefieldFrame(viewAnimation.current);
     clearTimeout(zoomSettleTimerRef.current);zoomSettleTimerRef.current=undefined;zoomFrames.flush();
     userAdjusted.current=true;setMenu(null);setHover(null);
@@ -2274,7 +2542,7 @@ function MapStageInner({
       {!map && <div className="stage-empty">No active map yet.</div>}
       {map && (
         <>
-          <MapToolbarPortals toolSlot={toolSlot} zoomBy={zoomBy} view={view} resetView={resetView} legacy={legacy} animateView={animateView} tilted={tilted} projectionState={projectionState} actualDm={actualDm} dmViewMode={dmViewMode} setDmViewMode={setDmViewMode} partyPreview={partyPreview} sourceSnapshot={sourceSnapshot} chooseTilt={chooseTilt} rotationLabel={rotationLabel} rotationDegrees={rotationDegrees} map={map} tiles={tiles} animateMap={animateMap} mapAnimation={mapAnimation} doors={doors} openDoorControls={openDoorControls} wallTool={wallTool} wallSnap={wallSnap} setWallSnap={setWallSnap} comfyOk={comfyOk} generateScenery={generateScenery} tilesMode={tilesMode} setTilesMode={setTilesMode} addTileFromFile={addTileFromFile} reorderMapImage={reorderMapImage} removeMapImage={removeMapImage} setTool={setTool} setRemoveMode={setRemoveMode} setScaleMode={setScaleMode} setMatchMode={setMatchMode} setAnnotate={setAnnotate} setFogBrush={setFogBrush} placeLight={placeLight} setMenu={setMenu} setWallTool={setWallTool} setWallAnchor={setWallAnchor} setWallPointer={setWallPointer} hideCursor={hideCursor} cancelWallStroke={cancelWallStroke} tool={tool} snap={snap} setSnap={setSnap} removeMode={removeMode} snapshot={snapshot} pendingRef={pendingRef} setDraft={setDraft} clearMeasurements={clearMeasurements} annotate={annotate} annoColor={annoColor} setAnnoColor={setAnnoColor} clearAnnotations={clearAnnotations} decalsLocked={decalsLocked} toggleDecalsLocked={toggleDecalsLocked} derivedFtPerSquare={derivedFtPerSquare} widthFt={widthFt} setWidthFt={setWidthFt} gridPx={gridPx} scaleMode={scaleMode} matchMode={matchMode} commitScaleFeet={commitScaleFeet} setMapGrid={setMapGrid} setScaleLine={setScaleLine} setScalePrompt={setScalePrompt} setVisionFog={setVisionFog} mapFogEnabled={mapFogEnabled} tokenFogEnabled={tokenFogEnabled} paintLayer={paintLayer} setPaintLayer={setPaintLayer} fogBrush={fogBrush} brushSize={brushSize} setBrushSize={setBrushSize} toggleLayer={toggleLayer} coverFog={coverFog} revealAll={revealAll} />
+          <MapToolbarPortals toolSlot={toolSlot} zoomBy={zoomBy} view={view} resetView={resetView} legacy={legacy} animateView={animateView} tilted={tilted} projectionState={projectionState} actualDm={actualDm} dmViewMode={dmViewMode} setDmViewMode={setDmViewMode} partyPreview={partyPreview} sourceSnapshot={sourceSnapshot} chooseTilt={chooseTilt} rotationLabel={rotationLabel} rotationDegrees={rotationDegrees} map={map} tiles={tiles} animateMap={animateMap} mapAnimation={mapAnimation} doors={doors} openDoorControls={openDoorControls} wallTool={wallTool} wallSnap={wallSnap} setWallSnap={setWallSnap} comfyOk={comfyOk} generateScenery={generateScenery} tilesMode={tilesMode} setTilesMode={setTilesMode} addTileFromFile={addTileFromFile} reorderMapImage={reorderMapImage} removeMapImage={removeMapImage} setTool={setTool} setRemoveMode={setRemoveMode} setScaleMode={setScaleMode} setMatchMode={setMatchMode} setAnnotate={setAnnotate} setFogBrush={setFogBrush} placeLight={placeLight} setMenu={setMenu} setWallTool={setWallTool} setWallAnchor={setWallAnchor} setWallPointer={setWallPointer} hideCursor={hideCursor} cancelWallStroke={cancelWallStroke} onSelectAllLights={selectAllLights} tool={tool} snap={snap} setSnap={setSnap} removeMode={removeMode} snapshot={snapshot} pendingRef={pendingRef} setDraft={setDraft} clearMeasurements={clearMeasurements} annotate={annotate} annoColor={annoColor} setAnnoColor={setAnnoColor} clearAnnotations={clearAnnotations} decalsLocked={decalsLocked} toggleDecalsLocked={toggleDecalsLocked} derivedFtPerSquare={derivedFtPerSquare} widthFt={widthFt} setWidthFt={setWidthFt} gridPx={gridPx} scaleMode={scaleMode} matchMode={matchMode} commitScaleFeet={commitScaleFeet} setMapGrid={setMapGrid} setScaleLine={setScaleLine} setScalePrompt={setScalePrompt} setVisionFog={setVisionFog} mapFogEnabled={mapFogEnabled} tokenFogEnabled={tokenFogEnabled} paintLayer={paintLayer} setPaintLayer={setPaintLayer} fogBrush={fogBrush} brushSize={brushSize} setBrushSize={setBrushSize} toggleLayer={toggleLayer} coverFog={coverFog} revealAll={revealAll} />
           <Stage
             ref={stageRef}
             key={`${dprKey}:${legacy}`}
@@ -2286,6 +2554,54 @@ function MapStageInner({
             onTouchMove={handleMouseMove}
             onMouseUp={handlePointerUp}
             onTouchEnd={handlePointerUp}
+            onContextMenu={(e)=>{
+              if(!featureEditorActive||!map)return;
+              e.evt.preventDefault();
+              const stage=e.target.getStage(),raw=stage?pointerToImage(stage):null;
+              if(!raw)return;
+              const me=e.evt as MouseEvent;
+              const additive=me.shiftKey||me.ctrlKey||me.metaKey;
+              const light=pickLight(raw);
+              if(light){
+                openLightEditorFor(light.id,me.clientX,me.clientY,additive);
+                return;
+              }
+              const hit=pickFeature(raw);
+              if(hit?.startsWith('wall:')){
+                const wall=map.walls?.find(w=>w.id===hit.slice(5));
+                if(wall?.door){
+                  openDoorEditorFor(wall.id,me.clientX,me.clientY,additive);
+                  return;
+                }
+                if(wallActive&&wall){
+                  cancelWallStroke();
+                  useStore.getState().editMapWalls(map.id,{removeId:wall.id});
+                  return;
+                }
+              }
+              if(wallAnchor)cancelWallStroke();
+            }}
+            onDblClick={(e)=>{
+              if(!featureEditorActive||!map)return;
+              const stage=e.target.getStage(),raw=stage?pointerToImage(stage):null;
+              if(!raw)return;
+              const me=e.evt as MouseEvent;
+              const additive=me.shiftKey||me.ctrlKey||me.metaKey;
+              const light=pickLight(raw);
+              if(light){
+                openLightEditorFor(light.id,me.clientX,me.clientY,additive);
+                return;
+              }
+              const hit=pickFeature(raw);
+              if(hit?.startsWith('wall:')){
+                const wall=map.walls?.find(w=>w.id===hit.slice(5));
+                if(wall?.door){
+                  openDoorEditorFor(wall.id,me.clientX,me.clientY,additive);
+                  return;
+                }
+              }
+              if(wallAnchor)cancelWallStroke();
+            }}
             onMouseLeave={() => {
               hideCursor();
               endStroke();
@@ -2575,7 +2891,7 @@ function MapStageInner({
                       listening={false}
                     />
                   )}
-              <WallAndDoorKonvaGroup wallActive={wallActive} wallTool={wallTool} map={map} wallPreview={wallPreview} featureSelection={featureSelection} viewScale={view.scale} wallAnchor={wallAnchor} wallPointer={wallPointer} strokeWall={strokeWall} selectedWall={selectedWall} rotationHandle={rotationHandle} doors={doors} doorVisible={doorVisible} actualDm={actualDm} sourceSnapshot={sourceSnapshot} snapshot={snapshot} doorDragPreview={doorDragPreview} nearbyDoors={nearbyDoors} pxPerFoot={pxPerFoot} renderPlayerVision={renderPlayerVision} openDoorControls={openDoorControls} notify={notify} />
+              <WallAndDoorKonvaGroup wallActive={wallActive} placingLight={placingLight} wallTool={wallTool} map={map} wallPreview={wallPreview} featureDragDelta={featureDragDelta} featureDuplicatePreview={featureDuplicatePreview} featureSelection={featureSelection} viewScale={view.scale} wallAnchor={wallAnchor} wallPointer={wallPointer} strokeWall={strokeWall} selectedWall={selectedWall} rotationHandle={rotationHandle} doors={doors} doorVisible={doorVisible} actualDm={actualDm} sourceSnapshot={sourceSnapshot} snapshot={snapshot} doorDragPreview={doorDragPreview} nearbyDoors={nearbyDoors} pxPerFoot={pxPerFoot} renderPlayerVision={renderPlayerVision} openDoorControls={openDoorControls} notify={notify} />
               {/* Live ghost tethers for tokens OTHERS are dragging. */}
               <DragGhostLayer
                 tokens={snapshot.tokens}
@@ -2642,7 +2958,7 @@ function MapStageInner({
           </Suspense></MiniatureFallback>}
           {renderVisionLayer&&activeVision&&(legacy?<LegacyVisionOverlay terrain={legacyTerrainSpec} ref={visionRef} presentation={presentation} terrainRaster={legacyServerTerrain?snapshot.terrainRaster:undefined} motion={legacyMovement.playback} tiles={sceneVision?undefined:snapshot.visionTiles} raster={sceneVision?undefined:snapshot.visionRaster} geometry={sceneVision?undefined:snapshot.legacyGeometry} vision={activeVision} view={view} width={size.w} height={size.h} mapFogOfWar={!sceneVision&&usesMapVision(map)} explored={map?.explorationMode==='off'?[]:snapshot.exploredTerrain} keepRevealed={map?.explorationMode!=='off'&&!!activeVision.daylight}/>:<PlayerVisionOverlay serverGeometry={snapshot.legacyGeometry??(sourceViewSnapshot.legacyMotion?.membershipOnly?sourceViewSnapshot.legacyGeometry:undefined)} spellLighting={!spellColorOverlay} ref={visionRef} presentation={presentation} vision={activeVision} keepRevealed={map?.explorationMode!=='off'&&!!activeVision.daylight} mapFogOfWar={usesMapVision(map)} view={view} tilt={tiltDegrees} rotation={rotationDegrees} width={size.w} height={size.h}
             terrain={{environment:map?.environment,explored:map?.explorationMode==='off'?[]:snapshot.exploredTerrain,tiles:terrainTiles,bounds:{x:extX0,y:extY0,w:imgW,h:imgH},grid:map?.gridHidden?undefined:{size:grid,x:map?.gridOffsetX??0,y:map?.gridOffsetY??0}}}/>)}
-          <WallAndDoorHud wallActive={wallActive} wallTool={wallTool} setWallTool={setWallTool} setWallAnchor={setWallAnchor} wallThickness={wallThickness} setWallThickness={setWallThickness} selectedWall={selectedWall} featureSelection={featureSelection} deleteFeatures={deleteFeatures} map={map} doorDragPreview={doorDragPreview} doors={doors} activeDoorControls={activeDoorControls} dismissDoorControls={dismissDoorControls} actualDm={actualDm} sourceSnapshot={sourceSnapshot} snapshot={snapshot} onSelectToken={onSelectToken} operateDoor={operateDoor} />
+          <WallAndDoorHud wallActive={wallActive} placingLight={placingLight} onStartPlaceLight={()=>map&&placeLight({mapId:map.id})} onStopPlaceLight={()=>placeLight(null)} wallSnap={wallSnap} setWallSnap={setWallSnap} wallChain={wallChain} setWallChain={setWallChain} wallTool={wallTool} setWallTool={setWallTool} setWallAnchor={setWallAnchor} wallThickness={wallThickness} setWallThickness={setWallThickness} selectedWall={selectedWall} featureSelection={featureSelection} onSelectAllLights={selectAllLights} onSelectAllDoors={selectAllDoors} onDuplicateFeatures={duplicateSelectedFeatures} lightEditorOpen={lightEditorOpen} lightEditorPos={lightEditorPos} onOpenLightEditor={()=>setLightEditorOpen(true)} onCloseLightEditor={()=>setLightEditorOpen(false)} doorEditorOpen={doorEditorOpen} doorEditorPos={doorEditorPos} onOpenDoorEditor={()=>setDoorEditorOpen(true)} onCloseDoorEditor={()=>setDoorEditorOpen(false)} deleteFeatures={deleteFeatures} map={map} doorDragPreview={doorDragPreview} doors={doors} activeDoorControls={activeDoorControls} dismissDoorControls={dismissDoorControls} actualDm={actualDm} sourceSnapshot={sourceSnapshot} snapshot={snapshot} onSelectToken={onSelectToken} operateDoor={operateDoor} />
 
           <DecalPopup snapshot={actualDm?sourceSnapshot:snapshot} />
           {hover && !menu && (

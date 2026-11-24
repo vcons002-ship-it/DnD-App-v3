@@ -168,7 +168,7 @@ export function createSceneVision(map:MapState|null|undefined,tokens:Token[]):Pl
  if(!dark)return undefined;
  const px=map.gridSizePx/Math.max(.001,map.feetPerSquare);
  const lights:VisionLight[]=[
-  ...(e?.enabled?e.lights:[]).map(l=>({id:l.id,x:l.x,y:l.y,radius:l.radiusFt*px,height:l.heightFt*px,strength:l.intensity})),
+  ...(e?.enabled?e.lights.filter(l=>l.enabled!==false):[]).map(l=>({id:l.id,x:l.x,y:l.y,radius:l.radiusFt*px,height:l.heightFt*px,strength:l.intensity})),
   ...tokens.filter(t=>t.carriedLantern&&!t.isHidden).map(t=>({id:t.id,x:t.x,y:t.y,radius:20*px,height:CARRIED_LANTERN_LIGHT_HEIGHT_FT*px,strength:.85,carried:true})),
  ];
  return {rangeFt:60,radius:60*px,heavy:false,origins:[],lights,walls:map.walls,daylight:false};
@@ -190,7 +190,7 @@ export function createPlayerVision(map:MapState|null|undefined,tokens:Token[],ow
  const permitted=(x:number,y:number)=>origins.length>0&&(!fog||fog.has(`${Math.floor(x/map!.gridSizePx)},${Math.floor(y/map!.gridSizePx)}`));
  const tokenFog=map!.tokenFogEnabled?new Set(map!.tokenFogRevealed):null;
  const sourceVisible=lightTokenAllowed??((t:Token)=>tokenVisibleAt({role:'player',hidden:t.isHidden,owned:t.kind==='pc'&&owned.has(t.refId),foe:t.kind==='monster',mapFog:fog,tokenFog,grid:map!.gridSizePx,x:t.x,y:t.y}));
- vision.lights=[...(map.environment?.enabled?map.environment.lights:[]).filter(l=>permitted(l.x,l.y)).map(l=>({id:l.id,x:l.x,y:l.y,radius:l.radiusFt*px,height:l.heightFt*px,strength:l.intensity})),
+ vision.lights=[...(map.environment?.enabled?map.environment.lights.filter(l=>l.enabled!==false):[]).filter(l=>permitted(l.x,l.y)).map(l=>({id:l.id,x:l.x,y:l.y,radius:l.radiusFt*px,height:l.heightFt*px,strength:l.intensity})),
  ...tokens.filter(t=>t.carriedLantern&&!t.isHidden&&permitted(t.x,t.y)&&sourceVisible(t)&&origins.some(o=>!(map.walls?.length)||sightCache.visible(`o:${o.id}:${t.x},${t.y}`,o,t,map.walls))).map(t=>({id:t.id,x:t.x,y:t.y,radius:20*px,height:CARRIED_LANTERN_LIGHT_HEIGHT_FT*px,strength:.85,carried:true}))];
  return vision;
 }

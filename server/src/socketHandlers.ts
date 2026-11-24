@@ -42,7 +42,7 @@ import {changeRenderingPolicy,renderingState} from './renderingPolicy.js';
 import {areaPlacementError} from './areaSpells.js';
 import {liveRollTarget,type LiveTargetRef} from '../../shared/liveRollTarget.js';
 import {editMapWalls,setWallDoor} from './mapWalls.js';
-import {deleteMapFeatures} from './mapFeatureDelete.js';
+import {deleteMapFeatures,duplicateMapFeatures,moveMapFeatures} from './mapFeatureDelete.js';
 import {enqueueRoll,rollInProgress,runLiveCommand,UnsupportedPhysicalDice} from './liveRolls.js';
 import { partyRest, restCharacter, describeRest, spendHitDice } from './rests.js';
 import { canonicalClassName } from '../../shared/multiclass.js';
@@ -696,8 +696,10 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       // New Legacy browsers mount the token layer once its server artwork is
       // ready, avoiding an expensive throwaway draw of every fallback label.
       ack({ ok: true, snapshot:(payload.renderProtocol===1||payload.renderProtocol===2||payload.renderProtocol===3)&&payload.legacyRendering===true&&prepared.serverRendering?.enabled?{...initial,tokens:[]}:initial, chatAccessToken:chatAccessToken(socket.id) });
-      // Let everyone else see the (possibly) re-taken character.
-      broadcastSnapshots(io, session.id);
+      // Players may reclaim a character or update the DM's player-rendering roster;
+      // a DM joining only needs their own rendered snapshot without churning players.
+      if (payload.role === 'player') broadcastSnapshots(io, session.id);
+      else sendSnapshot(io, socket.id);
     });
 
     // ---- DM-only: map prep & promotion ----
@@ -763,12 +765,22 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
     on('map:editWalls', (p) => {
       const sid=sessionId();
       if(!sid||!isDm()||!p||typeof p.mapId!=='string')return;
-      const error=editMapWalls(sid,p.mapId,p);
+      const error=editMapWalls(sid,p.mapId,p,{recordUndo:true});
       if(error)socket.emit('notice',{message:error});else afterChange();
     });
     on('map:deleteFeatures',p=>{
       const sid=sessionId();if(!sid||!isDm()||!p||typeof p.mapId!=='string')return;
       const error=deleteMapFeatures(sid,p.mapId,p.wallIds,p.lightIds);
+      if(error)socket.emit('notice',{message:error});else afterChange();
+    });
+    on('map:duplicateFeatures',p=>{
+      const sid=sessionId();if(!sid||!isDm()||!p||typeof p.mapId!=='string')return;
+      const error=duplicateMapFeatures(sid,p.mapId,p.walls,p.lights,p.dx,p.dy);
+      if(error)socket.emit('notice',{message:error});else afterChange();
+    });
+    on('map:moveFeatures',p=>{
+      const sid=sessionId();if(!sid||!isDm()||!p||typeof p.mapId!=='string')return;
+      const error=moveMapFeatures(sid,p.mapId,p.wallIds,p.lightIds,p.dx,p.dy);
       if(error)socket.emit('notice',{message:error});else afterChange();
     });
 
@@ -799,7 +811,22 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
     on('map:setEnvironment', (p) => {
       const sid = sessionId();
       if (!sid || !isDm() || !p || typeof p.mapId !== 'string') return;
-      if (updateMapEnvironment(sid, p.mapId, p.settings)) afterChange();
+      const prevMap = getMap(p.mapId);
+      const prevLights = prevMap?.sessionId === sid ? (prevMap.environment ?? DEFAULT_MAP_ENVIRONMENT).lights : null;
+      if (updateMapEnvironment(sid, p.mapId, p.settings)) {
+        if (prevLights && p.settings && typeof p.settings === 'object' && 'lights' in p.settings) {
+          const nextLights = (getMap(p.mapId)?.environment ?? DEFAULT_MAP_ENVIRONMENT).lights;
+          if (JSON.stringify(prevLights) !== JSON.stringify(nextLights)) {
+            const snapshotLights = prevLights.map(l => ({ ...l }));
+            pushUndo(sid, 'Edit map lights', () => {
+              const cur = getMap(p.mapId);
+              if (!cur || cur.sessionId !== sid) throw Error('Map no longer exists.');
+              updateMapEnvironment(sid, p.mapId, { lights: snapshotLights });
+            });
+          }
+        }
+        afterChange();
+      }
     });
 
     // Append using the current saved map, so rapid clicks never replace lights
@@ -810,9 +837,27 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       const map=getMap(p.mapId);if(!map||map.sessionId!==sid)return;
       const settings=map.environment??DEFAULT_MAP_ENVIRONMENT;
       if(p.lightId!==undefined&&(typeof p.lightId!=='string'||!settings.lights.some(l=>l.id===p.lightId)))return;
+      const prevLights=settings.lights.map(l=>({...l}));
+      const createdId=p.lightId?null:newId();
       const lights=p.lightId?settings.lights.map(l=>l.id===p.lightId?{...l,x:p.x,y:p.y}:l):
-        [...settings.lights,{...newMapLightSettings(settings),id:newId(),x:p.x,y:p.y}];
-      if(updateMapEnvironment(sid,map.id,{lights}))afterChange();
+        [...settings.lights,{...newMapLightSettings(settings),id:createdId!,x:p.x,y:p.y}];
+      if(updateMapEnvironment(sid,map.id,{lights})){
+        if(createdId){
+          pushUndo(sid,'Place light',()=>{
+            const cur=getMap(map.id);if(!cur||cur.sessionId!==sid)throw Error('Map no longer exists.');
+            updateMapEnvironment(sid,map.id,{lights:(cur.environment??DEFAULT_MAP_ENVIRONMENT).lights.filter(l=>l.id!==createdId)});
+          });
+        }else{
+          const movedOld=prevLights.find(l=>l.id===p.lightId);
+          if(movedOld){
+            pushUndo(sid,'Move light',()=>{
+              const cur=getMap(map.id);if(!cur||cur.sessionId!==sid)throw Error('Map no longer exists.');
+              updateMapEnvironment(sid,map.id,{lights:(cur.environment??DEFAULT_MAP_ENVIRONMENT).lights.map(l=>l.id===movedOld.id?{...l,x:movedOld.x,y:movedOld.y}:l)});
+            });
+          }
+        }
+        afterChange();
+      }
     });
 
     on('map:setGrid', (p) => {
@@ -3108,18 +3153,20 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
       for (const finish of trayReady.values()) finish();
       pendingReroll?.finish(false);
       finishDicePresentation?.();
+      const conn = commandConnection();
       const sid = sessionId();
-      const playerId = commandConnection()?.playerId ?? null;
+      const playerId = conn?.playerId ?? null;
+      const wasPlayer = conn?.role === 'player';
       assistantInFlight.get(socket.id)?.abort(); // stop any in-flight LLM call
       assistantInFlight.delete(socket.id);
       if (sid) broadcastCursorHide(io, sid, socket.id); // clear my laser pointer
       dropConn(socket.id);
-      if (sid) {
+      if (sid && wasPlayer) {
         // Hold the claim through a short grace window (handed back if they
         // reconnect, freed if they don't) instead of de-selecting on a blip.
         scheduleRelease(sid, socket.id, playerId);
         broadcastSnapshots(io, sid);
-      } else {
+      } else if (!sid) {
         releaseClaims(socket.id);
       }
     });
