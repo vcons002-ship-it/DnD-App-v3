@@ -627,7 +627,7 @@ function MapStageInner({
     if (orbTarget) setOrbTarget({...orbTarget,targetId:tok.id});
     else if (saveResolve) resolveSaveAt(tok.id);
     else onSelectToken(tok, additive);
-    if(resolveToken(snapshot,tok).dead && !orbTarget && !saveResolve&&!explicitTokenInspection()){setDetailsExpanded(true);nudgeRightPanel();}
+    if(!actualDm && resolveToken(snapshot,tok).dead && !orbTarget && !saveResolve&&!explicitTokenInspection()){setDetailsExpanded(true);nudgeRightPanel();}
   });
   const handleTokenActivate = useStableCallback((tok: Token) => {
     if(areaCast||rayCast)return;
@@ -643,7 +643,6 @@ function MapStageInner({
     onMoveToken(tok.id, x, y, placed, movement);
     if (actualDm) {
       if (selectedIds.length <= 1 || !selectedIds.includes(tok.id)) onSelectToken(tok, false);
-      if(!explicitTokenInspection())nudgeRightPanel();
     }
   });
   const dragPreviewPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());

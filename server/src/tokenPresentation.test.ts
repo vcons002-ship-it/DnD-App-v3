@@ -101,7 +101,7 @@ describe('movement-aligned reveal presentation',()=>{
     expect(p.position('varis')!.x).toBe(1700);
     expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(false);
   });
-  it('shows affinity mid-walk in dim light without a lantern when passing within darkvision range',()=>{
+  it('keeps affinity hidden mid-walk in unlit dungeon darkness without a light source even within darkvision range',()=>{
     const corridorMap={id:'dim-corridor',gridSizePx:50,feetPerSquare:5,mapFogEnabled:false,tokenFogEnabled:false,
       environment:{enabled:true,lighting:'dungeon' as const,heavyDarkness:false,lights:[]},walls:[]};
     const build=(x:number)=>{
@@ -116,7 +116,7 @@ describe('movement-aligned reveal presentation',()=>{
     p.sync(build(1700),10,1001,false,{id:'dim-walk',start:1001,durationMs:400,moves:{varis:{from:{x:100,y:600},to:{x:1700,y:600}}}});
     expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(false);
     p.advance(1201);
-    expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(true);
+    expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(false);
     p.advance(1402);
     expect(visionShowsAffinity(p.personalVision(),900,600,25)).toBe(false);
   });

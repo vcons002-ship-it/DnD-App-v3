@@ -53,13 +53,13 @@ describe('personal dungeon vision',()=>{
   expect(buildSnapshot(f.s.id,'dm',f.map.id)!.tokens).toHaveLength(4);
   expect(buildSnapshot(f.s.id,'player',null,'unclaimed')!.tokens.every(t=>t.sharedSightOnly)).toBe(true);
  });
- it('dim light is unlimited, with affinity in darkvision range; heavy darkness keeps the strict boundary',()=>{
+ it('dim light is unlimited, while affinity requires actual light; heavy darkness keeps the strict boundary',()=>{
   const f=setup();
   for(const heavyDarkness of [false,true]){
    updateMapEnvironment(f.s.id,f.map.id,{heavyDarkness});
    const v=buildSnapshot(f.s.id,'player',null,'vision-a')!.playerVision!;
    expect(v.heavy).toBe(heavyDarkness);expect(visionContains(v,700,100)).toBe(true);expect(visionContains(v,700.1,100)).toBe(!heavyDarkness);
-   expect(visionShowsAffinity(v,500,100)).toBe(!heavyDarkness);
+   expect(visionShowsAffinity(v,500,100)).toBe(false);
    expect(visionShowsAffinity(v,1000,100)).toBe(false);
    expect(visionLit(v,500,100)).toBe(false);
   }
@@ -150,10 +150,10 @@ describe('personal dungeon vision',()=>{
   // Transient spell flash still illuminates without being culled by 1.5*radius cutoff.
   const spellVision={...heavyVision,lights:[transientFlash]};
   expect(visionShowsAffinity(spellVision,1200,100,0)).toBe(true);
-  // Dim light darkvision checks token footprint edges around origin radius.
+  // Unlit dim-light darkvision never reveals affinity without an actual light source.
   const dimVision={rangeFt:60 as const,radius:600,heavy:false,daylight:false,origins:[{id:'pc',x:100,y:100}],lights:[],walls:[]};
-  expect(visionShowsAffinity(dimVision,730,100,0)).toBe(false);
-  expect(visionShowsAffinity(dimVision,730,100,40)).toBe(true);
-  expect(visionShowsAffinity(dimVision,750,100,40)).toBe(false);
+  expect(visionShowsAffinity(dimVision,500,100,0)).toBe(false);
+  expect(visionShowsAffinity(dimVision,730,100,40)).toBe(false);
+  expect(visionShowsAffinity({...dimVision,lights:[staticLight]},670,100,40)).toBe(true);
  });
 });
