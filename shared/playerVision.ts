@@ -139,7 +139,7 @@ export function visionInSight(vision:PlayerVision|undefined|null,x:number,y:numb
 export function visionHasDarkvision(vision:PlayerVision|undefined|null,x:number,y:number):boolean{
  return !!vision?.origins.some(o=>{const r=originVisionRadius(vision,o);return r>0&&Math.hypot(x-o.x,y-o.y)<=r+1e-6;});
 }
-/** Dim-light darkvision shows affinity; heavy-darkness affinity needs actual light. */
+/** Affinity requires daylight or actual light (not darkvision-only grayscale). */
 export function visionShowsAffinity(vision:PlayerVision|undefined|null,x:number,y:number,radiusPx=0):boolean{
  if(!vision||vision.daylight)return true;
  const r=Math.max(0,radiusPx),walls=vision.walls,hasWalls=!!walls?.length;
@@ -153,22 +153,6 @@ export function visionShowsAffinity(vision:PlayerVision|undefined|null,x:number,
    for(let i=1;i<TOKEN_FOOTPRINT_UNIT_OFFSETS.length;i++){
     const u=TOKEN_FOOTPRINT_UNIT_OFFSETS[i],px=x+u.dx*r,py=y+u.dy*r;
     if(lightCoverage(Math.hypot(px-l.x,py-l.y),l)>.10&&(!hasWalls||sightCache.visible(`l:${l.id}:${px},${py}`,l,{x:px,y:py},walls)))return true;
-   }
-  }
- }
- if(!vision.heavy){
-  for(const o of vision.origins){
-   const dr=originVisionRadius(vision,o);
-   if(!(dr>0))continue;
-   const darkOuter=dr+r+1e-6;
-   const dx=x-o.x,dy=y-o.y;
-   if(dx*dx+dy*dy>darkOuter*darkOuter)continue;
-   if(Math.hypot(dx,dy)<=dr+1e-6)return true;
-   if(r>0){
-    for(let i=1;i<TOKEN_FOOTPRINT_UNIT_OFFSETS.length;i++){
-     const u=TOKEN_FOOTPRINT_UNIT_OFFSETS[i];
-     if(Math.hypot(x+u.dx*r-o.x,y+u.dy*r-o.y)<=dr+1e-6)return true;
-    }
    }
   }
  }

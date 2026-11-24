@@ -6,7 +6,6 @@ import { safeSetItem } from '../lib/storage';
 import {DockableWindowHeader,type WindowSide} from './DockableWindowHeader';
 import { HudIcon } from './HudIcon';
 import {createPortal} from 'react-dom';
-import {explicitTokenInspection} from '../lib/tokenInspection';
 
 type Tool = 'maps' | 'spawn' | 'initiative' | 'chat';
 type Panel = Tool | 'inspect';
@@ -71,9 +70,10 @@ export function DmWorkspace({ snapshot, selectedToken, selectionCount, openSigna
     });
   }, [hasSelection]);
   useEffect(() => {
-    if (selectedToken?.id || selectionCount > 1) {if(!explicitTokenInspection())openPanel('inspect');}
-    else setLayout(current => current.open.includes('inspect') ? { ...current, open: current.open.filter(id => id !== 'inspect') } : current);
-  }, [selectedToken?.id, selectionCount, openPanel]);
+    if (!selectedToken?.id && selectionCount <= 1) {
+      setLayout(current => current.open.includes('inspect') ? { ...current, open: current.open.filter(id => id !== 'inspect') } : current);
+    }
+  }, [selectedToken?.id, selectionCount]);
   const consumedOpenSignal=useRef(openSignal);
   useEffect(() => {
     if(openSignal===consumedOpenSignal.current)return;

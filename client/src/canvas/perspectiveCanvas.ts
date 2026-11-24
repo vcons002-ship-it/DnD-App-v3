@@ -2,6 +2,9 @@ import type Konva from 'konva';
 import { SceneCanvas, type Canvas } from 'konva/lib/Canvas';
 import { groundCanvasPadding, groundPerspectiveCss } from './miniatureProjection';
 
+const MAX_PERSPECTIVE_CANVAS_DIM = 4096;
+const MAX_PERSPECTIVE_CANVAS_PIXELS = 12_000_000;
+
 /** Overscan the raster and hit buffer without changing map or pointer coordinates. */
 export function installPerspectiveCanvas(layer: Konva.Layer, width: number, height: number, tilt: number, rotation = 0) {
   // Reserve the orbit envelope once. Angle updates only change the CSS matrix;
@@ -12,6 +15,19 @@ export function installPerspectiveCanvas(layer: Konva.Layer, width: number, heig
   const pad={x:Math.max(...pads.map(p=>p.x)),y:Math.max(...pads.map(p=>p.y))};
   const w = width + 2 * pad.x, h = height + 2 * pad.y;
   const scene = layer.getCanvas(), hit = layer.getHitCanvas();
+  const basePixelRatio = scene.getPixelRatio();
+  // Safari/WebKit silently drops 2D canvases whose backing store exceeds 16.7M px
+  // (4096x4096). Clamp the overscanned perspective pixelRatio so Retina Macs stay
+  // safely within per-canvas and total canvas memory budgets.
+  const effectivePixelRatio = Math.max(
+    0.5,
+    Math.min(
+      basePixelRatio,
+      MAX_PERSPECTIVE_CANVAS_DIM / Math.max(w, h, 1),
+      Math.sqrt(MAX_PERSPECTIVE_CANVAS_PIXELS / Math.max(w * h, 1)),
+    ),
+  );
+  const needsHit = layer.listening();
   const element = layer.getNativeCanvasElement();
   const drawScene = layer.drawScene, intersection = layer.getIntersection;
   let active = false;
@@ -31,10 +47,12 @@ export function installPerspectiveCanvas(layer: Konva.Layer, width: number, heig
     if (active) return;
     active = true;
     layer.setAttr('retainedCanvasOrigin', pad);
-    buffer = new SceneCanvas({ width: w, height: h, pixelRatio: scene.getPixelRatio() }) as SceneCanvas & {x:number; y:number};
+    scene.setPixelRatio(effectivePixelRatio);
+    if (needsHit) hit.setPixelRatio(effectivePixelRatio);
+    buffer = new SceneCanvas({ width: w, height: h, pixelRatio: effectivePixelRatio }) as SceneCanvas & {x:number; y:number};
     buffer.x = -pad.x; buffer.y = -pad.y;
     layer.setAttr('retainedPerspectiveBuffer', buffer);
-    restore = [prepare(scene), prepare(hit), prepare(buffer)];
+    restore = needsHit ? [prepare(scene), prepare(hit), prepare(buffer)] : [prepare(scene), prepare(buffer)];
     element.style.left = `${-pad.x}px`; element.style.top = `${-pad.y}px`;
     element.style.transformOrigin = `${pad.x + width/2}px ${pad.y + height/2}px`;
     element.style.transform = groundPerspectiveCss(width, height, nextTilt, nextRotation);
@@ -53,7 +71,9 @@ export function installPerspectiveCanvas(layer: Konva.Layer, width: number, heig
     layer.drawScene = drawScene; layer.getIntersection = intersection;
     if (active) {
       restore.forEach(fn => fn());
-      scene.setSize(width, height); hit.setSize(width, height); buffer?.setSize(0,0);
+      scene.setPixelRatio(basePixelRatio);
+      if (needsHit) hit.setPixelRatio(basePixelRatio);
+      scene.setSize(width, height); if (needsHit) hit.setSize(width, height); buffer?.setSize(0,0);
       element.style.left = '0px'; element.style.top = '0px';
       element.style.transformOrigin = '50% 50%'; element.style.transform = 'none';
       layer.setAttr('retainedCanvasOrigin', undefined);

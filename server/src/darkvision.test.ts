@@ -257,10 +257,13 @@ describe('per-creature darkvision on maps', () => {
     const elfVision = buildSnapshot(s.id, 'player', null, 'r-elf')!.playerVision!;
     const dwarfVision = buildSnapshot(s.id, 'player', null, 'r-dwarf')!.playerVision!;
 
+    // Unlit dungeon darkvision sees grayscale silhouettes, never colored affinity, regardless of range.
+    expect(humanVision.rangeFt).toBe(0);
+    expect(elfVision.rangeFt).toBe(60);
+    expect(dwarfVision.rangeFt).toBe(120);
     expect(visionShowsAffinity(humanVision, 150, 100)).toBe(false);
-    expect(visionShowsAffinity(elfVision, 600, 100)).toBe(true);
-    expect(visionShowsAffinity(elfVision, 900, 100)).toBe(false);
-    expect(visionShowsAffinity(dwarfVision, 1200, 100)).toBe(true);
+    expect(visionShowsAffinity(elfVision, 600, 100)).toBe(false);
+    expect(visionShowsAffinity(dwarfVision, 1200, 100)).toBe(false);
 
     // Condition boost dynamically expands heavy-darkness vision on a Human PC.
     updateMapEnvironment(s.id, map.id, { lighting: 'dungeon', heavyDarkness: true });

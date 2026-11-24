@@ -106,7 +106,7 @@ for(const detailedFirst of [false,true])it(`shares concurrent Legacy/2D/3D geome
 });
 
 it('adds late outlines without changing base paths or sharing private memory and affinity',async()=>{
- const pool=new VisibilityWorkers(2),initial=jobAt(0),job={...initial,vision:{...initial.vision,heavy:false}};
+ const pool=new VisibilityWorkers(2),initial=jobAt(0),job={...initial,vision:{...initial.vision,heavy:false,lights:[{id:'pc',x:0,y:0,radius:100,height:10,strength:.85,carried:true}]}};
  try{
   const basic=await pool.run(job);
   const personal={...job,detailed:true,explored:[[[[1,2],[3,4],[5,2]]]] as VisionJob['explored'],tokens:[{id:'private',x:0,y:0}]};
