@@ -7,6 +7,8 @@ import { Server } from 'socket.io';
 import { config } from './config.js';
 import { loadSettings } from './settings.js';
 import { refreshOllama } from './ai/ollama.js';
+import { refreshComfy } from './ai/comfy.js';
+import { ensureComfyServer } from './assets/hybridSupervisor.js';
 import { seedLibraryItems, seedLibraryCreatures } from './library.js';
 import { migrateDuplicateAttackAbilities, migrateSrdImmunities } from './trustMigrations.js';
 import { createApiRouter } from './routes.js';
@@ -37,6 +39,7 @@ loadSettings(); // apply any DM-saved API key / model overrides on top of env
 // Probe the local Ollama server in the background so the UI's "AI available"
 // signal is accurate without blocking boot (re-probed on each settings save).
 void refreshOllama().then((up) => up && console.log('  Local Ollama reachable for AI.'));
+void ensureComfyServer().then((up) => up && refreshComfy());
 const seeded = seedLibraryItems(); // one-time fill of the cross-session item library
 const seededCreatures = seedLibraryCreatures();
 // Trust-fix data repairs (idempotent; touch only unedited app-produced data).

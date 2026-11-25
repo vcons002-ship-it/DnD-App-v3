@@ -12,13 +12,12 @@ import {referenceArtPrompt,productionTargetHeight} from './referencePrompt.js';
 import { setAssetProductionListener } from './hooks.js';
 import type { AssetJob, ProducedMiniature } from '../../../shared/assetProduction.js';
 import {runHybridPipeline} from './hybrid.js';
+import {resolveAssetBlender,resolveAssetPython,warmHybridWorkers} from './hybridSupervisor.js';
 import {wireCharacterAssets} from './heroTokens.js';
 import {validMiniatureDetail} from '../../../shared/assetProduction.js';
 
 const scripts = fileURLToPath(new URL('../../tools/asset-production/', import.meta.url));
 const root = path.join(config.dataDir, 'asset-production');
-const python = process.env.ASSET_PYTHON || 'python';
-const blender = process.env.ASSET_BLENDER || (process.platform === 'win32' ? 'C:/Program Files/Blender Foundation/Blender 5.1/blender.exe' : 'blender');
 
 /** Shell-free worker execution; output goes to the private job log, never DM chat. */
 export async function runWorker(command: string, args: string[], log: string, timeoutMs = 90 * 60 * 1000,signal?:AbortSignal,finishRemote=false) {
@@ -95,6 +94,8 @@ export async function produceAsset(job: AssetJob, progress: (stage: string) => v
     throw new SourceArtApprovalRequired({sha256,sheetUrl:`/uploads/miniatures/${sheetName}`,views:views.map(view=>({view,url:`/uploads/miniatures/${prefix}-${view}.png`}))});
   }
   signal?.throwIfAborted();
+  const python = resolveAssetPython();
+  const blender = resolveAssetBlender();
   await runWorker(python, ['--version'], log, 10000,signal);
   await runWorker(blender, ['--version'], log, 20000,signal);
   if(job.sourceCharacterId){
@@ -164,6 +165,7 @@ export function assetQueue() {
   return queue;
 }
 export function startAssetProduction() {
+  warmHybridWorkers();
   const worker = assetQueue();
   setAssetProductionListener(creature => { worker.enqueue(creature); });
   worker.start();
