@@ -33,10 +33,11 @@ const isImageIcon = (icon: string): boolean =>
   icon.startsWith('/') || icon.startsWith('http');
 let sharedMeasureText: Konva.Text | null = null;
 const glyphWidthCache = new Map<string, number>();
-function measureTokenTextWidth(text: string, fontSize: number): number {
-  const key = `${fontSize}:${text}`, cached = glyphWidthCache.get(key);
+function measureTokenTextWidth(text: string, fontSize: number, bold = false): number {
+  const key = `${bold ? 'b' : 'n'}:${fontSize}:${text}`, cached = glyphWidthCache.get(key);
   if (cached !== undefined) return cached;
   if (!sharedMeasureText) sharedMeasureText = new Konva.Text({ wrap: 'none' });
+  sharedMeasureText.fontStyle(bold ? 'bold' : 'normal');
   sharedMeasureText.fontSize(fontSize); sharedMeasureText.text(text);
   const width = sharedMeasureText.getTextWidth();
   if (glyphWidthCache.size >= 2048) glyphWidthCache.delete(glyphWidthCache.keys().next().value!);
@@ -472,35 +473,59 @@ function TokenShapeInner({
     display.maxHp !== undefined;
   const effectiveShowName = !isDead && layout.showName;
   const effectiveShowInitiative = !isDead && initiativeRank !== null && layout.showInitiative;
-  const preferredNameSize = Math.max(9.5, Math.min(11.5, Math.round(gridSizePx * 0.165)));
-  const maxLabelWidth = Math.max(42, Math.min(74, Math.round(radius * 1.44)));
+  const preferredNameSize = Math.max(7.5, Math.min(9.2, Math.round(gridSizePx * 0.125)));
+  const maxLabelWidth = layout.inCrowd && !layout.focused
+    ? Math.max(72, Math.min(118, Math.round(radius * 2.5)))
+    : Math.max(96, Math.min(156, Math.round(radius * 3.35)));
   const tagText = token.revealTag ?? '';
-  const sourceDisplayName = layout.shortName ?? display.name;
+  // When a revealTag like "D2" already carries the creature's instance number,
+  // drop the redundant trailing number ("Dwarf Paladin 2" -> "Dwarf Paladin") so
+  // the nameplate never repeats "2 D2" or wastes width.
+  const rawDisplayName = layout.shortName ?? display.name;
+  const sourceDisplayName = (() => {
+    if (!tagText) return rawDisplayName;
+    const tagNum = tagText.match(/(\d+)$/)?.[1];
+    if (!tagNum) return rawDisplayName;
+    const stripped = rawDisplayName.replace(new RegExp(`\\s+#?${tagNum}$`), '').trim();
+    return stripped || rawDisplayName;
+  })();
   const {nameWidth, tagWidth, labelFontSize, labelText} = useMemo(() => {
     const text = sourceDisplayName.replace(/\s+/g, ' ').trim();
     const full = tagText ? `${text} ${tagText}` : text;
-    const fullWidth = measureTokenTextWidth(full, preferredNameSize);
-    const available = Math.max(maxLabelWidth * 0.55, maxLabelWidth - 2);
+    const fullWidth = measureTokenTextWidth(full, preferredNameSize, activeTurn);
+    const available = Math.max(maxLabelWidth * 0.72, maxLabelWidth - 2);
     const fittedSize = fullWidth > available
-      ? Math.max(8.5, preferredNameSize * (available / fullWidth))
+      ? Math.max(6.8, preferredNameSize * (available / fullWidth))
       : preferredNameSize;
-    const measuredTag = tagText ? Math.ceil(measureTokenTextWidth(tagText, fittedSize) + 3) : 0;
-    const nameBudget = Math.max(22, maxLabelWidth - measuredTag);
-    const measuredName = measureTokenTextWidth(text, fittedSize);
+    const measuredTag = tagText ? Math.ceil(measureTokenTextWidth(tagText, fittedSize, true) + 3) : 0;
+    const nameBudget = Math.max(40, maxLabelWidth - measuredTag);
+    let fittedText = text;
+    if (measureTokenTextWidth(fittedText, fittedSize, activeTurn) > nameBudget) {
+      // Trim cleanly without spending 3 characters of space on an ellipsis.
+      let lo = 1;
+      let hi = fittedText.length;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (measureTokenTextWidth(fittedText.slice(0, mid).trimEnd(), fittedSize, activeTurn) <= nameBudget) lo = mid;
+        else hi = mid - 1;
+      }
+      fittedText = fittedText.slice(0, lo).trimEnd();
+    }
+    const measuredName = measureTokenTextWidth(fittedText, fittedSize, activeTurn);
     return {
-      nameWidth: Math.min(nameBudget, Math.ceil(measuredName + 2)),
+      nameWidth: Math.min(nameBudget, Math.ceil(measuredName + 3)),
       tagWidth: measuredTag,
       labelFontSize: fittedSize,
-      labelText: text,
+      labelText: fittedText,
     };
-  }, [sourceDisplayName, tagText, preferredNameSize, maxLabelWidth]);
-  const roleBadgeR = Math.max(8.5, Math.min(11.5, radius * 0.3));
-  const hpFontSize = Math.max(8.5, Math.min(10.5, Math.round(gridSizePx * 0.15)));
-  const hpBarWidth = Math.max(30, Math.round(radius * 1.44));
-  const hpBarHeight = effectiveShowExactHp ? hpFontSize + 2 : layout.compactBar ? 4 : 5;
+  }, [sourceDisplayName, tagText, preferredNameSize, maxLabelWidth, activeTurn]);
+  const roleBadgeR = Math.max(7.5, Math.min(10, radius * 0.27));
+  const hpFontSize = Math.max(6.8, Math.min(8.2, Math.round(gridSizePx * 0.11)));
+  const hpBarWidth = Math.max(28, Math.round(radius * 1.4));
+  const hpBarHeight = effectiveShowExactHp ? hpFontSize + 2 : layout.compactBar ? 3.5 : 4.5;
   const hpBarRadius = hpBarHeight / 2;
   const arcInner = radius + 1.5;
-  const arcThickness = Math.max(3.2, Math.min(4.8, radius * 0.16));
+  const arcThickness = Math.max(2.6, Math.min(3.8, radius * 0.13));
   const arcOuter = arcInner + arcThickness;
   const arcMid = arcInner + arcThickness / 2;
   const hpColor = hpFrac !== null ? (hpFrac > 0.5 ? '#39c46b' : hpFrac > 0.25 ? '#f5c518' : '#e23b3b') : '#39c46b';
@@ -517,13 +542,13 @@ function TokenShapeInner({
   const labelY = flippedAbove
     ? -radius - labelHeight - 6 + layout.yNudge
     : useArc
-      ? (effectiveShowExactHp ? hpPillY + hpPillHeight + 1.5 : arcOuter + 2 + layout.yNudge)
-      : (effectiveShowHp ? hpBarY + hpBarHeight + 2 : radius + 4 + layout.yNudge);
+      ? (effectiveShowExactHp ? hpPillY + hpPillHeight + 1.2 : arcOuter + 1.8 + layout.yNudge)
+      : (effectiveShowHp ? hpBarY + hpBarHeight + 1.5 : radius + 3 + layout.yNudge);
   const nameY = labelY;
   const deathSavesY = Math.ceil((flippedAbove ? radius + 6 : labelY + labelHeight + 2));
-  const initiativeFontSize = Math.max(7.5, Math.min(9, labelFontSize * .78));
-  const initiativeHeight = initiativeFontSize + 3;
-  const initiativeWidth = String(initiativeRank ?? '').length * initiativeFontSize * .6 + (activeTurn ? 10 : 4);
+  const initiativeFontSize = Math.max(6.5, Math.min(7.8, labelFontSize * .82));
+  const initiativeHeight = initiativeFontSize + 2.5;
+  const initiativeWidth = String(initiativeRank ?? '').length * initiativeFontSize * .6 + (activeTurn ? 8 : 4);
   const initiativeX = -(nameWidth + tagWidth) / 2 - initiativeWidth - 2;
 
 
@@ -947,28 +972,27 @@ function TokenShapeInner({
         />
       )}
       {effectiveShowName && <Text
-        stroke="#000"
-        strokeWidth={2.5}
+        stroke="#000000dd"
+        strokeWidth={1.7}
         fillAfterStrokeEnabled
         lineJoin="round"
         name="token-label"
         text={labelText}
         fontSize={labelFontSize}
         fontStyle={activeTurn ? 'bold' : 'normal'}
-        fill={activeTurn ? '#ffe88a' : token.sharedSightOnly ? '#8a919e' : '#fff'}
+        fill={activeTurn ? '#ffe88a' : token.sharedSightOnly ? '#8a919e' : layout.focused ? '#f5f7fb' : '#dde3ec'}
         opacity={token.sharedSightOnly ? 0.75 : 1}
         align="center"
+        x={-(nameWidth + tagWidth) / 2}
         width={nameWidth}
-        offsetX={(nameWidth + tagWidth) / 2}
         wrap="none"
-        ellipsis
         height={labelHeight}
         y={nameY}
       />}
       {effectiveShowName && token.revealTag && (
         <Group name="token-tracking-tag" x={(nameWidth - tagWidth) / 2} y={labelY}>
           <Text text={token.revealTag} x={2} width={tagWidth - 2} align="left" fontSize={labelFontSize}
-            fontStyle="bold" fill={activeTurn ? '#ffe88a' : token.sharedSightOnly ? '#8a919e' : '#fff'} opacity={token.sharedSightOnly ? 0.75 : 1} stroke="#000" strokeWidth={2.5} fillAfterStrokeEnabled />
+            fontStyle="bold" fill={activeTurn ? '#ffe88a' : token.sharedSightOnly ? '#8a919e' : layout.focused ? '#f5f7fb' : '#dde3ec'} opacity={token.sharedSightOnly ? 0.75 : 1} stroke="#000000dd" strokeWidth={1.7} fillAfterStrokeEnabled />
         </Group>
       )}
       {/* Disposition dot (top-left): green friendly · amber neutral · red enemy. */}
@@ -987,7 +1011,7 @@ function TokenShapeInner({
       {/* Combat-role badge (bottom-left corner): ⚔️ melee · 🏹 ranged · ✨ caster.
           A solid dark disc behind the emoji keeps it legible over any token art. */}
       {!isDead && token.kind !== 'pc' && token.combatRole && !miniatureReady && !miniaturePending && (
-        <Group name="token-combat-role" x={-radius * 0.82} y={radius * 0.46}>
+        <Group name="token-combat-role" x={-radius * 0.92} y={-radius * 0.25}>
           <Circle
             radius={roleBadgeR}
             fill="#0b0d12"

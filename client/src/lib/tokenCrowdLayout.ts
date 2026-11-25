@@ -21,6 +21,7 @@ export type CrowdTokenInput = {
 
 export type CrowdLayoutOptions = {
   viewRotation: number;
+  tilted?: boolean;
   labelDensity: TokenLabelDensity;
   hpDisplay: TokenHpDisplay;
   showHpNumbers: boolean;
@@ -81,34 +82,35 @@ export function abbreviateCrowdName(
     if (sameBaseCount >= 2) {
       if (words.length >= 2) {
         const initials = words.map((w) => w[0].toUpperCase()).join('');
-        return `${initials} ${suffix}`;
+        return hasRevealTag ? initials : `${initials} ${suffix}`;
       }
-      if (base.length > 4) return `${base.slice(0, 3)} ${suffix}`;
+      if (base.length > 5) return hasRevealTag ? base.slice(0, 5) : `${base.slice(0, 3)} ${suffix}`;
+      if (hasRevealTag) return base;
     }
-    if (base.length > 10) {
+    if (base.length > 14) {
       if (words.length >= 2) {
-        const lead = words[0].length <= 8 ? words[0] : `${words[0].slice(0, 7)}.`;
-        return `${lead} ${words[1][0].toUpperCase()}. ${suffix}`;
+        const lead = words[0].length <= 9 ? words[0] : words[0].slice(0, 8);
+        return hasRevealTag ? `${lead} ${words[1][0].toUpperCase()}` : `${lead} ${words[1][0].toUpperCase()} ${suffix}`;
       }
-      return `${base.slice(0, 8)}… ${suffix}`;
+      return hasRevealTag ? base.slice(0, 10) : `${base.slice(0, 9)} ${suffix}`;
     }
-    return undefined;
+    return hasRevealTag ? base : undefined;
   }
-  if (hasRevealTag && (sameBaseCount >= 2 || base.length > 10)) {
+  if (hasRevealTag && (sameBaseCount >= 2 || base.length > 13)) {
     if (words.length >= 2) {
-      if (denseCluster && sameBaseCount >= 2 && words[0].length <= 8) return words[0];
-      const lead = words[0].length <= 9 ? words[0] : `${words[0].slice(0, 7)}.`;
-      return `${lead} ${words[1][0].toUpperCase()}.`;
+      if (denseCluster && sameBaseCount >= 2 && words[0].length <= 9) return words[0];
+      const lead = words[0].length <= 9 ? words[0] : words[0].slice(0, 8);
+      return `${lead} ${words[1][0].toUpperCase()}`;
     }
-    if (base.length > 10) return `${base.slice(0, 8)}.`;
+    if (base.length > 13) return base.slice(0, 11);
   }
-  if (!hasRevealTag && base.length > 12) {
-    if (denseCluster) return `${base.slice(0, 11).trimEnd()}…`;
+  if (!hasRevealTag && base.length > 15) {
+    if (denseCluster) return base.slice(0, 13).trimEnd();
     if (words.length >= 2) {
-      const lead = words[0].length <= 8 ? words[0] : `${words[0].slice(0, 7)}.`;
-      return `${lead} ${words[1][0].toUpperCase()}.`;
+      const lead = words[0].length <= 9 ? words[0] : words[0].slice(0, 8);
+      return `${lead} ${words[1][0].toUpperCase()}`;
     }
-    return `${base.slice(0, 10)}.`;
+    return base.slice(0, 13);
   }
   return undefined;
 }
@@ -126,7 +128,7 @@ export function computeTokenCrowdLayout(
   opts: CrowdLayoutOptions,
 ): Map<string, TokenCrowdLayout> {
   const result = new Map<string, TokenCrowdLayout>();
-  const { viewRotation, labelDensity, hpDisplay, showHpNumbers, peekAll } = opts;
+  const { viewRotation, tilted = false, labelDensity, hpDisplay, showHpNumbers, peekAll } = opts;
   const rad = (viewRotation * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -206,7 +208,9 @@ export function computeTokenCrowdLayout(
     const hudOpacity = dimmed ? (labelDensity === 'full' ? 0.45 : 0.28) : 1;
 
     let placement: 'below' | 'above' = 'below';
-    if (inCrowd) {
+    // Only flip upper-row labels above their base in overhead view; in 45° tilt,
+    // upright 3D torsos stand directly above (-Y) the base and would hide it.
+    if (inCrowd && !tilted) {
       let blockedBelow = false;
       let blockedAbove = false;
       for (const n of neighbors) {
@@ -294,20 +298,21 @@ export function computeTokenCrowdLayout(
 
     if (inCrowd && showName) {
       const displayLabel = shortName ?? t.name;
-      const estW = Math.min(82, Math.max(36, displayLabel.length * 6.2 + (t.revealTag ? 14 : 0) + (showInitiative ? 16 : 0)));
-      const estH = showExactHp && hpDisplay === 'bar' ? 24 : showExactHp ? 22 : 14;
+      const estW = Math.min(58, Math.max(28, displayLabel.length * 4.5 + (t.revealTag ? 10 : 0) + (showInitiative ? 12 : 0)));
+      const estH = showExactHp && hpDisplay === 'bar' ? 18 : showExactHp ? 17 : 11;
       const sx = t.x * cos - t.y * sin;
       const sy = t.x * sin + t.y * cos;
       const baseY =
         placement === 'above'
-          ? sy - t.radius - estH - 6
-          : sy + t.radius + (hpDisplay === 'arc' ? 6 : showHp ? 10 : 4);
+          ? sy - t.radius - estH - 5
+          : sy + t.radius + (hpDisplay === 'arc' ? 5 : showHp ? 8 : 3);
       crowdBoxes.push({ token: t, layout, sx, sy, width: estW, height: estH, baseY });
     }
   }
 
-  // Two-pass vertical label repulsion for crowded tokens so overlapping nameplates
-  // gently separate while focused tokens stay anchored at yNudge = 0.
+  // Gentle vertical separation ONLY when two tokens sit closely stacked on the
+  // same horizontal band so labels stay tightly anchored to their own token base
+  // (never drifting down onto a creature in the next row).
   if (crowdBoxes.length > 1) {
     crowdBoxes.sort((a, b) => {
       if (a.layout.focused !== b.layout.focused) return a.layout.focused ? -1 : 1;
@@ -315,22 +320,24 @@ export function computeTokenCrowdLayout(
       return a.baseY - b.baseY || a.sx - b.sx;
     });
 
-    const placed: { minX: number; maxX: number; minY: number; maxY: number }[] = [];
+    const placed: { minX: number; maxX: number; minY: number; maxY: number; sx: number; sy: number; radius: number }[] = [];
     for (const box of crowdBoxes) {
       let nudge = 0;
-      const maxNudge = Math.max(18, box.token.radius * 0.95);
+      const maxNudge = tilted ? 6 : 10;
       const minX = box.sx - box.width / 2;
       const maxX = box.sx + box.width / 2;
       if (!box.layout.focused) {
         const dir = box.layout.placement === 'above' ? -1 : 1;
-        for (let pass = 0; pass < 3; pass++) {
+        for (let pass = 0; pass < 2; pass++) {
           let moved = false;
           const curMinY = box.baseY + nudge;
           const curMaxY = curMinY + box.height;
           for (const other of placed) {
-            if (minX >= other.maxX + 2 || maxX <= other.minX - 2) continue;
-            if (curMinY < other.maxY + 2 && curMaxY > other.minY - 2) {
-              const push = dir > 0 ? other.maxY + 2 - curMinY : other.minY - 2 - curMaxY;
+            // Only separate tokens whose bases are tighter than standard 5-ft grid spacing.
+            if (Math.hypot(box.sx - other.sx, box.sy - other.sy) >= (box.token.radius + other.radius) * 0.95) continue;
+            if (minX >= other.maxX + 1 || maxX <= other.minX - 1) continue;
+            if (curMinY < other.maxY + 1 && curMaxY > other.minY - 1) {
+              const push = dir > 0 ? other.maxY + 1 - curMinY : other.minY - 1 - curMaxY;
               const nextNudge = Math.max(-maxNudge, Math.min(maxNudge, nudge + push));
               if (Math.abs(nextNudge - nudge) > 0.5) {
                 nudge = nextNudge;
@@ -347,6 +354,9 @@ export function computeTokenCrowdLayout(
         maxX,
         minY: box.baseY + box.layout.yNudge,
         maxY: box.baseY + box.layout.yNudge + box.height,
+        sx: box.sx,
+        sy: box.sy,
+        radius: box.token.radius,
       });
     }
   }

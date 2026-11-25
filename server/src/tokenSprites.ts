@@ -59,20 +59,20 @@ export async function tokenSprites(id:string,snapshot:StateSnapshot,preShade=fal
    const opacity=t.invisible?.28:d.dead?.5:1;
    const clip=shape==='square'?`<rect x="${-r}" y="${-r}" width="${2*r}" height="${2*r}"/>`:shape==='diamond'?`<path d="M0 ${-r}L${r} 0L0 ${r}L${-r} 0Z"/>`:silhouette('');
    const body=image?`<defs><clipPath id="p">${clip}</clipPath></defs><image xlink:href="${image}" x="${-r}" y="${-r}" width="${r*2}" height="${r*2}" opacity="${opacity}" ${shape==='image'?'':'clip-path="url(#p)"'}/>${shape==='image'?'':silhouette('fill="none" stroke="#111111" stroke-opacity=".53" stroke-width="2"')}`:`${silhouette(`fill="${fill}" opacity="${opacity}" stroke="#111111" stroke-opacity=".53" stroke-width="2"`)}${d.icon&&!d.dead&&!hasEmoji(d.icon)?text(d.icon,0,r*.36,r*1.1):''}`;
-   const preferredFont=Math.max(9.5,Math.min(11.5,Math.round(map.gridSizePx*.165))),maxLabelW=Math.max(42,Math.min(74,Math.round(r*1.44)));
-   const tag=t.revealTag??'',cleanName=d.name.replace(/\s+/g,' ').trim(),fullLabel=tag?`${cleanName} ${tag}`:cleanName;
-   const estFullW=fullLabel.length*preferredFont*.56,availW=Math.max(maxLabelW*.55,maxLabelW-2);
-   const font=estFullW>availW?Math.max(8.5,preferredFont*(availW/estFullW)):preferredFont;
-   const roleR=Math.max(8.5,Math.min(11.5,r*.3)),hasHp=!!(d.maxHp&&d.maxHp>0&&d.curHp!==undefined),hpFont=Math.max(9,Math.min(10.5,Math.round(map.gridSizePx*.155)));
+   const preferredFont=Math.max(7.5,Math.min(9.2,Math.round(map.gridSizePx*.125))),maxLabelW=Math.max(96,Math.min(156,Math.round(r*3.35)));
+   const tag=t.revealTag??'',tagNum=tag.match(/(\d+)$/)?.[1],rawClean=d.name.replace(/\s+/g,' ').trim(),cleanName=tagNum?rawClean.replace(new RegExp(`\\s+#?${tagNum}$`),'').trim()||rawClean:rawClean,fullLabel=tag?`${cleanName} ${tag}`:cleanName;
+   const estFullW=fullLabel.length*preferredFont*.56,availW=Math.max(maxLabelW*.72,maxLabelW-2);
+   const font=estFullW>availW?Math.max(6.8,preferredFont*(availW/estFullW)):preferredFont;
+   const roleR=Math.max(7.5,Math.min(10,r*.27)),hasHp=!!(d.maxHp&&d.maxHp>0&&d.curHp!==undefined),hpFont=Math.max(6.8,Math.min(8.2,Math.round(map.gridSizePx*.11)));
    const showExactHp=!d.dead&&!t.partiallyRevealed&&hasHp&&showHpNumbers;
-   const arcThick=Math.max(3.5,Math.min(5.5,r*.22)),arcInner=r+1.5,arcOuter=arcInner+arcThick,arcMid=(arcInner+arcOuter)/2;
+   const arcThick=Math.max(2.6,Math.min(3.8,r*.13)),arcInner=r+1.5,arcOuter=arcInner+arcThick,arcMid=(arcInner+arcOuter)/2;
    const arcPt=(rad:number,deg:number)=>`${(Math.cos(deg*Math.PI/180)*rad).toFixed(2)} ${(Math.sin(deg*Math.PI/180)*rad).toFixed(2)}`;
    const arcPath=(rad:number,startDeg:number,endDeg:number)=>`M${arcPt(rad,startDeg)} A${rad.toFixed(2)} ${rad.toFixed(2)} 0 0 0 ${arcPt(rad,endDeg)}`;
    const pillH=hpFont+2,pillY=arcOuter+1;
    const labelY=hasHp?(showExactHp?pillY+pillH+2:arcOuter+2):r+4;
-   const tagW=tag?tag.length*font*.64+3:0,nameBudget=Math.max(22,maxLabelW-tagW);
-   const chars=Math.max(4,Math.floor(nameBudget/(font*.58)));
-   const line=cleanName.length>chars?cleanName.slice(0,chars-1)+'…':cleanName;
+   const tagW=tag?tag.length*font*.64+3:0,nameBudget=Math.max(36,maxLabelW-tagW);
+   const chars=Math.max(6,Math.floor(nameBudget/(font*.56)));
+   const line=cleanName.length>chars?cleanName.slice(0,chars).trimEnd():cleanName;
    const nameW=Math.min(maxLabelW,(line.length+(tag?tag.length+1:0))*font*.58+4);
    const labelFill=t.sharedSightOnly?'#8a919e':'white',labelFade=t.sharedSightOnly?' opacity=".75"':'';
    let hud='';
@@ -91,7 +91,7 @@ export async function tokenSprites(id:string,snapshot:StateSnapshot,preShade=fal
    }
    if(!d.dead&&!t.partiallyRevealed)hud+=`<text x="0" y="${labelY+font*.88}" font-size="${font}" text-anchor="middle" fill="${labelFill}"${labelFade} stroke="black" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round">${escape(line)}${tag?` <tspan font-weight="bold">${escape(tag)}</tspan>`:''}</text>`;
    if(affinityVisible)hud+=`<circle cx="${-r*.8}" cy="${-r*.8}" r="${Math.max(5,r*.16)}" fill="${{friendly:'#39c46b',neutral:'#f5c518',enemy:'#e23b3b'}[d.disposition!]}" stroke="black"/>`;
-   if(!d.dead&&!t.partiallyRevealed&&t.kind!=='pc'&&t.combatRole)hud+=`<g transform="translate(${-r*.82} ${r*.46})"><circle r="${roleR}" fill="#0b0d12" stroke="white" stroke-width="1.5"/></g>`;
+   if(!d.dead&&!t.partiallyRevealed&&t.kind!=='pc'&&t.combatRole)hud+=`<g transform="translate(${-r*.92} ${-r*.25})"><circle r="${roleR}" fill="#0b0d12" stroke="white" stroke-width="1.5"/></g>`;
 
    if(hasHunterMark)hud+=`<g transform="translate(0 ${-r-22})"><path d="M0 -14L14 0L0 14L-14 0Z" fill="#352106" stroke="#ffe7a1" stroke-width="2"/><circle r="4" fill="#fff5d2"/></g>`;
    const edge=Math.ceil(r*1.3+4),hudEdge=Math.ceil(Math.max(arcOuter+16,nameW/2+18,showExactHp?44:0)),top=Math.ceil(r+52),bottom=Math.ceil(labelY+font*1.5+16);

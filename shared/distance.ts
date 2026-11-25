@@ -23,8 +23,9 @@ export function tokenDistanceFt(a: Tok, b: Tok, map: Scale): number {
   const gs = map && map.gridSizePx > 0 ? map.gridSizePx : 50;
   const fpp = fps / gs; // feet per pixel (matches the client's grid scale)
   const chebFt = Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) * fpp;
-  // Extra reach for a creature bigger than one square (0 for a normal 5-ft token).
-  const extra = Math.max(0, (effectiveWidthFt(a) - fps) / 2) + Math.max(0, (effectiveWidthFt(b) - fps) / 2);
+  // Extra reach for a creature bigger than a standard 5-ft space (never tied to
+  // a coarser visual grid cell size on width-calibrated maps).
+  const extra = Math.max(0, (effectiveWidthFt(a) - 5) / 2) + Math.max(0, (effectiveWidthFt(b) - 5) / 2);
   return Math.max(0, chebFt - extra);
 }
 

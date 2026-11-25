@@ -1263,7 +1263,7 @@ function MapStageInner({
   const readTetherPills=useMemo(()=>createTetherPillReader(),[]);
   const invalidateMiniatures=useCallback(()=>miniatureRef.current?.invalidate(),[]);
   const miniatureNameLabels = useStableCallback(() => [...readMiniatureNames(tokenLayerRef.current,
-    id=>peekAll||selectedIds.includes(id)||hover?.token.id===id||id===activeTurnTokenId||orbTarget?.targetId===id||combatTargetId===id), ...readSharedNames(sharedTokenLayerRef.current,id=>peekAll||id===activeTurnTokenId), ...readTetherPills(spellAreaLayerRef.current)]);
+    id=>peekAll||hover?.token.id===id), ...readSharedNames(sharedTokenLayerRef.current,()=>peekAll), ...readTetherPills(spellAreaLayerRef.current)]);
   useEffect(() => {
     miniatureRef.current?.invalidate();
   }, [activeTurnTokenId, labelDensity, hpDisplay, peekAll, hover?.token.id, combatTargetId]);
@@ -1782,8 +1782,9 @@ function MapStageInner({
 
     if (size === 'custom') {
       drawingRef.current = true;
-      const o = snapPt(pos);
-      setDraft({ kind, origin: o, target: o });
+      const startTok = kind === 'ruler' ? tokenAt(pos) : undefined;
+      const o = startTok ? { x: startTok.x, y: startTok.y } : snapPt(pos);
+      setDraft({ kind, origin: o, target: o, ...(startTok ? { originTokenId: startTok.id } : {}) });
       return;
     }
 
@@ -1799,9 +1800,47 @@ function MapStageInner({
     setDraft({ kind, origin: o, target: { x: o.x + len, y: o.y } });
   };
 
+  const edgeAdjustedRuler = (rawOrigin: Pt, rawTarget: Pt, originTokenId?: string): { origin: Pt; target: Pt } => {
+    const startTok = originTokenId
+      ? snapshot.tokens.find((t) => t.id === originTokenId && !t.sharedSightOnly && !t.partiallyRevealed)
+      : undefined;
+    const endTok = tokenAt(rawTarget);
+    const destTok = endTok && endTok.id !== startTok?.id ? endTok : undefined;
+    const ax = startTok ? startTok.x : rawOrigin.x;
+    const ay = startTok ? startTok.y : rawOrigin.y;
+    const bx = destTok ? destTok.x : rawTarget.x;
+    const by = destTok ? destTok.y : rawTarget.y;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-4) return { origin: { x: ax, y: ay }, target: { x: bx, y: by } };
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const rStart = startTok ? (getTokenBaseWidthFt(startTok) * pxPerFoot) / 2 : 0;
+    const rEnd = destTok ? (getTokenBaseWidthFt(destTok) * pxPerFoot) / 2 : 0;
+    if (dist <= rStart + rEnd) {
+      const midDist = rStart + (dist - rStart - rEnd) / 2;
+      const clamped = Math.max(0, Math.min(dist, midDist));
+      const p = { x: ax + ux * clamped, y: ay + uy * clamped };
+      return { origin: p, target: p };
+    }
+    return {
+      origin: { x: ax + ux * rStart, y: ay + uy * rStart },
+      target: { x: bx - ux * rEnd, y: by - uy * rEnd },
+    };
+  };
+
   const measureMove = (pos: Pt) => {
     if (drawingRef.current) {
-      setDraft((d) => (d ? { ...d, target: snapPt(pos) } : d));
+      setDraft((d) => {
+        if (!d) return d;
+        const nextTarget = snapPt(pos);
+        if (d.kind === 'ruler') {
+          const adj = edgeAdjustedRuler(d.origin, nextTarget, d.originTokenId);
+          return { ...d, origin: adj.origin, target: adj.target };
+        }
+        return { ...d, target: nextTarget };
+      });
       return;
     }
     if (pendingRef.current && draft && tool) {
@@ -2476,6 +2515,9 @@ function MapStageInner({
         const widthFt = isMini
           ? miniatureBaseWidthFt(t, t.kind === 'monster' ? entities.monsters.get(t.refId) : { name: d.name })
           : t.widthFt;
+        // Use the tactical footprint (at least token.widthFt) for melee crowd
+        // adjacency so adjacent 5-ft 3D miniatures always trigger Smart crowd layout.
+        const crowdRadius = (Math.max(widthFt, t.widthFt) * pxPerFoot) / 2;
         const hpFrac =
           d.maxHp && d.maxHp > 0 && d.curHp !== undefined
             ? Math.max(0, Math.min(1, d.curHp / d.maxHp))
@@ -2484,7 +2526,7 @@ function MapStageInner({
           id: t.id,
           x: t.x,
           y: t.y,
-          radius: (widthFt * pxPerFoot) / 2,
+          radius: crowdRadius,
           name: d.name,
           kind: t.kind,
           revealTag: t.revealTag,
@@ -2504,6 +2546,7 @@ function MapStageInner({
       });
     return computeTokenCrowdLayout(inputs, {
       viewRotation: rotationDegrees,
+      tilted: tiltDegrees > 0,
       labelDensity,
       hpDisplay,
       showHpNumbers: snapshot.role === 'dm',
@@ -2529,6 +2572,7 @@ function MapStageInner({
     areaCast,
     areaTargets,
     rotationDegrees,
+    tiltDegrees,
     labelDensity,
     hpDisplay,
     peekAll,

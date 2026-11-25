@@ -30,6 +30,11 @@ describe('tokenDistanceFt / tokensWithin5ft', () => {
   it('a Large creature (10-ft footprint) reaches one square further', () => {
     // Large at origin, target 1.5 cells away → 7.5 ft center, minus 2.5 ft reach = 5.
     expect(tokensWithin5ft(tok(0, 0, 10), tok(75, 0, 5), map)).toBe(true);
+    // Same Large creature on a width-calibrated map with coarse visual grid (15.8 ft/sq).
+    const wideGridMap = { feetPerSquare: 15.8, gridSizePx: 50 } as const;
+    const pxPerFt = wideGridMap.gridSizePx / wideGridMap.feetPerSquare;
+    expect(tokenDistanceFt(tok(0, 0, 10), tok(7.5 * pxPerFt, 0, 5), wideGridMap)).toBeCloseTo(5, 1);
+    expect(tokensWithin5ft(tok(0, 0, 10), tok(7.5 * pxPerFt, 0, 5), wideGridMap)).toBe(true);
   });
 
   it('overlapping tokens are 0 ft apart', () => {
