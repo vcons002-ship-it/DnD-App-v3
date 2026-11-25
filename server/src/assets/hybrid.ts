@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {ProductionError} from './queue.js';
+import {ensureHybridWorker} from './hybridSupervisor.js';
 import {postWorkerJSON} from './workerTransport.js';
 
 export const HYBRID_POLICY={id:'hybrid-2mv-21-v1',alignment:'hybrid-alignment-v1',steps:75,guidance:5.5,seed:923300,resolution:512,num_chunks:10000,faces:120000,paintResolution:768,views:6,atlas:4096,paintSeed:0} as const;
@@ -60,11 +61,23 @@ export async function runHybridPipeline(refs:string,work:string,referenceHash:st
         progress(`Recovered completed ${name==='shape'?'multiview geometry':'2.1 materials'} from worker receipt`);return result;
       }catch{/* Incomplete, incompatible or changed worker output cannot be resumed. */}
     }
-    try{
+    const checkWorker=async()=>{
       const health=await fetch(base.replace(/\/$/,'')+'/health',{signal:AbortSignal.timeout(8000)});
       const capabilities=await health.json() as RecordValue;if(!health.ok||capabilities.protocol!=='dnd-hybrid-v1')throw Error('Worker protocol mismatch');
       if(capabilities.running)throw Error('Worker busy');
-    }catch{throw new ProductionError(`The hybrid ${name==='paint'?'2.1 paint':'multiview shape'} worker is unavailable or busy. Start the hybrid workers, then retry. Completed stages are kept.`,true);}
+    };
+    try{
+      await checkWorker();
+    }catch{
+      const kind=name==='paint'?'paint':'shape';
+      const started=await ensureHybridWorker(kind,base,()=>progress(`Starting local 3D ${kind} worker…`),signal);
+      try{
+        if(!started)throw Error('Worker unavailable');
+        await checkWorker();
+      }catch{
+        throw new ProductionError(`The hybrid ${name==='paint'?'2.1 paint':'multiview shape'} worker is unavailable or busy. Start the hybrid workers, then retry. Completed stages are kept.`,true);
+      }
+    }
     const output_dir=path.join(root,name+'-'+randomUUID());
     let result:RecordValue;
     try{
