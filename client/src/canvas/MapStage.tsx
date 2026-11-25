@@ -16,6 +16,8 @@ import {sameBoardSnapshot} from '../../../shared/boardSnapshot';
 import {LegacyVisionOverlay} from './LegacyVisionOverlay';
 import {useLegacyMovement} from '../lib/useLegacyMovement';
 import {useTokenAppearance} from '../components/TokenAppearanceControl';
+import { useTokenHudPreferences } from '../lib/tokenHudPreferences';
+import { computeTokenCrowdLayout } from '../lib/tokenCrowdLayout';
 import {normalizeNumericDraft} from '../lib/numberInput';
 import {apiFetch} from '../lib/api';
 import {MapArtwork} from './MapArtwork';
@@ -243,6 +245,7 @@ function MapStageInner({
   useEffect(()=>()=>{cancelBattlefieldFrame(viewAnimation.current);if(rotationGesture.current)cancelBattlefieldFrame(rotationGesture.current.frame);},[]);
   useLayoutEffect(()=>{cancelBattlefieldFrame(viewAnimation.current);projectionState.current={tilt:tiltDegrees,rotation:rotationDegrees};},[legacy]);
   const {use3dTokens,use3dMonsters}=useTokenAppearance();
+  const { labelDensity, hpDisplay, setLabelDensity, setHpDisplay } = useTokenHudPreferences();
   useEffect(()=>{useStore.getState().socket?.emit('client:rendering',legacy,{pc:legacy||!use3dTokens||miniaturesUnavailable,monster:legacy||!use3dMonsters||miniaturesUnavailable});},[legacy,use3dTokens,use3dMonsters,miniaturesUnavailable,previewSocketId]);
   const groundScaleY = groundYScale(tiltDegrees);
   const [menu, setMenu] = useState<{ token: Token; x: number; y: number } | null>(
@@ -349,6 +352,7 @@ function MapStageInner({
   const showDiceButton = useStore((s) => s.showDiceButton);
   const orbTarget = useStore(s => s.orbTarget);
   const setOrbTarget = useStore(s => s.setOrbTarget);
+  const combatTargetId = useStore((s) => s.floatingMenuTarget?.targetTokenId ?? s.combatPanelTarget?.targetTokenId ?? s.combatTarget?.id ?? null);
   const saveResolve = useStore((s) => s.saveResolve);
   const resolvingRoll=useStore(s=>saveResolve?s.snapshot?.rollLog.find(r=>r.id===saveResolve.rollId):undefined);
   const actionSnapshot=actualDm?sourceSnapshot:snapshot;
@@ -436,6 +440,33 @@ function MapStageInner({
   const groupGesture=useRef<{start:Pt;moved:boolean;duplicate:boolean;selection:string[]}|null>(null);
   const wallActive=actualDm&&wallTool!=='off';
   const featureEditorActive=wallActive||placingLight;
+  const [peekAll, setPeekAll] = useState(false);
+  useEffect(() => {
+    if (featureEditorActive) {
+      setPeekAll(false);
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt' && !e.repeat) {
+        const el = e.target as HTMLElement | null;
+        const tag = el?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
+        setPeekAll(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') setPeekAll(false);
+    };
+    const onBlur = () => setPeekAll(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [featureEditorActive]);
   const selectedWall=wallPreview??map?.walls?.find(w=>w.id===wallSelection);
   const rotationHandle=(w:MapWall)=>{const c=wallCenter(w),r=Math.max(...wallVertices(w).map(p=>Math.hypot(p.x-c.x,p.y-c.y)))+26/view.scale,a=((w.rotation??0)-90)*Math.PI/180;return {x:c.x+Math.cos(a)*r,y:c.y+Math.sin(a)*r};};
   const cancelWallStroke=()=>{
@@ -713,7 +744,7 @@ function MapStageInner({
 
   // ---- Measuring tools: a "Measure" dropdown with standard + custom shapes ----
   const [tool, setTool] = useState<MeasureTool | null>(null);
-  const [snap, setSnap] = useState(true);
+  const [snap, setSnap] = useState(false);
   const [removeMode, setRemoveMode] = useState(false);
   // DM preference: lock scenery decals (click-through + undraggable) so they
   // can't be grabbed while moving tokens/panning. Persisted per session.
@@ -869,11 +900,14 @@ function MapStageInner({
   const pendingRef = useRef(false); // click-rotate / emanation-radius: awaiting 2nd click
   const snapPt = (p: Pt): Pt => {
     if (!snap) return p;
+    // On maps calibrated by width where the visual grid cell is coarser than 5 ft,
+    // snap in 5-ft tactical steps instead of jumping across oversized grid squares.
+    const step = feetPerSquare > 5.5 && pxPerFoot > 0 ? 5 * pxPerFoot : grid;
     const ox = map?.gridOffsetX ?? 0;
     const oy = map?.gridOffsetY ?? 0;
     return {
-      x: Math.round((p.x - ox) / grid) * grid + ox,
-      y: Math.round((p.y - oy) / grid) * grid + oy,
+      x: Math.round((p.x - ox) / step) * step + ox,
+      y: Math.round((p.y - oy) / step) * step + oy,
     };
   };
   // Feet -> stored image-space distance (square stores HALF its side; circle/
@@ -922,7 +956,9 @@ function MapStageInner({
   const applyScaleFromLine = () => {
     const ft = parseFloat(scaleFt);
     if (scalePrompt && imgW && ft > 0) {
-      commitScale(gridPx, (ft * imgW) / scalePrompt.lenPx);
+      const ftWide = (ft * imgW) / scalePrompt.lenPx;
+      if (map?.gridLocked) commitScale(gridPx, ftWide);
+      else commitScaleFeet(feetPerSquare, ftWide);
     }
     setScaleMode(false);
     setScaleLine(null);
@@ -1167,7 +1203,7 @@ function MapStageInner({
       affinity: !isTokenAffinityVisible(token, { role: snapshot.role, vision: snapshot.playerVision, map: snapshot.map, affinityIds: legacyAffinity }) && token.kind === 'monster' ? 'unknown' : monster ? monster.disposition : 'friendly',
       tint: !dead && monster ? monsterTint(monster) : undefined,
       shade: !dead && monster && !monster.objectKind ? monsterVariation(productionFamily(monster), token.refId).shade : undefined,
-      activeTurn: !token.sharedSightOnly && !token.partiallyRevealed && token.id === activeTurnTokenId,
+      activeTurn: !token.partiallyRevealed && token.id === activeTurnTokenId,
       selected: !token.sharedSightOnly && !token.partiallyRevealed && (orbTarget ? orbTarget.targetId === token.id : selectedIds.includes(token.id)),
       diameter: miniatureBaseWidthFt(token, monster ?? { name: resolveToken(snapshot, token).name }) * pxPerFoot, hidden: token.isHidden, definition }] : [];
   }), [legacy,snapshot,legacyAffinity, isDm, pxPerFoot, activeTurnTokenId, selectedIds, orbTarget, use3dTokens, use3dMonsters, hiddenGhosts, miniatureCatalogRevision, graphics.modelQuality]);
@@ -1227,7 +1263,10 @@ function MapStageInner({
   const readTetherPills=useMemo(()=>createTetherPillReader(),[]);
   const invalidateMiniatures=useCallback(()=>miniatureRef.current?.invalidate(),[]);
   const miniatureNameLabels = useStableCallback(() => [...readMiniatureNames(tokenLayerRef.current,
-    id=>selectedIds.includes(id)||hover?.token.id===id||orbTarget?.targetId===id), ...readSharedNames(sharedTokenLayerRef.current,()=>false), ...readTetherPills(spellAreaLayerRef.current)]);
+    id=>peekAll||selectedIds.includes(id)||hover?.token.id===id||id===activeTurnTokenId||orbTarget?.targetId===id||combatTargetId===id), ...readSharedNames(sharedTokenLayerRef.current,id=>peekAll||id===activeTurnTokenId), ...readTetherPills(spellAreaLayerRef.current)]);
+  useEffect(() => {
+    miniatureRef.current?.invalidate();
+  }, [activeTurnTokenId, labelDensity, hpDisplay, peekAll, hover?.token.id, combatTargetId]);
   const handleRenderedNames = useCallback((ids: ReadonlySet<string>) => {
     for(const layer of [tokenLayerRef.current, sharedTokenLayerRef.current]) {
       if(!layer)continue;
@@ -2159,7 +2198,8 @@ function MapStageInner({
           draft.target.x - draft.origin.x,
           draft.target.y - draft.origin.y,
         );
-        if (len >= grid * 0.25) {
+        const minDragPx = Math.min(grid * 0.25, Math.max(4, pxPerFoot * 2));
+        if (len >= minDragPx) {
           addMeasurement({
             kind: draft.kind,
             origin: draft.origin,
@@ -2424,6 +2464,75 @@ function MapStageInner({
   };
 
   const entities=tokenEntityIndex(snapshot),myClaimedCharId=snapshot.characters.find(ch=>ch.claimedBy===mySocketId)?.id;
+  const crowdLayouts = useMemo(() => {
+    const rayTargetSet = rayCast ? new Set(rayTargets) : null;
+    const areaTargetSet = areaCast ? new Set(areaTargets.map((tok) => tok.id)) : null;
+    const hoveredId = hover?.token.id ?? null;
+    const inputs = snapshot.tokens
+      .filter((t) => !doorTokenIds.has(t.id) && !hiddenGhosts.has(t.id))
+      .map((t) => {
+        const d = resolveToken(snapshot, t);
+        const isMini = !legacy && readyMiniatures.has(t.id) && miniatureIds.has(t.id);
+        const widthFt = isMini
+          ? miniatureBaseWidthFt(t, t.kind === 'monster' ? entities.monsters.get(t.refId) : { name: d.name })
+          : t.widthFt;
+        const hpFrac =
+          d.maxHp && d.maxHp > 0 && d.curHp !== undefined
+            ? Math.max(0, Math.min(1, d.curHp / d.maxHp))
+            : null;
+        return {
+          id: t.id,
+          x: t.x,
+          y: t.y,
+          radius: (widthFt * pxPerFoot) / 2,
+          name: d.name,
+          kind: t.kind,
+          revealTag: t.revealTag,
+          hpFrac,
+          hasInitiative: !t.partiallyRevealed && initiativeRank.has(t.id),
+          isDead: d.dead === true,
+          isObject: !!d.objectKind,
+          selected: !t.sharedSightOnly && !t.partiallyRevealed && (orbTarget ? orbTarget.targetId === t.id : selectedIdSet.has(t.id)),
+          hovered: hoveredId === t.id,
+          activeTurn: !t.partiallyRevealed && t.id === activeTurnTokenId,
+          targeted:
+            orbTarget?.targetId === t.id ||
+            combatTargetId === t.id ||
+            !!rayTargetSet?.has(t.id) ||
+            !!areaTargetSet?.has(t.id),
+        };
+      });
+    return computeTokenCrowdLayout(inputs, {
+      viewRotation: rotationDegrees,
+      labelDensity,
+      hpDisplay,
+      showHpNumbers: snapshot.role === 'dm',
+      peekAll,
+    });
+  }, [
+    snapshot,
+    entities,
+    doors,
+    hiddenGhosts,
+    legacy,
+    readyMiniatures,
+    miniatureIds,
+    pxPerFoot,
+    initiativeRank,
+    orbTarget,
+    selectedIdSet,
+    hover?.token.id,
+    activeTurnTokenId,
+    combatTargetId,
+    rayCast,
+    rayTargets,
+    areaCast,
+    areaTargets,
+    rotationDegrees,
+    labelDensity,
+    hpDisplay,
+    peekAll,
+  ]);
   const tokenLayerImg=legacy&&snapshot.tokenLayerRaster?renderedImage(snapshot.tokenLayerRaster.key):undefined;
   const renderTokens = (miniatures: boolean, shared = false) => snapshot.tokens.filter(t=>!!t.sharedSightOnly===shared).filter(t=>!doorTokenIds.has(t.id)).filter((token) =>
     !hiddenGhosts.has(token.id) && (!legacy && readyMiniatures.has(token.id) && miniatureIds.has(token.id)) === miniatures,
@@ -2452,6 +2561,8 @@ function MapStageInner({
         sharedDarkvision={!!t.sharedSightOnly&&!!snapshot.playerVision?.heavy}
         display={d}
         showHpNumbers={snapshot.role==='dm'}
+        hpDisplay={hpDisplay}
+        crowdLayout={crowdLayouts.get(t.id)}
         gridSizePx={grid}
         pxPerFoot={pxPerFoot}
         miniatureReady={miniatures}
@@ -2468,7 +2579,7 @@ function MapStageInner({
         }
         listening={!t.sharedSightOnly && !t.partiallyRevealed && !measureActive}
         selected={!t.sharedSightOnly && !t.partiallyRevealed && (orbTarget ? orbTarget.targetId === t.id : selectedIdSet.has(t.id))}
-        activeTurn={!t.sharedSightOnly && !t.partiallyRevealed && t.id === activeTurnTokenId}
+        activeTurn={!t.partiallyRevealed && t.id === activeTurnTokenId}
         initiativeRank={t.partiallyRevealed ? null : (initiativeRank.get(t.id) ?? null)}
         onSelect={handleTokenSelect}
         onActivate={handleTokenActivate}
@@ -2542,7 +2653,7 @@ function MapStageInner({
       {!map && <div className="stage-empty">No active map yet.</div>}
       {map && (
         <>
-          <MapToolbarPortals toolSlot={toolSlot} zoomBy={zoomBy} view={view} resetView={resetView} legacy={legacy} animateView={animateView} tilted={tilted} projectionState={projectionState} actualDm={actualDm} dmViewMode={dmViewMode} setDmViewMode={setDmViewMode} partyPreview={partyPreview} sourceSnapshot={sourceSnapshot} chooseTilt={chooseTilt} rotationLabel={rotationLabel} rotationDegrees={rotationDegrees} map={map} tiles={tiles} animateMap={animateMap} mapAnimation={mapAnimation} doors={doors} openDoorControls={openDoorControls} wallTool={wallTool} wallSnap={wallSnap} setWallSnap={setWallSnap} comfyOk={comfyOk} generateScenery={generateScenery} tilesMode={tilesMode} setTilesMode={setTilesMode} addTileFromFile={addTileFromFile} reorderMapImage={reorderMapImage} removeMapImage={removeMapImage} setTool={setTool} setRemoveMode={setRemoveMode} setScaleMode={setScaleMode} setMatchMode={setMatchMode} setAnnotate={setAnnotate} setFogBrush={setFogBrush} placeLight={placeLight} setMenu={setMenu} setWallTool={setWallTool} setWallAnchor={setWallAnchor} setWallPointer={setWallPointer} hideCursor={hideCursor} cancelWallStroke={cancelWallStroke} onSelectAllLights={selectAllLights} tool={tool} snap={snap} setSnap={setSnap} removeMode={removeMode} snapshot={snapshot} pendingRef={pendingRef} setDraft={setDraft} clearMeasurements={clearMeasurements} annotate={annotate} annoColor={annoColor} setAnnoColor={setAnnoColor} clearAnnotations={clearAnnotations} decalsLocked={decalsLocked} toggleDecalsLocked={toggleDecalsLocked} derivedFtPerSquare={derivedFtPerSquare} widthFt={widthFt} setWidthFt={setWidthFt} gridPx={gridPx} scaleMode={scaleMode} matchMode={matchMode} commitScaleFeet={commitScaleFeet} setMapGrid={setMapGrid} setScaleLine={setScaleLine} setScalePrompt={setScalePrompt} setVisionFog={setVisionFog} mapFogEnabled={mapFogEnabled} tokenFogEnabled={tokenFogEnabled} paintLayer={paintLayer} setPaintLayer={setPaintLayer} fogBrush={fogBrush} brushSize={brushSize} setBrushSize={setBrushSize} toggleLayer={toggleLayer} coverFog={coverFog} revealAll={revealAll} />
+          <MapToolbarPortals toolSlot={toolSlot} zoomBy={zoomBy} view={view} resetView={resetView} legacy={legacy} animateView={animateView} tilted={tilted} projectionState={projectionState} actualDm={actualDm} dmViewMode={dmViewMode} setDmViewMode={setDmViewMode} partyPreview={partyPreview} sourceSnapshot={sourceSnapshot} chooseTilt={chooseTilt} rotationLabel={rotationLabel} rotationDegrees={rotationDegrees} map={map} tiles={tiles} animateMap={animateMap} mapAnimation={mapAnimation} doors={doors} openDoorControls={openDoorControls} wallTool={wallTool} wallSnap={wallSnap} setWallSnap={setWallSnap} comfyOk={comfyOk} generateScenery={generateScenery} tilesMode={tilesMode} setTilesMode={setTilesMode} addTileFromFile={addTileFromFile} reorderMapImage={reorderMapImage} removeMapImage={removeMapImage} setTool={setTool} setRemoveMode={setRemoveMode} setScaleMode={setScaleMode} setMatchMode={setMatchMode} setAnnotate={setAnnotate} setFogBrush={setFogBrush} placeLight={placeLight} setMenu={setMenu} setWallTool={setWallTool} setWallAnchor={setWallAnchor} setWallPointer={setWallPointer} hideCursor={hideCursor} cancelWallStroke={cancelWallStroke} onSelectAllLights={selectAllLights} tool={tool} snap={snap} setSnap={setSnap} removeMode={removeMode} snapshot={snapshot} pendingRef={pendingRef} setDraft={setDraft} clearMeasurements={clearMeasurements} annotate={annotate} annoColor={annoColor} setAnnoColor={setAnnoColor} clearAnnotations={clearAnnotations} decalsLocked={decalsLocked} toggleDecalsLocked={toggleDecalsLocked} derivedFtPerSquare={derivedFtPerSquare} widthFt={widthFt} setWidthFt={setWidthFt} gridPx={gridPx} scaleMode={scaleMode} matchMode={matchMode} commitScaleFeet={commitScaleFeet} setMapGrid={setMapGrid} setScaleLine={setScaleLine} setScalePrompt={setScalePrompt} setVisionFog={setVisionFog} mapFogEnabled={mapFogEnabled} tokenFogEnabled={tokenFogEnabled} paintLayer={paintLayer} setPaintLayer={setPaintLayer} fogBrush={fogBrush} brushSize={brushSize} setBrushSize={setBrushSize} toggleLayer={toggleLayer} coverFog={coverFog} revealAll={revealAll} labelDensity={labelDensity} setLabelDensity={setLabelDensity} hpDisplay={hpDisplay} setHpDisplay={setHpDisplay} />
           <Stage
             ref={stageRef}
             key={`${dprKey}:${legacy}`}

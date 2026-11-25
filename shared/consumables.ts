@@ -2,7 +2,7 @@
 // potion can roll and apply itself instead of being manual bookkeeping.
 // Framework-free (the server re-parses every use — the client is never trusted)
 // and unit-tested.
-import { rollDice } from './dice.js';
+import { isValidDiceExpression } from './dice.js';
 
 /** What using a consumable does. `tempHp` sets temporary HP rather than healing. */
 export type ConsumableEffect = {
@@ -45,7 +45,7 @@ const BY_NAME: { match: RegExp; effect: ConsumableEffect }[] = [
 function cleanDice(raw: string): string | null {
   const expr = raw.replace(/\s+/g, '');
   if (!expr) return null;
-  return rollDice(expr) ? expr : null;
+  return isValidDiceExpression(expr) ? expr : null;
 }
 
 /**

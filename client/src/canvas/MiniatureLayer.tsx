@@ -610,8 +610,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const selectionPulse = reducedMotion.matches ? 0 : (Math.sin(seconds * Math.PI * 2 / 1.6) + 1) / 2;
         instance.selectionRing.scale.setScalar(token.definition.baseDiameter * (1 + selectionPulse * .045));
         instance.selectionRing.material.opacity = (reducedMotion.matches ? 1 : .65 + selectionPulse * .35) * (token.hidden ? .45 : 1);
-        instance.turnRing.scale.setScalar(token.definition.baseDiameter * (1 + pulse * 0.06));
-        instance.turnRing.material.opacity = (0.65 + pulse * 0.35) * (token.hidden ? 0.45 : 1);
+        instance.turnRing.scale.setScalar(token.definition.baseDiameter * (1 + pulse * 0.065));
+        instance.turnRing.material.opacity = (reducedMotion.matches ? 0.96 : 0.78 + pulse * 0.22) * (token.hidden ? 0.45 : 1);
         updateTargetRing(token, instance, seconds);
         if (animated) { instance.mixer?.setTime(seconds); applyFx(instance, seconds); }
         instance.lightning?.update(seconds, now / 1000, reducedMotion.matches, token.hidden);
@@ -757,12 +757,12 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         }
         const useComposite=!!visionComposite&&!!sightFrame&&(!needsGpuMemory||!!memoryTex||sightFrame.memory?.dataset.ready==='true');
         const gpuCompositeActive=!!props.personalVision&&useComposite&&(!!sightFrame.enabled||(!!sightFrame.grade&&!sightFrame.grade.daylight));
-        const sharedAnimated=visibleSharedIds.some(id=>{const inst=instances.get(id);return !!(inst?.mixer||inst?.fx||inst?.lightning);});
+        const sharedAnimated=visibleSharedIds.some(id=>{const inst=instances.get(id);return !!(inst?.mixer||inst?.fx||inst?.lightning||(!reducedMotion.matches&&tokenById.get(id)?.activeTurn));});
         // Static awareness need not redraw for weather or torch flicker. Camera,
         // pose, name, appearance and foreground occlusion changes invalidate it.
         const sharedKey=visibleSharedIds.length?JSON.stringify([sw,sh,gpuCompositeActive,camera.projectionMatrix.elements,camera.matrixWorld.elements,
           useStore.getState().snapshot?.map?.explorationMode,environment?.heavyDarkness,ambient.intensity,key.intensity,scene.environmentIntensity,ambient.color.toArray(),key.color.toArray(),
-          props.tokens.map(t=>{const i=instances.get(t.id);return [t.id,t.sharedSightOnly,t.tint,t.shade,t.mirrorImages,i?.root.visible,i?.root.position.toArray(),i?.root.rotation.y,i?.root.scale.x];}),
+          props.tokens.map(t=>{const i=instances.get(t.id);return [t.id,t.sharedSightOnly,t.activeTurn,t.tint,t.shade,t.mirrorImages,i?.root.visible,i?.root.position.toArray(),i?.root.rotation.y,i?.root.scale.x];}),
           labels.filter(l=>!l.alwaysVisible).map(l=>{if(!labelVersions.has(l.canvas))labelVersions.set(l.canvas,++nextLabelVersion);return [l.id,labelVersions.get(l.canvas),l.points,l.opacity];})]):'';
         const renderSharedPass=()=>{
           const layers=camera.layers.mask,autoClear=renderer.autoClear;
@@ -1076,6 +1076,10 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       ring.material.opacity=token.hidden ? .45 : 1;
     });
     instance.turnRing.visible = !!token.activeTurn;
+    instance.turnRing.scale.setScalar(token.definition.baseDiameter);
+    instance.turnRing.material.opacity = token.hidden ? 0.45 : 0.96;
+    if (token.sharedSightOnly) instance.turnRing.layers.enable(4);
+    else instance.turnRing.layers.disable(4);
     instance.selectionRing.visible = !!token.selected;
     instance.selectionRing.scale.setScalar(token.definition.baseDiameter);
     instance.selectionRing.material.opacity = token.hidden ? 0.45 : 1;
@@ -1364,11 +1368,12 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         // A ground-plane marker in the same depth buffer as the miniature:
         // body, base and weapons occlude its rear arc. It follows live drags
         // through the root group and never participates in pointer input.
-        const turnRing = new Mesh(new RingGeometry(0.58, 0.65, 96), new MeshBasicMaterial({
-          color: '#ffd21a', transparent: true, opacity: 0.85, depthWrite: false, toneMapped: false,
+        const turnRing = new Mesh(new RingGeometry(0.55, 0.72, 96), new MeshBasicMaterial({
+          color: '#ffd21a', transparent: true, opacity: 0.96, depthWrite: false, toneMapped: false,
         }));
+        turnRing.name = 'token-turn-ring';
         turnRing.rotation.x = -Math.PI / 2;
-        turnRing.position.y = 0.001;
+        turnRing.position.y = 0.0045;
         turnRing.renderOrder = -1;
         root.add(turnRing);
         const selectionRing = new Mesh(new RingGeometry(0.505, 0.55, 96), new MeshBasicMaterial({

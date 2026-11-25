@@ -11,6 +11,8 @@ import {
   updateCharacter,
 } from './sessions.js';
 import { SRD_ITEMS } from './items/srd.js';
+import { runLiveCommand } from './liveRolls.js';
+import type { LiveDiceFrame } from '../../shared/liveDiceTypes.js';
 
 const item = (name: string, note = '', extra: Record<string, unknown> = {}) => ({
   id: 'it1',
@@ -118,5 +120,50 @@ describe('useConsumable', () => {
     expect(useConsumable(s.id, 'Climber', ch.id, 'r1')).toBe(false);
     expect(getCharacter(ch.id)!.items).toHaveLength(1);
     expect(listRollLog(s.id)).toHaveLength(0);
+  });
+
+  it('presents a live potion roll once in-tray with its calculation and never triggers a second reveal', async () => {
+    const { sid, chId } = drinker('Restores 2d4 + 2 hit points.', 2);
+    const throws: { sides: number[]; label?: string }[] = [];
+    const frames: LiveDiceFrame[] = [];
+    await runLiveCommand(
+      () => {
+        expect(useConsumable(sid, 'Quaffer', chId, 'p1')).toBe(true);
+      },
+      (frame) => {
+        frames.push(frame);
+      },
+      { label: 'Potion of Healing', roller: 'Quaffer', className: 'Fighter', waitForPresentation: async () => {} },
+      async (sides, publish, meta, _seed, info) => {
+        throws.push({ sides, label: info?.label });
+        const faces = [4, 2];
+        publish({
+          id: 'potion-tray-1',
+          seq: 1,
+          elapsed: 1,
+          radius: 1,
+          poses: [],
+          sides,
+          sets: [0, 0],
+          critical: [false, false],
+          percentile: [null, null],
+          values: faces,
+          rerolls: [0, 0],
+          done: true,
+          label: info?.label ?? meta.label,
+          roller: meta.roller,
+          className: meta.className,
+        });
+        return faces;
+      },
+    );
+    expect(throws).toEqual([{ sides: [4, 4], label: 'Potion of Healing' }]);
+    expect(frames.some((f) => f.calculation?.title === 'Potion of Healing' && f.calculation.damage === 8)).toBe(true);
+    const c = getCharacter(chId)!;
+    expect(c.curHp).toBe(13); // 5 + 4 + 2 + 2
+    expect(c.items.find((i) => i.id === 'p1')!.qty).toBe(1);
+    const log = listRollLog(sid).at(-1)!;
+    expect(log.total).toBe(8);
+    expect(log.reveal?.presentedLive).toBe(true);
   });
 });

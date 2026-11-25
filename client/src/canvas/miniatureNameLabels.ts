@@ -15,7 +15,7 @@ export type MiniatureNameLabel = {
   coveredOpacity?: number;
 };
 
-const depthHudSelector='.token-label, .token-tracking-tag, .token-health';
+const depthHudSelector='.token-label, .token-tracking-tag, .token-health, .token-initiative-rank, .token-label-tether';
 
 /** GPU names/health replace only the scene paint; their Konva nodes retain typography
  * and transforms for texture generation. Opacity zero still makes Konva paint
@@ -70,7 +70,9 @@ export function createMiniatureNameReader() {
       }
       const poseKey=[node.x(),node.y(),hud.x(),hud.y(),hud.rotation()].join(':');
       if(entry!.poseKey!==poseKey){const b=entry!.bounds,matrix=inverse.copy().multiply(hud.getAbsoluteTransform());entry!.points=[{x:b.x,y:b.y},{x:b.x+b.width,y:b.y},{x:b.x,y:b.y+b.height},{x:b.x+b.width,y:b.y+b.height}].map(p=>matrix.point(p));entry!.poseKey=poseKey;}const points=entry!.points;
-      result.push({id,canvas:entry!.canvas,points,opacity:node.getAbsoluteOpacity(),emphasized:emphasized(id)});
+      const rawHudOpacity=node.getAttr('tokenHudOpacity');
+      const hudOpacity=typeof rawHudOpacity==='number'&&Number.isFinite(rawHudOpacity)?rawHudOpacity:1;
+      result.push({id,canvas:entry!.canvas,points,opacity:node.getAbsoluteOpacity()*hudOpacity,emphasized:emphasized(id)});
     }
     for(const id of cache.keys())if(!present.has(id))cache.delete(id);
     return result;

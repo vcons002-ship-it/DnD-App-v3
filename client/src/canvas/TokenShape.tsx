@@ -4,6 +4,7 @@ import {mirrorImageCount,MIRROR_IMAGE_SPREAD} from '../../../shared/linkedSpells
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {resolveWallMovement,wallCollisionRadiusFt,type MapWall} from '../../../shared/mapWalls';
 import {
+  Arc,
   Group,
   Circle,
   Rect,
@@ -25,6 +26,8 @@ import { moveDistanceFt, tokenMoveDuration, tokenMoveProgress } from './tokenMot
 import type {TokenPresentation} from './tokenPresentation';
 import {renderedImage} from '../lib/renderImages';
 import {invalidateRetainedToken} from './retainedTokenLayer';
+import {DEFAULT_CROWD_LAYOUT,type TokenCrowdLayout} from '../lib/tokenCrowdLayout';
+import type {TokenHpDisplay} from '../lib/tokenHudPreferences';
 
 const isImageIcon = (icon: string): boolean =>
   icon.startsWith('/') || icon.startsWith('http');
@@ -57,6 +60,8 @@ type Props = {
   sharedDarkvision?: boolean;
   display: TokenDisplay;
   showHpNumbers?: boolean;
+  hpDisplay?: TokenHpDisplay;
+  crowdLayout?: TokenCrowdLayout;
   gridSizePx: number;
   /** Pixels per foot (from the map scale) — sizes the token by its real width. */
   pxPerFoot: number;
@@ -113,6 +118,8 @@ function TokenShapeInner({
   sharedDarkvision=false,
   display,
   showHpNumbers=false,
+  hpDisplay='arc',
+  crowdLayout,
   gridSizePx,
   pxPerFoot,
   draggable,
@@ -455,11 +462,22 @@ function TokenShapeInner({
     };
   }, [activeTurn, turnRingR, miniatureReady,reducedEffects]);
 
+  const layout = crowdLayout ?? DEFAULT_CROWD_LAYOUT;
+  const effectiveShowHp = !isDead && hpFrac !== null && layout.showHp;
+  const useArc = hpDisplay === 'arc' && effectiveShowHp;
+  const effectiveShowExactHp =
+    effectiveShowHp &&
+    (crowdLayout ? layout.showExactHp : showHpNumbers) &&
+    display.curHp !== undefined &&
+    display.maxHp !== undefined;
+  const effectiveShowName = !isDead && layout.showName;
+  const effectiveShowInitiative = !isDead && initiativeRank !== null && layout.showInitiative;
   const preferredNameSize = Math.max(9.5, Math.min(11.5, Math.round(gridSizePx * 0.165)));
   const maxLabelWidth = Math.max(42, Math.min(74, Math.round(radius * 1.44)));
   const tagText = token.revealTag ?? '';
+  const sourceDisplayName = layout.shortName ?? display.name;
   const {nameWidth, tagWidth, labelFontSize, labelText} = useMemo(() => {
-    const text = display.name.replace(/\s+/g, ' ').trim();
+    const text = sourceDisplayName.replace(/\s+/g, ' ').trim();
     const full = tagText ? `${text} ${tagText}` : text;
     const fullWidth = measureTokenTextWidth(full, preferredNameSize);
     const available = Math.max(maxLabelWidth * 0.55, maxLabelWidth - 2);
@@ -475,21 +493,37 @@ function TokenShapeInner({
       labelFontSize: fittedSize,
       labelText: text,
     };
-  }, [display.name, tagText, preferredNameSize, maxLabelWidth]);
+  }, [sourceDisplayName, tagText, preferredNameSize, maxLabelWidth]);
   const roleBadgeR = Math.max(8.5, Math.min(11.5, radius * 0.3));
-  const showExactHp = !isDead && hpFrac !== null && showHpNumbers && display.curHp !== undefined && display.maxHp !== undefined;
-  const hpFontSize = Math.max(9, Math.min(10.5, Math.round(gridSizePx * 0.155)));
+  const hpFontSize = Math.max(8.5, Math.min(10.5, Math.round(gridSizePx * 0.15)));
   const hpBarWidth = Math.max(30, Math.round(radius * 1.44));
-  const hpBarHeight = showExactHp ? hpFontSize + 2 : 5;
+  const hpBarHeight = effectiveShowExactHp ? hpFontSize + 2 : layout.compactBar ? 4 : 5;
   const hpBarRadius = hpBarHeight / 2;
-  const hpBarY = radius + 2;
-  const hpText = showExactHp ? `${display.curHp}/${display.maxHp}` : null;
-  const labelY = hpFrac !== null ? hpBarY + hpBarHeight + 2 : radius + 4;
+  const arcInner = radius + 1.5;
+  const arcThickness = Math.max(3.2, Math.min(4.8, radius * 0.16));
+  const arcOuter = arcInner + arcThickness;
+  const arcMid = arcInner + arcThickness / 2;
+  const hpColor = hpFrac !== null ? (hpFrac > 0.5 ? '#39c46b' : hpFrac > 0.25 ? '#f5c518' : '#e23b3b') : '#39c46b';
+  const hpText = effectiveShowExactHp ? `${display.curHp}/${display.maxHp}` : null;
+  const labelHeight = labelFontSize * 1.18;
+  const flippedAbove = layout.placement === 'above';
+  const hpPillHeight = hpFontSize + 2;
+  const hpPillY = flippedAbove
+    ? -radius - labelHeight - hpPillHeight - 8 + layout.yNudge
+    : arcOuter + 1.5 + layout.yNudge;
+  const hpBarY = flippedAbove
+    ? -radius - labelHeight - hpBarHeight - 8 + layout.yNudge
+    : radius + 2 + layout.yNudge;
+  const labelY = flippedAbove
+    ? -radius - labelHeight - 6 + layout.yNudge
+    : useArc
+      ? (effectiveShowExactHp ? hpPillY + hpPillHeight + 1.5 : arcOuter + 2 + layout.yNudge)
+      : (effectiveShowHp ? hpBarY + hpBarHeight + 2 : radius + 4 + layout.yNudge);
   const nameY = labelY;
-  const deathSavesY = Math.ceil(labelY + labelFontSize * 1.15 + 2);
+  const deathSavesY = Math.ceil((flippedAbove ? radius + 6 : labelY + labelHeight + 2));
   const initiativeFontSize = Math.max(7.5, Math.min(9, labelFontSize * .78));
   const initiativeHeight = initiativeFontSize + 3;
-  const initiativeWidth = String(initiativeRank ?? '').length * initiativeFontSize * .6 + 4;
+  const initiativeWidth = String(initiativeRank ?? '').length * initiativeFontSize * .6 + (activeTurn ? 10 : 4);
   const initiativeX = -(nameWidth + tagWidth) / 2 - initiativeWidth - 2;
 
 
@@ -546,14 +580,14 @@ function TokenShapeInner({
     return <Circle radius={radius} {...p} />;
   };
 
-  const initiativeBadge=!isDead && initiativeRank !== null && (
+  const initiativeBadge=effectiveShowInitiative && (
         <Group name="token-initiative-rank" x={initiativeX} y={nameY + (labelFontSize - initiativeHeight) / 2} listening={false}>
-          <Rect width={initiativeWidth} height={initiativeHeight} cornerRadius={3} fill="#17130ee6" stroke="#c5a65a" strokeWidth={.8} />
+          <Rect width={initiativeWidth} height={initiativeHeight} cornerRadius={3} fill={activeTurn ? '#ffd21a' : '#17130ee6'} stroke={activeTurn ? '#fff7c2' : '#c5a65a'} strokeWidth={activeTurn ? 1.1 : .8} />
           <Text
-            text={String(initiativeRank)}
+            text={activeTurn ? `▸${initiativeRank}` : String(initiativeRank)}
             fontSize={initiativeFontSize}
             fontStyle="bold"
-            fill="#f2d58b"
+            fill={activeTurn ? '#141008' : '#f2d58b'}
             width={initiativeWidth}
             height={initiativeHeight}
             align="center"
@@ -562,11 +596,11 @@ function TokenShapeInner({
         </Group>
       );
   const serverBody=!miniatureReady&&!miniaturePending?renderedImage(serverSprite?.body.key):undefined;
-  const serverHud=serverBody?renderedImage(serverSprite?.hud.key):undefined;
+  const serverHud=serverBody&&!layout.useLiveHud?renderedImage(serverSprite?.hud.key):undefined;
   // External/vector portraits retain their own bitmap fallback. Prepared flat
   // art and GPU miniature labels already have independent reusable pixels.
   const conditionAppearanceKey = display.conditions.map(c => `${c.id}:${c.label}:${c.aura ?? ''}:${c.isConcentration ? 1 : 0}`).join('|');
-  const appearance = `${display.name}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${display.tempHp ?? ''}|${showHpNumbers ? 1 : 0}|${display.disposition ?? ''}|${display.dead ? 1 : 0}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${display.icon}|${conditionAppearanceKey}|${shape}|${radius}|${selected ? 1 : 0}|${isDead ? 1 : 0}|${activeTurn ? 1 : 0}|${initiativeRank ?? ''}|${hideAffinity ? 1 : 0}|${viewRotation}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${sharedDarkvision ? 1 : 0}|${token.revealTag ?? ''}|${token.combatRole ?? ''}|${(token.markLabels ?? []).join(',')}|${token.invisible ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`;
+  const appearance = `${sourceDisplayName}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${display.tempHp ?? ''}|${effectiveShowExactHp ? 1 : 0}|${hpDisplay}|${effectiveShowName ? 1 : 0}|${effectiveShowHp ? 1 : 0}|${layout.placement}|${layout.yNudge}|${layout.hudOpacity}|${display.disposition ?? ''}|${display.dead ? 1 : 0}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${display.icon}|${conditionAppearanceKey}|${shape}|${radius}|${selected ? 1 : 0}|${isDead ? 1 : 0}|${activeTurn ? 1 : 0}|${initiativeRank ?? ''}|${hideAffinity ? 1 : 0}|${viewRotation}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${sharedDarkvision ? 1 : 0}|${token.revealTag ?? ''}|${token.combatRole ?? ''}|${(token.markLabels ?? []).join(',')}|${token.invisible ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`;
   useLayoutEffect(()=>{
     const art=tokenArt.current;if(!art)return;
     art.clearCache();
@@ -591,7 +625,8 @@ function TokenShapeInner({
       miniatureReady={miniatureReady}
       miniaturePending={miniaturePending}
       tokenBodyVersion={`${token.kind}|${display.name}|${display.disposition ?? ''}|${display.dead ? 1 : 0}|${display.icon}|${conditionAppearanceKey}|${shape}|${radius}|${selected ? 1 : 0}|${isDead ? 1 : 0}|${activeTurn ? 1 : 0}|${hideAffinity ? 1 : 0}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${sharedDarkvision ? 1 : 0}|${token.invisible ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}|${iconImg ? 1 : 0}|${serverBody ? serverSprite?.body.key ?? '1' : '0'}`}
-      tokenLabelVersion={`${display.name}|${token.kind}|${isDead ? 1 : 0}|${radius}|${nameY}|${nameWidth}|${tagWidth}|${labelY}|${labelFontSize}|${hpBarWidth}|${hpBarHeight}|${token.revealTag ?? ''}|${hpFrac ?? ''}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${showHpNumbers ? 1 : 0}|${display.tempHp ?? ''}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`}
+      tokenHudOpacity={layout.hudOpacity}
+      tokenLabelVersion={`${sourceDisplayName}|${token.kind}|${isDead ? 1 : 0}|${radius}|${nameY}|${nameWidth}|${tagWidth}|${labelY}|${labelFontSize}|${hpDisplay}|${hpBarWidth}|${hpBarHeight}|${token.revealTag ?? ''}|${hpFrac ?? ''}|${display.curHp ?? ''}|${display.maxHp ?? ''}|${effectiveShowHp ? 1 : 0}|${effectiveShowExactHp ? 1 : 0}|${effectiveShowName ? 1 : 0}|${effectiveShowInitiative ? initiativeRank ?? '' : ''}|${activeTurn ? 1 : 0}|${layout.placement}|${layout.yNudge}|${display.tempHp ?? ''}|${display.deathSaves?.successes ?? ''}:${display.deathSaves?.failures ?? ''}|${miniatureReady ? 1 : 0}|${miniaturePending ? 1 : 0}|${token.partiallyRevealed ? 1 : 0}|${token.sharedSightOnly ? 1 : 0}`}
       x={presentation?.position(token.id)?.x??token.x}
       y={presentation?.position(token.id)?.y??token.y}
       listening={listening}
@@ -717,7 +752,7 @@ function TokenShapeInner({
       )}
       </>}
       </Group>
-      <Group name="token-upright-hud" rotation={-viewRotation} visible={!token.partiallyRevealed}>
+      <Group name="token-upright-hud" rotation={-viewRotation} visible={!token.partiallyRevealed} opacity={layout.hudOpacity}>
       {serverHud&&serverSprite?<><KonvaImage name="server-token-hud" image={serverHud} x={serverSprite.hud.x} y={serverSprite.hud.y} width={serverSprite.hud.width/serverSprite.hud.scale} height={serverSprite.hud.height/serverSprite.hud.scale}/>{display.disposition&&!miniatureReady&&!miniaturePending&&!token.sharedSightOnly&&!token.partiallyRevealed&&hideAffinity&&<Circle name="token-affinity-dot" visible={false} x={-radius*0.8} y={-radius*0.8} radius={Math.max(5,radius*0.16)} fill={DISPOSITION_HEX[display.disposition]} stroke="#000" strokeWidth={1}/>}{!isDead&&token.kind==='pc'&&(display.curHp??1)<=0&&display.deathSaves&&<Group name="token-death-saves" x={0} y={deathSavesY}><Rect x={-28} y={0} width={56} height={11} cornerRadius={5.5} fill="#0b0d12eb" stroke={display.deathSaves.successes>=3?'#39c46b':'#b89650'} strokeWidth={1}/>{[0,1,2].map((i)=>(<Circle key={`s${i}`} x={-19+i*7} y={5.5} radius={2.6} fill={i<display.deathSaves!.successes?'#39c46b':'#1b2420'} stroke={i<display.deathSaves!.successes?'#b7f7cc':'#39c46b88'} strokeWidth={1}/>))}<Rect x={-0.5} y={2} width={1} height={7} fill="#ffffff44"/>{[0,1,2].map((i)=>(<Circle key={`f${i}`} x={5+i*7} y={5.5} radius={2.6} fill={i<display.deathSaves!.failures?'#e23b3b':'#291a1c'} stroke={i<display.deathSaves!.failures?'#ffb3b3':'#e23b3b88'} strokeWidth={1}/>))}</Group>}{isDead&&!miniatureReady&&!miniaturePending&&<Text text="💀" fontSize={radius*1.4} width={radius*2} height={radius*2} offsetX={radius} offsetY={radius} align="center" verticalAlign="middle"/>}{!isDead&&token.kind!=='pc'&&token.combatRole&&!miniatureReady&&!miniaturePending&&<Group name="token-combat-role" x={-radius*0.82} y={radius*0.46}><Text text={COMBAT_ROLE_ICON[token.combatRole]} fontSize={roleBadgeR*1.3} width={roleBadgeR*2} height={roleBadgeR*2} offsetX={roleBadgeR} offsetY={roleBadgeR} align="center" verticalAlign="middle"/></Group>}</>:<>
           {!miniatureReady && !token.sharedSightOnly && token.markLabels?.some(label=>/hunter.s mark/i.test(label)) && <Group y={-radius-22} listening={false} name="hunters-mark-sigil">
         <RegularPolygon sides={4} radius={14} stroke="#ffe7a1" strokeWidth={2} fill="#352106" rotation={0} shadowColor="#ffa62b" shadowBlur={8}/>
@@ -737,21 +772,108 @@ function TokenShapeInner({
           verticalAlign="middle"
         />
       )}
-      {/* Unified HP bar right under the base for both PC and monster tokens. */}
-      {!isDead && hpFrac !== null && (
+      {/* Unified HP display: sleek front Base-Rim Arc (default) or classic horizontal bar. */}
+      {effectiveShowHp && hpFrac !== null && (
+        useArc ? (
+          <Group name="token-health" x={0} y={0}>
+            <Arc
+              innerRadius={arcInner}
+              outerRadius={arcOuter}
+              angle={160}
+              rotation={10}
+              fill="#0b0d12d4"
+              stroke="#000000cc"
+              strokeWidth={0.8}
+              listening={false}
+            />
+            <Shape
+              x={-hpBarWidth / 2}
+              y={0}
+              width={hpBarWidth * hpFrac}
+              height={1}
+              listening={false}
+              sceneFunc={(ctx) => {
+                const cx = hpBarWidth / 2;
+                const endRad = (170 * Math.PI) / 180;
+                if (hpFrac > 0.001) {
+                  const startRad = ((170 - 160 * hpFrac) * Math.PI) / 180;
+                  ctx.beginPath();
+                  ctx.arc(cx, 0, arcMid, startRad, endRad, false);
+                  ctx.strokeStyle = hpColor;
+                  ctx.lineWidth = arcThickness;
+                  ctx.lineCap = 'round';
+                  ctx.stroke();
+                }
+                if (display.tempHp && display.tempHp > 0 && display.maxHp && display.maxHp > 0) {
+                  const tempSweep = Math.min(40, Math.max(12, (display.tempHp / display.maxHp) * 160));
+                  ctx.beginPath();
+                  ctx.arc(cx, 0, arcOuter + 1.6, ((170 - tempSweep) * Math.PI) / 180, endRad, false);
+                  ctx.strokeStyle = '#5ce1ff';
+                  ctx.lineWidth = 2.2;
+                  ctx.lineCap = 'round';
+                  ctx.stroke();
+                }
+              }}
+            />
+            {hpText !== null && (() => {
+              const pillText = display.tempHp && display.tempHp > 0 ? `${hpText} +${display.tempHp}` : hpText;
+              const pillW = Math.max(30, Math.ceil(measureTokenTextWidth(pillText, hpFontSize) + 8));
+              return (
+                <Group x={-pillW / 2} y={hpPillY}>
+                  <Rect
+                    width={pillW}
+                    height={hpPillHeight}
+                    cornerRadius={hpPillHeight / 2}
+                    fill="#0b0d12d9"
+                    stroke={activeTurn ? '#ffd21a' : '#000000cc'}
+                    strokeWidth={activeTurn ? 1 : 0.75}
+                  />
+                  <Text
+                    name="token-hp-value"
+                    text={pillText}
+                    fontSize={hpFontSize}
+                    fontStyle="bold"
+                    fill={display.tempHp && display.tempHp > 0 ? '#d9f8ff' : '#ffffff'}
+                    stroke="#000"
+                    strokeWidth={1.8}
+                    fillAfterStrokeEnabled
+                    lineJoin="round"
+                    align="center"
+                    verticalAlign="middle"
+                    wrap="none"
+                    width={pillW}
+                    height={hpPillHeight}
+                  />
+                </Group>
+              );
+            })()}
+            {token.kind === 'pc' && (display.curHp ?? 1) <= 0 && display.deathSaves && (
+              <Group name="token-death-saves" x={0} y={deathSavesY}>
+                <Rect x={-28} y={0} width={56} height={11} cornerRadius={5.5} fill="#0b0d12eb" stroke={display.deathSaves.successes >= 3 ? '#39c46b' : '#b89650'} strokeWidth={1} />
+                {[0, 1, 2].map((i) => (
+                  <Circle key={`s${i}`} x={-19 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.successes ? '#39c46b' : '#1b2420'} stroke={i < display.deathSaves!.successes ? '#b7f7cc' : '#39c46b88'} strokeWidth={1} />
+                ))}
+                <Rect x={-0.5} y={2} width={1} height={7} fill="#ffffff44" />
+                {[0, 1, 2].map((i) => (
+                  <Circle key={`f${i}`} x={5 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.failures ? '#e23b3b' : '#291a1c'} stroke={i < display.deathSaves!.failures ? '#ffb3b3' : '#e23b3b88'} strokeWidth={1} />
+                ))}
+              </Group>
+            )}
+          </Group>
+        ) : (
         <Group name="token-health" y={hpBarY} offsetX={hpBarWidth / 2}>
           <Rect
             width={hpBarWidth}
             height={hpBarHeight}
-            fill={showExactHp ? '#0b0d12d9' : '#0009'}
-            stroke={showExactHp ? '#000b' : undefined}
-            strokeWidth={showExactHp ? 0.75 : 0}
+            fill={effectiveShowExactHp ? '#0b0d12d9' : '#0009'}
+            stroke={effectiveShowExactHp ? '#000b' : undefined}
+            strokeWidth={effectiveShowExactHp ? 0.75 : 0}
             cornerRadius={hpBarRadius}
           />
           <Rect
             width={hpBarWidth * hpFrac}
             height={hpBarHeight}
-            fill={hpFrac > 0.5 ? '#39c46b' : hpFrac > 0.25 ? '#f5c518' : '#e23b3b'}
+            fill={hpColor}
             cornerRadius={hpBarRadius}
           />
           {hpText !== null && (() => {
@@ -808,8 +930,23 @@ function TokenShapeInner({
             </Group>
           )}
         </Group>
+        )
       )}
-      {!isDead && <Text
+      {effectiveShowName && Math.abs(layout.yNudge) >= 4 && (
+        <Line
+          name="token-label-tether"
+          points={[
+            0,
+            flippedAbove ? -radius - 2 : (useArc ? arcOuter + 1 : radius + 2),
+            0,
+            flippedAbove ? nameY + labelHeight + 1 : (effectiveShowExactHp && useArc ? hpPillY - 1 : nameY - 1),
+          ]}
+          stroke={activeTurn ? '#ffd21aaa' : '#ffffff66'}
+          strokeWidth={1.2}
+          listening={false}
+        />
+      )}
+      {effectiveShowName && <Text
         stroke="#000"
         strokeWidth={2.5}
         fillAfterStrokeEnabled
@@ -817,20 +954,21 @@ function TokenShapeInner({
         name="token-label"
         text={labelText}
         fontSize={labelFontSize}
-        fill={token.sharedSightOnly ? '#8a919e' : '#fff'}
+        fontStyle={activeTurn ? 'bold' : 'normal'}
+        fill={activeTurn ? '#ffe88a' : token.sharedSightOnly ? '#8a919e' : '#fff'}
         opacity={token.sharedSightOnly ? 0.75 : 1}
         align="center"
         width={nameWidth}
         offsetX={(nameWidth + tagWidth) / 2}
         wrap="none"
         ellipsis
-        height={labelFontSize * 1.18}
+        height={labelHeight}
         y={nameY}
       />}
-      {!isDead && token.revealTag && (
+      {effectiveShowName && token.revealTag && (
         <Group name="token-tracking-tag" x={(nameWidth - tagWidth) / 2} y={labelY}>
           <Text text={token.revealTag} x={2} width={tagWidth - 2} align="left" fontSize={labelFontSize}
-            fontStyle="bold" fill={token.sharedSightOnly ? '#8a919e' : '#fff'} opacity={token.sharedSightOnly ? 0.75 : 1} stroke="#000" strokeWidth={2.5} fillAfterStrokeEnabled />
+            fontStyle="bold" fill={activeTurn ? '#ffe88a' : token.sharedSightOnly ? '#8a919e' : '#fff'} opacity={token.sharedSightOnly ? 0.75 : 1} stroke="#000" strokeWidth={2.5} fillAfterStrokeEnabled />
         </Group>
       )}
       {/* Disposition dot (top-left): green friendly · amber neutral · red enemy. */}
@@ -1001,6 +1139,19 @@ export const TokenShape = memo(
     p.presentation === n.presentation &&
     p.sharedDarkvision === n.sharedDarkvision &&
     p.showHpNumbers === n.showHpNumbers &&
+    p.hpDisplay === n.hpDisplay &&
+    p.crowdLayout?.inCrowd === n.crowdLayout?.inCrowd &&
+    p.crowdLayout?.focused === n.crowdLayout?.focused &&
+    p.crowdLayout?.hudOpacity === n.crowdLayout?.hudOpacity &&
+    p.crowdLayout?.placement === n.crowdLayout?.placement &&
+    p.crowdLayout?.yNudge === n.crowdLayout?.yNudge &&
+    p.crowdLayout?.shortName === n.crowdLayout?.shortName &&
+    p.crowdLayout?.showName === n.crowdLayout?.showName &&
+    p.crowdLayout?.showHp === n.crowdLayout?.showHp &&
+    p.crowdLayout?.showExactHp === n.crowdLayout?.showExactHp &&
+    p.crowdLayout?.showInitiative === n.crowdLayout?.showInitiative &&
+    p.crowdLayout?.compactBar === n.crowdLayout?.compactBar &&
+    p.crowdLayout?.useLiveHud === n.crowdLayout?.useLiveHud &&
     sameTokenDisplay(p.display, n.display) &&
     p.gridSizePx === n.gridSizePx &&
     p.pxPerFoot === n.pxPerFoot &&

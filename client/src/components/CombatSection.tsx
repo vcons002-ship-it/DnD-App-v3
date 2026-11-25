@@ -31,6 +31,18 @@ import { activeHasteCondition, spellActionBlock, spellActionBlockMessage } from 
 import {ActiveSpellActions} from './ActiveSpellActions';
 import { HasteExtraAction } from './HasteExtraAction';
 
+// Persist turn economy toggles across token re-selection within the same turn/round.
+const turnEconomyCache = new Map<string, { action: boolean; bonus: boolean }>();
+const reactionEconomyCache = new Map<string, boolean>();
+let lastEconomySessionRound = '';
+
+function pruneEconomyCaches(sessionRound: string) {
+  if (lastEconomySessionRound === sessionRound) return;
+  lastEconomySessionRound = sessionRound;
+  turnEconomyCache.clear();
+  reactionEconomyCache.clear();
+}
+
 /**
  * The right panel's unified "Combat" section: ONE target dropdown plus every
  * rollable action the attacker has against it — weapon attacks (with the
@@ -72,42 +84,55 @@ export function CombatSection({
     if (!haste || haste.combatEffect?.hasteActionUsed || !ownTurn) setHasteAttackArmed(false);
   }, [haste?.id, haste?.combatEffect?.hasteActionUsed, ownTurn, caster.id]);
 
-  // Soft Turn Economy Pips: reset each initiative turn, auto-mark on ownTurn rolls,
-  // and allow click-to-toggle without ever hard-locking buttons.
-  const turnEconomyKey = `${snapshot.round}:${snapshot.activeTurnTokenId ?? ''}:${attacker.id}`;
-  const [economyState, setEconomyState] = useState<{
-    key: string;
-    action: boolean;
-    bonus: boolean;
-    reactionOverride?: boolean;
-  }>({ key: turnEconomyKey, action: false, bonus: false });
+  // Soft Turn Economy Pips: reset each initiative turn (reactions per round),
+  // persist across token re-selection, auto-mark on rolls, softly dim matching
+  // actions below, and allow click-to-toggle without ever hard-locking buttons.
+  const sessionRoundKey = `${snapshot.sessionCode}:${snapshot.round}`;
+  pruneEconomyCaches(sessionRoundKey);
+  const turnEconomyKey = `${sessionRoundKey}:${snapshot.activeTurnTokenId ?? ''}:${attacker.id}`;
+  const reactionEconomyKey = `${sessionRoundKey}:${attacker.id}`;
+  const [, setEconomyTick] = useState(0);
+  const readActionBonus = () => turnEconomyCache.get(turnEconomyKey) ?? { action: false, bonus: false };
+  const updateTurnEconomy = (patch: Partial<{ action: boolean; bonus: boolean }>) => {
+    const cur = readActionBonus();
+    turnEconomyCache.set(turnEconomyKey, { ...cur, ...patch });
+    setEconomyTick((n) => n + 1);
+  };
+  const updateReactionEconomy = (spent: boolean) => {
+    reactionEconomyCache.set(reactionEconomyKey, spent);
+    setEconomyTick((n) => n + 1);
+  };
+  // Reset cached reaction override when this creature starts its own new turn.
+  const lastOwnTurnKey = useRef('');
   useEffect(() => {
-    setEconomyState((prev) =>
-      prev.key === turnEconomyKey ? prev : { key: turnEconomyKey, action: false, bonus: false },
-    );
-  }, [turnEconomyKey]);
+    if (!ownTurn || snapshot.round <= 0) return;
+    if (lastOwnTurnKey.current && lastOwnTurnKey.current !== turnEconomyKey) {
+      reactionEconomyCache.delete(reactionEconomyKey);
+      setEconomyTick((n) => n + 1);
+    }
+    lastOwnTurnKey.current = turnEconomyKey;
+  }, [ownTurn, snapshot.round, turnEconomyKey, reactionEconomyKey]);
   const seenActionNonce = useRef(lastActionUsed?.n ?? 0);
   useEffect(() => {
     if (!lastActionUsed || lastActionUsed.n === seenActionNonce.current) return;
     seenActionNonce.current = lastActionUsed.n;
     if (lastActionUsed.refId !== attacker.refId || snapshot.round <= 0) return;
     if (lastActionUsed.cost === 'reaction') {
-      setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, reactionOverride: true }));
+      updateReactionEconomy(true);
     } else if (ownTurn && lastActionUsed.cost === 'action') {
-      setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, action: true }));
+      updateTurnEconomy({ action: true });
     } else if (ownTurn && lastActionUsed.cost === 'bonus') {
-      setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, bonus: true }));
+      updateTurnEconomy({ bonus: true });
     }
-  }, [lastActionUsed, attacker.refId, snapshot.round, ownTurn, turnEconomyKey]);
+  }, [lastActionUsed, attacker.refId, snapshot.round, ownTurn, turnEconomyKey, reactionEconomyKey]);
   const serverReactionSpent = caster.conditions.some((c) =>
     /^(reaction spent|riposte spent)$/i.test(c.label.trim()),
   );
-  const actionSpent = economyState.key === turnEconomyKey ? economyState.action : false;
-  const bonusSpent = economyState.key === turnEconomyKey ? economyState.bonus : false;
-  const reactionSpent =
-    economyState.key === turnEconomyKey && economyState.reactionOverride !== undefined
-      ? economyState.reactionOverride
-      : serverReactionSpent;
+  const cachedTurn = readActionBonus();
+  const actionSpent = cachedTurn.action;
+  const bonusSpent = cachedTurn.bonus;
+  const reactionOverride = reactionEconomyCache.get(reactionEconomyKey);
+  const reactionSpent = reactionOverride !== undefined ? reactionOverride : serverReactionSpent;
 
   // Advantage/disadvantage is the attacking creature's shared per-entity toggle
   // (set in the skills panel for a PC, or the creature panel for a monster);
@@ -148,8 +173,8 @@ export function CombatSection({
     });
     if (ownTurn && snapshot.round > 0) {
       const cost = inferAbilityActionCost(a);
-      if (cost === 'bonus') setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, bonus: true }));
-      else if (cost === 'action') setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, action: true }));
+      if (cost === 'bonus') updateTurnEconomy({ bonus: true });
+      else if (cost === 'action') updateTurnEconomy({ action: true });
     }
     notify(spectral?'Spiritual Weapon requested beside the selected target. Use its active spell attack; on later turns drag it up to 20 ft.':`Summon requested — drag ${a.summon?.name?.trim() || a.name} into place after it appears.`);
   };
@@ -404,32 +429,35 @@ export function CombatSection({
 
   const economyBar = snapshot.round > 0 && (
     <div className="turn-economy-bar" role="group" aria-label="Turn economy tracker">
+      <span className="turn-economy-label" title="Track this turn's Action, Bonus Action, and Reaction. Clicking softly dims matching buttons below without locking them.">
+        Turn
+      </span>
       <button
         type="button"
         className={`economy-pip is-action${actionSpent ? ' spent' : ''}`}
         aria-pressed={actionSpent}
-        title="Action — soft reminder (click to toggle; never locks buttons)"
-        onClick={() => setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, action: !actionSpent }))}
+        title={actionSpent ? 'Action marked used — click to reset to available' : 'Action available — click to mark used (softly dims Action buttons below)'}
+        onClick={() => updateTurnEconomy({ action: !actionSpent })}
       >
-        ● Action{actionSpent ? ' ✓' : ''}
+        {actionSpent ? '✕ Action used' : '● Action'}
       </button>
       <button
         type="button"
         className={`economy-pip is-bonus${bonusSpent ? ' spent' : ''}`}
         aria-pressed={bonusSpent}
-        title="Bonus Action — soft reminder (click to toggle; never locks buttons)"
-        onClick={() => setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, bonus: !bonusSpent }))}
+        title={bonusSpent ? 'Bonus Action marked used — click to reset to available' : 'Bonus Action available — click to mark used (softly dims Bonus buttons below)'}
+        onClick={() => updateTurnEconomy({ bonus: !bonusSpent })}
       >
-        ⚡ Bonus{bonusSpent ? ' ✓' : ''}
+        {bonusSpent ? '✕ Bonus used' : '⚡ Bonus'}
       </button>
       <button
         type="button"
         className={`economy-pip is-reaction${reactionSpent ? ' spent' : ''}`}
         aria-pressed={reactionSpent}
-        title="Reaction — soft reminder (click to toggle; never locks buttons)"
-        onClick={() => setEconomyState((prev) => ({ ...prev, key: turnEconomyKey, reactionOverride: !reactionSpent }))}
+        title={reactionSpent ? 'Reaction marked used — click to reset to available' : 'Reaction available — click to mark used (softly dims Reaction buttons below)'}
+        onClick={() => updateReactionEconomy(!reactionSpent)}
       >
-        ↩ Reaction{reactionSpent ? ' ✓' : ''}
+        {reactionSpent ? '✕ Reaction used' : '↩ Reaction'}
       </button>
     </div>
   );
@@ -489,25 +517,35 @@ export function CombatSection({
     </>
   );
 
+  const weaponEconomySpent =
+    snapshot.round > 0 &&
+    !hasteAttackArmed &&
+    (offhand ? bonusSpent : actionSpent);
+
   const weaponButtons = (
-    <WeaponButtons
-      weapons={weapons}
-      twoHanded={twoHanded}
-      disabled={!effectiveTargetId || !!actionBlock}
-      distanceFt={targetDistanceFt}
-      onHoverWeapon={setHoveredWeaponIdx}
-      onAttack={(i) =>
-        combatAttack({
-          attackerTokenId: attacker.id,
-          targetTokenId: effectiveTargetId,
-          weaponIndex: i,
-          advantage: consumeAdvantage(attacker.refId),
-          offhand: !hasteAttackArmed && offhand || undefined,
-          twoHanded: twoHanded || undefined,
-          hasteAction: hasteAttackArmed || undefined,
-        })
-      }
-    />
+    <div
+      className={weaponEconomySpent ? 'is-economy-spent' : undefined}
+      title={weaponEconomySpent ? `${offhand ? 'Bonus Action' : 'Action'} marked used this turn — click anyway to roll` : undefined}
+    >
+      <WeaponButtons
+        weapons={weapons}
+        twoHanded={twoHanded}
+        disabled={!effectiveTargetId || !!actionBlock}
+        distanceFt={targetDistanceFt}
+        onHoverWeapon={setHoveredWeaponIdx}
+        onAttack={(i) =>
+          combatAttack({
+            attackerTokenId: attacker.id,
+            targetTokenId: effectiveTargetId,
+            weaponIndex: i,
+            advantage: consumeAdvantage(attacker.refId),
+            offhand: !hasteAttackArmed && offhand || undefined,
+            twoHanded: twoHanded || undefined,
+            hasteAction: hasteAttackArmed || undefined,
+          })
+        }
+      />
+    </div>
   );
 
   return (
@@ -612,10 +650,18 @@ export function CombatSection({
         targetTokenId={effectiveTargetId || undefined}
         healTargetId={effectiveHealId || undefined}
         buffTargetId={effectiveBuffId}
+        spentEconomy={snapshot.round > 0 ? { action: actionSpent, bonus: bonusSpent, reaction: reactionSpent } : undefined}
       />
       {summonAbilities.length > 0 && (
         <div className="combat-summon-row">
-          {summonAbilities.map((a) => isCastSpell(a)?<div key={a.id} className="combat-ability-row is-spell"><SpellCastControl ability={a} caster={caster} kind={kind}/></div>:<div key={a.id} className={`combat-ability-row is-spell${upcastable(a) ? ' has-options' : ''}`}>
+          {summonAbilities.map((a) => {
+            const summonCost = inferAbilityActionCost(a);
+            const summonEconomySpent =
+              snapshot.round > 0 &&
+              ((summonCost === 'bonus' && bonusSpent) ||
+                (summonCost === 'reaction' && reactionSpent) ||
+                ((summonCost === 'action' || summonCost === 'other') && actionSpent));
+            return isCastSpell(a)?<div key={a.id} className={`combat-ability-row is-spell${summonEconomySpent ? ' is-economy-spent' : ''}`}><SpellCastControl ability={a} caster={caster} kind={kind}/></div>:<div key={a.id} className={`combat-ability-row is-spell${upcastable(a) ? ' has-options' : ''}${summonEconomySpent ? ' is-economy-spent' : ''}`}>
             <button
               className="btn tiny attack-row spell-attack-btn"
               disabled={!!actionBlock}
@@ -634,7 +680,7 @@ export function CombatSection({
               const slot = spellSlotOptions(caster, spellBaseLevel(a)).find(option => option.pool === pool && option.remaining > 0);
               if (slot) setSummonLevels(values => ({ ...values, [a.id]: slot.level }));
             }}><option value="spellcasting">Spellcasting</option><option value="pact">Pact Magic</option></select>}
-          </div>)}
+          </div>; })}
         </div>
       )}
       {/* The compact player HUD already owns the editable resource rack.

@@ -9,6 +9,7 @@ import { checkReveal, diceReveal } from '../../shared/rollReveal.js';
 import { abilityMod, proficiencyBonus, SKILLS, signed } from '../../shared/skills.js';
 import type { Character, Monster, RollEntry, SheetAbility, Token } from '../../shared/types.js';
 import { applyDamageNoted, hidesMods, resolve, saveBonus, strFeatureAdv } from './combatHelpers.js';
+import { presentLiveCalculation } from './liveRollContext.js';
 import { hexDisadvantage } from './marks.js';
 import {
   addRollLog,
@@ -471,9 +472,11 @@ export function useConsumable(
   if (!item || item.qty <= 0) return false;
   const effect = parseConsumable(item);
   if (!effect) return false;
-  const result = rollDice(effect.dice);
+  const result = withDiceMetadata({ label: item.name }, () => rollDice(effect.dice));
   if (!result) return false;
   const val = Math.max(0, result.total);
+  const reveal = diceReveal(c.name, result, item.name);
+  const presentedLive = presentLiveCalculation(`consumable:${characterId}:${itemId}`, reveal);
 
   let hpNote: RollEntry['hpNote'];
   let outcome: string;
@@ -503,7 +506,7 @@ export function useConsumable(
     total: val,
     detail: `Used ${item.name}: ${result.detail} — ${outcome}`,
     hpNote,
-    reveal: diceReveal(c.name, result, item.name),
+    reveal: presentedLive ? { ...reveal, presentedLive } : reveal,
   });
   return true;
 }
