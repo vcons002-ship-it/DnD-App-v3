@@ -34,7 +34,8 @@ import {
   Vector2, Color, AnimationMixer, ACESFilmicToneMapping, BufferGeometry, DirectionalLight, Group, HemisphereLight,
   Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OrthographicCamera, PMREMGenerator, RingGeometry,
   Box3, Sprite, SpriteMaterial, CanvasTexture, PlaneGeometry, Scene, SkinnedMesh, Texture, DepthTexture, Matrix4, Vector3, WebGLRenderer, PerspectiveCamera, WebGLRenderTarget,
-  DataTexture, NearestFilter, RGBAFormat, ShaderMaterial, HalfFloatType,
+  DataTexture, NearestFilter, RGBAFormat, ShaderMaterial, HalfFloatType, SRGBColorSpace,
+  AdditiveBlending, CylinderGeometry, DoubleSide, Raycaster, Ray,
 } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -72,6 +73,27 @@ import {
   perspectiveDistance,
   type BattlefieldView,
 } from './miniatureProjection';
+import {
+  conditionRingBand3D,
+  computeTokenRingLayout3D,
+  TURN_PULSE_MAX_SCALE,
+} from '../lib/tokenRings';
+import {
+  ON_BASE_HP_PLANE_SIZE,
+  drawOnBaseHpArc,
+  measureBaseRimHeight,
+} from './miniatureBaseHpArc';
+import {
+  TURN_COMPASS_PLANE_SIZE,
+  TURN_SPOTLIGHT_PLANE_SIZE,
+  drawTurnBeamTexture,
+  drawTurnCompassRing,
+  drawTurnSpotlight,
+} from './miniatureStatusMarkers';
+import {
+  buildMiniaturePickHull,
+  intersectPickHullLocal,
+} from './miniaturePickHull';
 
 export type MiniatureToken = {
   sharedSightOnly?: boolean;
@@ -86,10 +108,13 @@ export type MiniatureToken = {
   shade?: [number, number, number];
   activeTurn?: boolean;
   selected?: boolean;
+  hovered?: boolean;
   conditionColors?: string[];
   hunterMarked?: boolean;
   mirrorImages?:number;
   combatRole?: CombatRole | null;
+  hpFrac?: number | null;
+  tempHpFrac?: number;
   definition: MiniatureDefinition;
 };
 const EMPTY_WALLS:import('../../../shared/mapWalls').MapWall[]=[];
@@ -137,6 +162,8 @@ type Props = {
 export type MiniatureLayerHandle = {
   headPosition: (id:string)=>{x:number;y:number}|undefined;
   screenBounds: (id:string)=>{left:number;top:number;right:number;bottom:number}|undefined;
+  /** Return visible 3D miniature token IDs pierced by the camera ray at (clientX, clientY), sorted front-to-back. */
+  pickTokensAt: (clientX: number, clientY: number) => string[];
   setGridHot: (hot: boolean) => void;
   setFootprints: (marks:FootprintMark[])=>void;
   spellCast: (tokenIds: string[]) => void;
@@ -155,11 +182,15 @@ type Instance = {
   appearanceKey?:string;
   activeOutline?:string;
   outlineHidden?:boolean;
+  outlineBold?:boolean;
+  outlineHovered?:boolean;
+  outlineActiveTurn?:boolean;
   outlineInitialized?:boolean;
   modelId:string;
   mirrors:ReturnType<typeof createMirrorImages>;
   baseDiameter:number;
   outlineBounds:Box3;
+  pickHull:Box3[];
   lanternAnchor:Vector3;
   torchLighting:ReturnType<typeof createMiniatureTorchLighting>;
   measureBody: () => MistBody;
@@ -170,8 +201,17 @@ type Instance = {
   depthBodyProxy?:Mesh;
   depthWeaponProxy?:Mesh;
   updateTransform:()=>boolean;
-  turnRing: Mesh<RingGeometry, MeshBasicMaterial>;
-  selectionRing: Mesh<RingGeometry, MeshBasicMaterial>;
+  turnRingGroup: Group;
+  turnRing: Mesh<PlaneGeometry, MeshBasicMaterial>;
+  turnRingTexture: CanvasTexture;
+  turnSpotlight: Mesh<PlaneGeometry, MeshBasicMaterial>;
+  turnSpotlightTexture: CanvasTexture;
+  turnBeam: Mesh<CylinderGeometry, MeshBasicMaterial>;
+  turnBeamTexture: CanvasTexture;
+  turnBeamBaseRadius?: number;
+  wasActiveTurn?: boolean;
+  turnFlareStart?: number;
+  turnRingKey?: string;
   targetRing: Group;
   targetInnerRing: Mesh<RingGeometry, MeshBasicMaterial>;
   targetOuterRing: Group;
@@ -182,6 +222,10 @@ type Instance = {
   badgeMesh: Mesh<PlaneGeometry,MeshBasicMaterial>;
   badgeTexture: CanvasTexture;
   badgeRole?: CombatRole | null;
+  hpArcGroup: Group;
+  hpArcMesh: Mesh<PlaneGeometry, MeshBasicMaterial>;
+  hpArcTexture: CanvasTexture;
+  hpArcKey?: string;
   url: string;
   materials: Material[];
   originalColors: Array<Color | null>;
@@ -264,14 +308,22 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   const localShadows=createLocalLightShadows(renderer,()=>invalidate());
   // Shared screen mask measures local silhouette thickness for every model,
   // including weapons merged into a body mesh. Layer 1 contains opaque bodies only.
+  const pickRaycaster = new Raycaster();
+  const pickNdc = new Vector2();
+  const pickBox = new Box3();
+  const pickInvMatrix = new Matrix4();
+  const pickLocalRay = new Ray();
+  const pickHitPoint = new Vector3();
   const outlineMask = new WebGLRenderTarget(1, 1);
+  const highlightMask = new WebGLRenderTarget(1, 1);
+  let lastHighlightMaskKey = '';
   const bodyMaskCache=createMiniatureMaskCache();
   const bodySlots=new Map<string,number>();
   outlineMask.depthTexture = new DepthTexture(1, 1);
   const outlineProjectionInverse = {value: new Matrix4()};
   const maskMaterial = createMiniatureVisibilityMaterial();
   const outlineResolution = {value: new Vector2(1, 1)};
-  const silhouette=createMiniatureSilhouetteOutline(outlineMask.texture,outlineMask.depthTexture,outlineProjectionInverse);
+  const silhouette=createMiniatureSilhouetteOutline(outlineMask.texture,outlineMask.depthTexture,outlineProjectionInverse,highlightMask.texture);
 
   const names=createMiniatureNameLayer(scene,outlineMask.depthTexture,outlineResolution);
   const legacyVision=new URLSearchParams(location.search).get('legacyVisionLift')==='1'||!initial.visionCoverFrame;
@@ -338,7 +390,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   } catch (error) {
     spellImpacts.dispose();spellColor.dispose();localShadows.dispose();gpuMapFloor.dispose();
     sharedCanvas.remove();sharedDepth.dispose();sharedTarget.dispose();sharedQuadGeometry.dispose();sharedCompositeMaterial.dispose();names.dispose();visionLift?.dispose();visionComposite?.dispose();
-    silhouette.dispose();outlineMask.dispose(); maskMaterial.dispose();
+    silhouette.dispose();outlineMask.dispose();highlightMask.dispose(); maskMaterial.dispose();
     environment?.dispose();
     renderer.dispose();
     renderer.forceContextLoss();
@@ -404,7 +456,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
   let tokenById=new Map(initial.tokens.map(t=>[t.id,t]));
   const batches=createMiniatureBatches(scene);
   const batchingEnabled=new URLSearchParams(location.search).get('batching')!=='off';
-  const measurements=new Map<string,{anchor:Vector3;body?:MistBody}>();
+  const measurements=new Map<string,{anchor:Vector3;body?:MistBody;baseRimY:number;pickHull:Box3[]}>();
   const playerAssetUrls=new Set<string>();
   const backgroundAssetUrls=new Set<string>();
   const warmedAssets=new Set<string>();
@@ -568,11 +620,12 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     const environment=props.environmentPreview;
     const atmosphereAnimated = !!environment?.enabled && !reducedMotion.matches &&
       ((environment.particles&&environment.particles!=='none'&&(environment.particleIntensity??.5)>0&&(environment.particleScale??1)>0) || (environment.groundWetness??0)>0 || environment.lightning || (environment.mist&&environment.mistQuality!=='off') || (!!environment.weather && environment.weather!=='none' && (environment.weatherIntensity??.5)>0) || !!environment.lights?.some(light=>light.flicker));
-    const animated = !reducedMotion.matches && [...instances.entries()].some(([id, instance]) => instance.mixer || instance.fx || instance.lightning || instance.turnRing.visible || instance.selectionRing.visible || isTokenTargeted(id));
+    const animated = !reducedMotion.matches && [...instances.entries()].some(([id, instance]) => instance.mixer || instance.fx || instance.lightning || instance.turnRing.visible || instance.turnFlareStart !== undefined || isTokenTargeted(id));
     const settling = moves.size > 0;
     const casting = [...instances.entries()].filter(([, instance]) => instance.lightning?.active(now / 1000));
+    const flaring = [...instances.values()].some((instance) => instance.turnFlareStart !== undefined);
     const fading=[...opacityFades.values()].some(f=>now-f.start<850);
-    const fastAnimation=settling||casting.length>0||spellImpacts.active||fading||localShadows.pending;
+    const fastAnimation=settling||casting.length>0||flaring||spellImpacts.active||fading||localShadows.pending;
     setHostData('castingTokenIds',casting.map(([id]) => id).join(','));
     // Paint the preference change even inside the frame cap: this may be the
     // last frame once animation stops, so no flash or moving effect may linger.
@@ -605,13 +658,39 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         instance.root.position.set(position.x, 0, position.y);
         instance.root.rotation.y = position.facing ?? 0;
         instance.updateTransform();
-    instance.combatBadge.rotation.y=(props.rotationDegrees??0)*Math.PI/180-instance.root.rotation.y;
-        const pulse = reducedMotion.matches ? 0 : (Math.sin(seconds / 0.28) + 1) / 2;
-        const selectionPulse = reducedMotion.matches ? 0 : (Math.sin(seconds * Math.PI * 2 / 1.6) + 1) / 2;
-        instance.selectionRing.scale.setScalar(token.definition.baseDiameter * (1 + selectionPulse * .045));
-        instance.selectionRing.material.opacity = (reducedMotion.matches ? 1 : .65 + selectionPulse * .35) * (token.hidden ? .45 : 1);
-        instance.turnRing.scale.setScalar(token.definition.baseDiameter * (1 + pulse * 0.065));
-        instance.turnRing.material.opacity = (reducedMotion.matches ? 0.96 : 0.78 + pulse * 0.22) * (token.hidden ? 0.45 : 1);
+    const screenYaw = (props.rotationDegrees??0)*Math.PI/180-instance.root.rotation.y;
+    instance.combatBadge.rotation.y=screenYaw;
+    instance.hpArcGroup.rotation.y=screenYaw;
+    if (token.activeTurn || instance.turnFlareStart !== undefined) {
+      instance.turnRingGroup.rotation.y=screenYaw;
+      const pulse = reducedMotion.matches ? 0 : (Math.sin(seconds / 0.28) + 1) / 2;
+      instance.turnRingGroup.scale.setScalar(token.definition.baseDiameter * (1 + pulse * (TURN_PULSE_MAX_SCALE - 1)));
+      instance.turnRing.material.opacity = (reducedMotion.matches ? 0.96 : 0.84 + pulse * 0.16) * (token.hidden ? 0.45 : 1);
+      let flareEnv = 0;
+      if (instance.turnFlareStart !== undefined) {
+        const flareAge = (now - instance.turnFlareStart) / 1000;
+        if (reducedMotion.matches || !token.activeTurn || flareAge >= 1.65) {
+          instance.turnFlareStart = undefined;
+          instance.turnBeam.visible = false;
+        } else {
+          if (flareAge < 0.18) {
+            const t = flareAge / 0.18;
+            flareEnv = t * (2 - t);
+          } else if (flareAge < 0.55) {
+            flareEnv = 1;
+          } else {
+            const u = (flareAge - 0.55) / 1.1;
+            flareEnv = (1 - u) * (1 - u);
+          }
+          instance.turnBeam.visible = flareEnv > 0.01;
+          instance.turnBeam.material.opacity = flareEnv * (token.hidden ? 0.45 : 0.96);
+          const radial = (instance.turnBeamBaseRadius ?? token.definition.baseDiameter) * (1 + (1 - flareEnv) * 0.12);
+          instance.turnBeam.scale.set(radial, token.definition.baseDiameter, radial);
+          instance.turnBeam.rotation.y = seconds * 0.55;
+        }
+      }
+      instance.turnSpotlight.material.opacity = Math.min(1, (reducedMotion.matches ? 0.95 : 0.78 + pulse * 0.22 + flareEnv * 0.3)) * (token.hidden ? 0.45 : 1);
+    }
         updateTargetRing(token, instance, seconds);
         if (animated) { instance.mixer?.setTime(seconds); applyFx(instance, seconds); }
         instance.lightning?.update(seconds, now / 1000, reducedMotion.matches, token.hidden);
@@ -833,17 +912,24 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         recordGraphicsFrame(now,!!(animated||atmosphereAnimated||settling||casting.length||spellImpacts.active),loading.size>0);
         const outlineRects:OutlineRect[]=[];
         const outlinedIds:string[]=[];
+        const screenEntries:Array<{id:string;rect:OutlineRect;highlighted:boolean;instance:Instance}>=[];
+        let hasBoldOutline=false;
         for(const [id,instance] of instances){
-          const token=tokenById.get(id);if(!instance.root.visible||!instance.activeOutline||!token||token.invisible||token.sharedSightOnly)continue;
-          outlinedIds.push(id);
+          const token=tokenById.get(id);if(!instance.root.visible||!token||token.invisible||token.sharedSightOnly)continue;
           const b=instance.outlineBounds;let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
           for(const x of [b.min.x,b.max.x])for(const y of [b.min.y,b.max.y])for(const z of [b.min.z,b.max.z]){
             const p=new Vector3(x,y,z).applyMatrix4(instance.root.matrixWorld).project(camera);
             const sx=(p.x+1)*props.width/2,sy=(p.y+1)*props.height/2;
             minX=Math.min(minX,sx);maxX=Math.max(maxX,sx);minY=Math.min(minY,sy);maxY=Math.max(maxY,sy);
           }
-          const x=Math.max(0,Math.floor(minX)-4),y=Math.max(0,Math.floor(minY)-4);
-          outlineRects.push({x,y,width:Math.min(props.width,Math.ceil(maxX)+4)-x,height:Math.min(props.height,Math.ceil(maxY)+4)-y});
+          const x=Math.max(0,Math.floor(minX)-6),y=Math.max(0,Math.floor(minY)-6);
+          const rect:OutlineRect={x,y,width:Math.min(props.width,Math.ceil(maxX)+6)-x,height:Math.min(props.height,Math.ceil(maxY)+6)-y};
+          const highlighted=!!instance.activeOutline&&!token.partiallyRevealed&&Boolean(token.selected||token.hovered);
+          screenEntries.push({id,rect,highlighted,instance});
+          if(!instance.activeOutline)continue;
+          outlinedIds.push(id);
+          if(instance.outlineBold)hasBoldOutline=true;
+          outlineRects.push(rect);
         }
         setHostData('outlineMethod','silhouette');setHostData('outlineShells','0');setHostData('outlinedTokenIds',outlinedIds.join(','));
         battlefield?.renderMist(renderer,camera);
@@ -852,8 +938,71 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         archArtStudy?.draw(useStore.getState().snapshot?.map?.id,view,props.width,props.height,props.tiltDegrees,props.rotationDegrees??0,
           [...instances.values()].map(i=>({x:i.root.position.x,y:i.root.position.z,visible:i.root.visible})),battlefield?.lighting,!!props.environmentPreview?.heavyDarkness);
         timing?.end();visionTiming?.begin();
+        // Only run the X-ray highlight mask pass when a Selected or Hovered token
+        // actually overlaps another visible token on screen, and cache its pixels
+        // across idle animation frames while the camera and highlighted pose are unchanged.
+        const overlappedHighlights = screenEntries.filter((entry) => {
+          if (!entry.highlighted) return false;
+          const a = entry.rect;
+          return screenEntries.some((other) => {
+            if (other.id === entry.id) return false;
+            const b = other.rect;
+            return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+          });
+        });
+        const hasHighlightXray = overlappedHighlights.length > 0;
+        if (hasHighlightXray) {
+          const anyAnimatedHighlight = overlappedHighlights.some((e) => !!e.instance.mixer);
+          const highlightKey = anyAnimatedHighlight
+            ? ''
+            : `${currentCameraKey()}:${outlineResolution.value.x}x${outlineResolution.value.y}:` +
+              overlappedHighlights
+                .map((e) => {
+                  const p = e.instance.root.position;
+                  return `${e.id}@${p.x.toFixed(2)},${p.z.toFixed(2)},${e.instance.root.rotation.y.toFixed(3)},${e.instance.activeOutline ?? ''},${e.instance.outlineHovered ? 1 : 0}`;
+                })
+                .join(';');
+          if (!highlightKey || highlightKey !== lastHighlightMaskKey) {
+            const xraySaved: Array<[Mesh, number]> = [];
+            for (const { instance } of overlappedHighlights) {
+              if (instance.depthBodyProxy || instance.depthWeaponProxy) {
+                if (instance.depthBodyProxy) { xraySaved.push([instance.depthBodyProxy, instance.depthBodyProxy.layers.mask]); instance.depthBodyProxy.layers.enable(9); }
+                if (instance.depthWeaponProxy) { xraySaved.push([instance.depthWeaponProxy, instance.depthWeaponProxy.layers.mask]); instance.depthWeaponProxy.layers.enable(9); }
+              } else {
+                instance.root.children[0]?.traverse((node) => {
+                  if (node instanceof Mesh && node.userData.outlineId > 0) {
+                    xraySaved.push([node, node.layers.mask]);
+                    node.layers.enable(9);
+                  }
+                });
+              }
+            }
+            if (xraySaved.length > 0) {
+              const savedLayers = camera.layers.mask;
+              const savedShadow = renderer.shadowMap.needsUpdate;
+              const savedOverride = scene.overrideMaterial;
+              try {
+                renderer.shadowMap.needsUpdate = false;
+                camera.layers.set(9);
+                scene.overrideMaterial = maskMaterial;
+                renderer.setRenderTarget(highlightMask);
+                renderer.clear();
+                renderer.render(scene, camera);
+                lastHighlightMaskKey = highlightKey;
+              } finally {
+                for (const [mesh, mask] of xraySaved) mesh.layers.mask = mask;
+                renderer.shadowMap.needsUpdate = savedShadow;
+                scene.overrideMaterial = savedOverride;
+                camera.layers.mask = savedLayers;
+                renderer.setRenderTarget(null);
+              }
+            }
+          }
+        } else {
+          lastHighlightMaskKey = '';
+        }
         visionLift?.render(false);
-        silhouette.render(renderer,outlineRects);
+        silhouette.render(renderer,outlineRects,hasHighlightXray,hasBoldOutline);
         // Flashing spells light terrain in sight. Outside magical darkness all
         // of it is visible already, so only heavy darkness needs the reach.
         const flashes=useComposite&&sightFrame?.enabled&&sightFrame.grade?.heavy?impactLights.filter(l=>l.revealsTerrain).map(l=>({source:l,
@@ -978,12 +1127,18 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     instance.torchLighting.dispose();
     instance.lightning?.dispose();
     instance.badgeMesh.geometry.dispose();instance.badgeMesh.material.dispose();instance.badgeTexture.dispose();
+    instance.hpArcMesh.geometry.dispose();instance.hpArcMesh.material.dispose();instance.hpArcTexture.dispose();
     instance.hunterMark.material.map?.dispose();instance.hunterMark.material.dispose();
     instance.conditionRings.forEach(ring=>{ring.geometry.dispose();ring.material.dispose();});
-    instance.selectionRing.geometry.dispose();
-    instance.selectionRing.material.dispose();
     instance.turnRing.geometry.dispose();
     instance.turnRing.material.dispose();
+    instance.turnRingTexture.dispose();
+    instance.turnSpotlight.geometry.dispose();
+    instance.turnSpotlight.material.dispose();
+    instance.turnSpotlightTexture.dispose();
+    instance.turnBeam.geometry.dispose();
+    instance.turnBeam.material.dispose();
+    instance.turnBeamTexture.dispose();
     instance.targetInnerRing.geometry.dispose();
     instance.targetInnerRing.material.dispose();
     instance.targetOuterRing.children.forEach((seg) => { if (seg instanceof Mesh) seg.geometry.dispose(); });
@@ -1002,14 +1157,31 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     moves.delete(id);
   };
   const applyOutline = (token: MiniatureToken, instance: Instance, position: { x: number; y: number }, force = false) => {
-    const activeOutline = !token.invisible && !token.sharedSightOnly && !token.partiallyRevealed && token.outline && (props.isOutlineVisibleAt?.(token.id, position.x, position.y) ?? true) ? token.outline : undefined;
+    const visibleHighlight = !token.invisible && !token.sharedSightOnly && !token.partiallyRevealed;
+    const outlineSelected = !!token.selected && visibleHighlight;
+    const outlineActiveTurn = !outlineSelected && !!token.activeTurn && visibleHighlight;
+    const outlineHovered = !outlineSelected && !!token.hovered && visibleHighlight;
+    const outlineBold = outlineSelected || outlineActiveTurn || outlineHovered;
+    const baseOutline = visibleHighlight && token.outline && (props.isOutlineVisibleAt?.(token.id, position.x, position.y) ?? true) ? token.outline : undefined;
+    // Priority: Selected (pure white) > Active Turn (warm gold, brightened softly when hovered) > Hover (soft silver-white) > Disposition.
+    const activeOutline = outlineSelected
+      ? '#ffffff'
+      : outlineActiveTurn
+        ? (outlineHovered ? '#fff2b2' : '#ffd21a')
+        : outlineHovered
+          ? '#e8f1ff'
+          : baseOutline;
     const outlineHidden = !!token.hidden;
-    if (!force && instance.outlineInitialized && instance.activeOutline === activeOutline && instance.outlineHidden === outlineHidden) return;
+    if (!force && instance.outlineInitialized && instance.activeOutline === activeOutline && instance.outlineHidden === outlineHidden && instance.outlineBold === outlineBold && instance.outlineHovered === outlineHovered && instance.outlineActiveTurn === outlineActiveTurn) return;
     instance.outlineInitialized = true;
     instance.activeOutline = activeOutline;
     instance.outlineHidden = outlineHidden;
-    const outlineId = silhouette.slot(activeOutline, outlineHidden ? 0.45 : 1);
-    const weaponOutlineId = outlineId ? silhouette.slot(activeOutline, (outlineHidden ? 0.45 : 1) * 0.25) : 0;
+    instance.outlineBold = outlineBold;
+    instance.outlineHovered = outlineHovered;
+    instance.outlineActiveTurn = outlineActiveTurn;
+    const baseAlpha = (outlineHidden ? 0.45 : 1) * (outlineSelected ? 1 : outlineActiveTurn ? 0.96 : outlineHovered ? 0.54 : 1);
+    const outlineId = silhouette.slot(activeOutline, baseAlpha, outlineBold);
+    const weaponOutlineId = outlineId ? silhouette.slot(activeOutline, baseAlpha * (outlineSelected ? 0.78 : outlineActiveTurn ? 0.72 : outlineHovered ? 0.55 : 0.25), outlineBold) : 0;
     const model = instance.root.children[0];
     model?.traverse(node => { if (node instanceof Mesh) node.userData.outlineId = node.userData.outlineWeapon ? weaponOutlineId : outlineId; });
     if (instance.depthBodyProxy) instance.depthBodyProxy.userData.outlineId = outlineId;
@@ -1058,6 +1230,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     instance.updateTransform();
     instance.mirrors.update(token.mirrorImages??0,camera,!!token.sharedSightOnly,token.hidden);
         instance.combatBadge.rotation.y=(props.rotationDegrees??0)*Math.PI/180-instance.root.rotation.y;
+    instance.hpArcGroup.rotation.y=(props.rotationDegrees??0)*Math.PI/180-instance.root.rotation.y;
     instance.combatBadge.visible=!!token.combatRole;
     instance.combatBadge.scale.setScalar(token.definition.baseDiameter);
     instance.badgeMesh.material.opacity=token.hidden ? .45 : 1;
@@ -1069,20 +1242,69 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       c.fillText(COMBAT_ROLE_ICON[token.combatRole],64,66);
       instance.badgeTexture.needsUpdate=true;instance.badgeRole=token.combatRole;
     }
+    const showHpArc = token.hpFrac !== null && token.hpFrac !== undefined;
+    instance.hpArcGroup.visible = showHpArc;
+    instance.hpArcGroup.scale.setScalar(token.definition.baseDiameter);
+    instance.hpArcMesh.material.opacity = token.hidden ? 0.45 : 1;
+    if (token.sharedSightOnly) instance.hpArcMesh.layers.enable(4);
+    else instance.hpArcMesh.layers.disable(4);
+    if (showHpArc) {
+      const tempFrac = token.tempHpFrac ?? 0;
+      const hpKey = `${token.hpFrac!.toFixed(4)}|${tempFrac.toFixed(4)}`;
+      if (instance.hpArcKey !== hpKey) {
+        drawOnBaseHpArc(instance.hpArcTexture.image as HTMLCanvasElement, token.hpFrac!, tempFrac);
+        instance.hpArcTexture.needsUpdate = true;
+        instance.hpArcKey = hpKey;
+      }
+    }
+    const condCount = Math.min(3, token.conditionColors?.length ?? 0);
+    // Selection uses the bold white full-body silhouette outline rather than a ground ring,
+    // so Active Turn always hugs tightly outside the inner condition rings.
+    const ringLayout = computeTokenRingLayout3D(condCount, false);
     instance.conditionRings.forEach((ring,i)=>{
       const color=token.conditionColors?.[i];ring.visible=!!color;
       if(color)ring.material.color.set(color);
       ring.scale.setScalar(token.definition.baseDiameter);
       ring.material.opacity=token.hidden ? .45 : 1;
     });
+    const placeYaw = (props.rotationDegrees ?? 0) * Math.PI / 180 - instance.root.rotation.y;
+    instance.turnRingGroup.rotation.y = placeYaw;
+    const turnKey = `${ringLayout.turn.inner.toFixed(4)}:${ringLayout.turn.outer.toFixed(4)}`;
+    if (instance.turnRingKey !== turnKey) {
+      drawTurnCompassRing(instance.turnRingTexture.image as HTMLCanvasElement, ringLayout.turn);
+      instance.turnRingTexture.needsUpdate = true;
+      drawTurnSpotlight(instance.turnSpotlightTexture.image as HTMLCanvasElement, ringLayout.turn.outer);
+      instance.turnSpotlightTexture.needsUpdate = true;
+      instance.turnRingKey = turnKey;
+    }
     instance.turnRing.visible = !!token.activeTurn;
-    instance.turnRing.scale.setScalar(token.definition.baseDiameter);
+    instance.turnRingGroup.scale.setScalar(token.definition.baseDiameter);
     instance.turnRing.material.opacity = token.hidden ? 0.45 : 0.96;
-    if (token.sharedSightOnly) instance.turnRing.layers.enable(4);
-    else instance.turnRing.layers.disable(4);
-    instance.selectionRing.visible = !!token.selected;
-    instance.selectionRing.scale.setScalar(token.definition.baseDiameter);
-    instance.selectionRing.material.opacity = token.hidden ? 0.45 : 1;
+    instance.turnSpotlight.visible = !!token.activeTurn;
+    instance.turnSpotlight.scale.setScalar(token.definition.baseDiameter);
+    instance.turnSpotlight.material.opacity = token.hidden ? 0.45 : 0.95;
+    const isNowActiveTurn = !!token.activeTurn;
+    if (instance.wasActiveTurn === false && isNowActiveTurn && !reducedMotion.matches) {
+      instance.turnFlareStart = performance.now();
+    } else if (!isNowActiveTurn) {
+      instance.turnFlareStart = undefined;
+      instance.turnBeam.visible = false;
+    }
+    instance.wasActiveTurn = isNowActiveTurn;
+    const beamRadialScale = token.definition.baseDiameter * (ringLayout.turn.outer / 0.62);
+    instance.turnBeamBaseRadius = beamRadialScale;
+    instance.turnBeam.scale.set(beamRadialScale, token.definition.baseDiameter, beamRadialScale);
+    instance.turnBeam.position.y = token.definition.baseDiameter * 1.6;
+    if (instance.turnFlareStart === undefined) instance.turnBeam.visible = false;
+    if (token.sharedSightOnly) {
+      instance.turnRing.layers.enable(4);
+      instance.turnSpotlight.layers.enable(4);
+      instance.turnBeam.layers.enable(4);
+    } else {
+      instance.turnRing.layers.disable(4);
+      instance.turnSpotlight.layers.disable(4);
+      instance.turnBeam.layers.disable(4);
+    }
     updateTargetRing(token, instance, (performance.now() - started) / 1000);
     applyOutline(token, instance, position, appearanceChanged);
     if(appearanceChanged){
@@ -1276,6 +1498,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       renderer.setSize(Math.max(1, next.width), Math.max(1, next.height), false);
       renderer.getDrawingBufferSize(outlineResolution.value);
       outlineMask.setSize(outlineResolution.value.x, outlineResolution.value.y);
+      highlightMask.setSize(outlineResolution.value.x, outlineResolution.value.y);
     }
     gpuMapFloor.update(next.floorTerrain, next.graphics?.maxMapTextureResolutionPx ?? 8192);
     if(next.environmentPreview){
@@ -1361,30 +1584,68 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         if(!hasVisibleAnimation)retainMiniatureLocalTransforms(model);
         centered.matrixAutoUpdate=false;
         let measured=measurements.get(definition.url);
-        if(!measured){measured={anchor:measureLanternAnchor(model,definition)};measurements.set(definition.url,measured);}
+        if(!measured){measured={anchor:measureLanternAnchor(model,definition),baseRimY:measureBaseRimHeight(model,definition),pickHull:buildMiniaturePickHull(model,definition)};measurements.set(definition.url,measured);}
         const lanternAnchor=measured.anchor.clone(),torchLighting=createMiniatureTorchLighting(localShadows.uniforms);
         const measureBody=()=>measured!.body??(measured!.body=measureMistBody(gltf.scene,definition));
         centered.add(model); root.add(centered);
         // A ground-plane marker in the same depth buffer as the miniature:
         // body, base and weapons occlude its rear arc. It follows live drags
         // through the root group and never participates in pointer input.
-        const turnRing = new Mesh(new RingGeometry(0.55, 0.72, 96), new MeshBasicMaterial({
-          color: '#ffd21a', transparent: true, opacity: 0.96, depthWrite: false, toneMapped: false,
-        }));
+        const maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        const turnSpotlightCanvas = document.createElement('canvas');
+        turnSpotlightCanvas.width = turnSpotlightCanvas.height = 256;
+        const turnSpotlightTexture = new CanvasTexture(turnSpotlightCanvas);
+        turnSpotlightTexture.colorSpace = SRGBColorSpace;
+        const turnSpotlight = new Mesh(
+          new PlaneGeometry(TURN_SPOTLIGHT_PLANE_SIZE, TURN_SPOTLIGHT_PLANE_SIZE),
+          new MeshBasicMaterial({
+            map: turnSpotlightTexture, transparent: true, opacity: 0.95, blending: AdditiveBlending, depthTest: true, depthWrite: false, toneMapped: false,
+          }),
+        );
+        turnSpotlight.name = 'token-turn-spotlight';
+        turnSpotlight.rotation.x = -Math.PI / 2;
+        turnSpotlight.position.y = 0.0022;
+        turnSpotlight.renderOrder = -2;
+        turnSpotlight.visible = false;
+        root.add(turnSpotlight);
+
+        const turnBeamCanvas = document.createElement('canvas');
+        turnBeamCanvas.width = 256;
+        turnBeamCanvas.height = 128;
+        drawTurnBeamTexture(turnBeamCanvas);
+        const turnBeamTexture = new CanvasTexture(turnBeamCanvas);
+        turnBeamTexture.colorSpace = SRGBColorSpace;
+        const turnBeam = new Mesh(
+          new CylinderGeometry(0.28, 0.62, 3.2, 48, 1, true),
+          new MeshBasicMaterial({
+            map: turnBeamTexture, transparent: true, opacity: 0.96, blending: AdditiveBlending, side: DoubleSide, depthTest: true, depthWrite: false, toneMapped: false,
+          }),
+        );
+        turnBeam.name = 'token-turn-beam';
+        turnBeam.position.y = 1.6;
+        turnBeam.renderOrder = 12;
+        turnBeam.visible = false;
+        root.add(turnBeam);
+
+        const turnRingCanvas = document.createElement('canvas');
+        turnRingCanvas.width = turnRingCanvas.height = 512;
+        const turnRingTexture = new CanvasTexture(turnRingCanvas);
+        turnRingTexture.colorSpace = SRGBColorSpace;
+        turnRingTexture.anisotropy = maxAniso;
+        const turnRing = new Mesh(
+          new PlaneGeometry(TURN_COMPASS_PLANE_SIZE, TURN_COMPASS_PLANE_SIZE),
+          new MeshBasicMaterial({
+            map: turnRingTexture, transparent: true, opacity: 0.96, depthTest: true, depthWrite: false, toneMapped: false,
+          }),
+        );
         turnRing.name = 'token-turn-ring';
         turnRing.rotation.x = -Math.PI / 2;
-        turnRing.position.y = 0.0045;
+        turnRing.position.y = 0.0042;
         turnRing.renderOrder = -1;
-        root.add(turnRing);
-        const selectionRing = new Mesh(new RingGeometry(0.505, 0.55, 96), new MeshBasicMaterial({
-          color: '#ffffff', transparent: true, depthWrite: false, toneMapped: false,
-        }));
-        selectionRing.name = 'token-selection-ring';
-        selectionRing.rotation.x = -Math.PI / 2;
-        selectionRing.position.y = 0.002;
-        selectionRing.renderOrder = -1;
-        selectionRing.renderOrder = -2;
-        root.add(selectionRing);
+        turnRing.visible = false;
+        const turnRingGroup = new Group();
+        turnRingGroup.add(turnRing);
+        root.add(turnRingGroup);
         const targetInnerRing = new Mesh(
           new RingGeometry(0.502, 0.548, 96),
           new MeshBasicMaterial({ color: '#e23b3b', transparent: true, opacity: 0.92, depthTest: true, depthWrite: false, toneMapped: false }),
@@ -1409,8 +1670,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         // Condition markers share the miniatures' depth buffer, so every
         // foreground body/base occludes them, including neighboring figures.
         const conditionRings=Array.from({length:3},(_,i)=>{
-          const radius=.57+i*.075;
-          const ring=new Mesh(new RingGeometry(radius-.025,radius+.025,96),new MeshBasicMaterial({transparent:true,depthTest:true,depthWrite:false,toneMapped:false}));
+          const band=conditionRingBand3D(i);
+          const ring=new Mesh(new RingGeometry(band.inner,band.outer,96),new MeshBasicMaterial({transparent:true,depthTest:true,depthWrite:false,toneMapped:false}));
           ring.name='token-condition-ring';ring.rotation.x=-Math.PI/2;
           ring.position.y=.003;ring.renderOrder=-1;root.add(ring);return ring;
         });
@@ -1433,6 +1694,22 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         badgeMesh.rotation.x=-Math.PI/2;badgeMesh.position.set(-.62,.004,-.18);badgeMesh.renderOrder=-1;
         badgeMesh.name='token-combat-role-ground';
         const combatBadge=new Group();combatBadge.add(badgeMesh);root.add(combatBadge);
+        const hpArcCanvas=document.createElement('canvas');hpArcCanvas.width=hpArcCanvas.height=256;
+        const hpArcTexture=new CanvasTexture(hpArcCanvas);
+        hpArcTexture.colorSpace=SRGBColorSpace;
+        hpArcTexture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+        const hpArcMesh=new Mesh(
+          new PlaneGeometry(ON_BASE_HP_PLANE_SIZE,ON_BASE_HP_PLANE_SIZE),
+          new MeshBasicMaterial({
+            map:hpArcTexture,transparent:true,depthTest:true,depthWrite:false,toneMapped:false,
+            polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2,
+          }),
+        );
+        hpArcMesh.rotation.x=-Math.PI/2;
+        hpArcMesh.position.y=measured.baseRimY+0.008;
+        hpArcMesh.renderOrder=2;
+        hpArcMesh.name='token-base-hp-arc';
+        const hpArcGroup=new Group();hpArcGroup.visible=false;hpArcGroup.add(hpArcMesh);root.add(hpArcGroup);
         const cloned = new Map<Material, Material>();
         model.traverse((node) => {
           if (!(node instanceof Mesh)) return;
@@ -1516,9 +1793,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const instance: Instance = {
           modelId:definition.id,
           mirrors:createMirrorImages(centered,root,renderer,()=>scene.environment,definition.baseDiameter),
-          baseDiameter:definition.baseDiameter,outlineBounds,lanternAnchor,torchLighting,
+          baseDiameter:definition.baseDiameter,outlineBounds,pickHull:measured.pickHull,lanternAnchor,torchLighting,
           depthProxyKey,depthBodyProxy,depthWeaponProxy,mergedGeometries,
-          root, updateTransform, turnRing, selectionRing, targetRing, targetInnerRing, targetOuterRing, targetOuterMaterial, conditionRings, hunterMark, combatBadge, badgeMesh, badgeTexture, url: definition.url, materials,
+          root, updateTransform, turnRingGroup, turnRing, turnRingTexture, turnSpotlight, turnSpotlightTexture, turnBeam, turnBeamTexture, targetRing, targetInnerRing, targetOuterRing, targetOuterMaterial, conditionRings, hunterMark, combatBadge, badgeMesh, badgeTexture, hpArcGroup, hpArcMesh, hpArcTexture, url: definition.url, materials,
           originalColors: materials.map(m => m instanceof MeshStandardMaterial ? m.color.clone() : null),
           originalOpacity: materials.map((material) => material.opacity),
           originalTransparent: materials.map((material) => material.transparent), mixer, fx: null,
@@ -1632,7 +1909,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     localShadows.dispose();
     timing?.dispose();
     visionTiming?.dispose();
-    silhouette.dispose();outlineMask.dispose(); maskMaterial.dispose();
+    silhouette.dispose();outlineMask.dispose();highlightMask.dispose(); maskMaterial.dispose();
     environment?.dispose();
     scene.environment = null;
     renderer.dispose();
@@ -1683,6 +1960,33 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       }
       if(!Number.isFinite(minX)||!Number.isFinite(minY))return undefined;
       return {left:minX,top:minY,right:maxX,bottom:maxY};
+    },
+    pickTokensAt(clientX, clientY) {
+      if (disposed || failed) return [];
+      const rect = host.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return [];
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return [];
+      pickNdc.set(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      camera.updateMatrixWorld();
+      pickRaycaster.setFromCamera(pickNdc, camera);
+      const tokenHits: Array<{ id: string; distance: number }> = [];
+      for (const [id, instance] of instances) {
+        if (!instance.root.visible) continue;
+        const token = tokenById.get(id);
+        if (!token || token.sharedSightOnly || token.partiallyRevealed) continue;
+        pickBox.copy(instance.outlineBounds).applyMatrix4(instance.root.matrixWorld);
+        if (!pickRaycaster.ray.intersectsBox(pickBox)) continue;
+        pickInvMatrix.copy(instance.root.matrixWorld).invert();
+        pickLocalRay.copy(pickRaycaster.ray).applyMatrix4(pickInvMatrix);
+        if (!intersectPickHullLocal(pickLocalRay, instance.pickHull, pickHitPoint)) continue;
+        pickHitPoint.applyMatrix4(instance.root.matrixWorld);
+        tokenHits.push({ id, distance: pickHitPoint.distanceTo(pickRaycaster.ray.origin) });
+      }
+      tokenHits.sort((a, b) => a.distance - b.distance);
+      return tokenHits.map((h) => h.id);
     },
     setGridHot(hot){if(!disposed)gpuMapFloor.setGridHot(hot);},
     setFootprints(marks){if(disposed)return;footprints.sync(marks);setHostData('footprintCount',String(marks.length));invalidate();},
@@ -1755,6 +2059,7 @@ export const MiniatureLayer = forwardRef<MiniatureLayerHandle, Props>(function M
   useImperativeHandle(ref, () => ({
     headPosition: (id) => engine.current?.headPosition(id),
     screenBounds: (id) => engine.current?.screenBounds(id),
+    pickTokensAt: (clientX, clientY) => engine.current?.pickTokensAt(clientX, clientY) ?? [],
     setGridHot: (hot) => engine.current?.setGridHot(hot),
     setFootprints: (marks) => engine.current?.setFootprints(marks),
     spellCast: (tokenIds) => engine.current?.spellCast(tokenIds),

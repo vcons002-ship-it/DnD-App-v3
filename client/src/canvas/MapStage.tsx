@@ -63,6 +63,7 @@ import { useBoxSelection } from './useBoxSelection';
 import { installPerspectiveCanvas } from './perspectiveCanvas';
 import { installPerspectiveInput } from './perspectiveInput';
 import { resolveMiniature, miniatureForQuality, miniatureForPreload, miniaturePreloadDefinitions, useMiniatureCatalog } from '../lib/miniatures';
+import { nextCycledTokenId, orderedCycleTokenIds, resolveStackClick } from '../lib/tokenPickCycle';
 import { HpFxLayer, HpNumberLayer } from './HpFx';
 import {weaponTravelMs} from '../../../shared/weaponImpact';
 import {spellImpactStyle,weaponImpactStyle,persistentSpellVisual} from '../../../shared/spellImpact';
@@ -803,17 +804,139 @@ function MapStageInner({
   // Identity-stable token handlers so the memoized TokenShape only re-renders
   // when its own token/display actually changes (not on every snapshot).
   const mapTargetPick = useStore((s) => s.mapTargetPick);
-  const handleTokenSelect = useStableCallback((tok: Token, additive: boolean, altKey?: boolean) => {
-    if(areaCast){placeSpellArea(tok);return;}
-    if(rayCast){toggleRayTarget(tok.id,'click');return;}
-    if(tok.sharedSightOnly||tok.partiallyRevealed)return;
+  const lastPointerClientRef = useRef<{ x: number; y: number } | null>(null);
+  const pickCycleRef = useRef<{ x: number; y: number; stackKey: string } | null>(null);
+  const hover3dActiveRef = useRef(false);
+  const hoverPickThrottleRef = useRef(0);
 
-    if (mapTargetPick || Boolean(altKey)) { setCombatTarget(tok.id, mapTargetPick ?? undefined); return; }
-    if (orbTarget) setOrbTarget({...orbTarget,targetId:tok.id});
-    else if (saveResolve) resolveSaveAt(tok.id);
-    else onSelectToken(tok, additive);
-    if(!actualDm && resolveToken(snapshot,tok).dead && !orbTarget && !saveResolve&&!explicitTokenInspection()){setDetailsExpanded(true);nudgeRightPanel();}
+  const pickStackAtClient = useStableCallback((clientX: number, clientY: number, fallbackTokId?: string): string[] => {
+    const isDirect = (id: string) => {
+      if (doorTokenIds.has(id) || hiddenGhosts.has(id)) return false;
+      const t = snapshot.tokens.find((tok) => tok.id === id);
+      if (!t || t.sharedSightOnly || t.partiallyRevealed) return false;
+      if (t.isHidden && !isDm) return false;
+      return true;
+    };
+    const raw3d = !legacy ? (miniatureRef.current?.pickTokensAt(clientX, clientY) ?? []) : [];
+    const stack: string[] = [];
+    for (const id of raw3d) {
+      if (isDirect(id) && !stack.includes(id)) stack.push(id);
+    }
+    if (fallbackTokId && isDirect(fallbackTokId) && !stack.includes(fallbackTokId)) {
+      stack.push(fallbackTokId);
+    }
+    return stack;
   });
+
+  const applyTokenPick = useStableCallback((
+    fallbackTok: Token | null,
+    clientX: number | undefined,
+    clientY: number | undefined,
+    additive: boolean,
+    altKey = false,
+  ): boolean => {
+    const stack =
+      clientX !== undefined && clientY !== undefined
+        ? pickStackAtClient(clientX, clientY, fallbackTok?.id)
+        : fallbackTok ? [fallbackTok.id] : [];
+    if (!stack.length) {
+      pickCycleRef.current = null;
+      return false;
+    }
+    const isTargetingAction = Boolean(areaCast || rayCast || mapTargetPick || altKey || orbTarget || saveResolve);
+    let chosenId = stack[0]!;
+    if (!isTargetingAction && clientX !== undefined && clientY !== undefined) {
+      const resolved = resolveStackClick({
+        stack,
+        currentSelectedIds: selectedIds,
+        clientX,
+        clientY,
+        previousClick: pickCycleRef.current,
+        additive,
+      });
+      pickCycleRef.current = resolved.nextClick;
+      chosenId = resolved.tokenId ?? stack[0]!;
+    } else {
+      pickCycleRef.current = null;
+    }
+    const tok = snapshot.tokens.find((t) => t.id === chosenId) ?? fallbackTok;
+    if (!tok || tok.sharedSightOnly || tok.partiallyRevealed) return false;
+
+    if (areaCast) { placeSpellArea(tok); return true; }
+    if (rayCast) { toggleRayTarget(tok.id, 'click'); return true; }
+    if (mapTargetPick || Boolean(altKey)) { setCombatTarget(tok.id, mapTargetPick ?? undefined); return true; }
+    if (orbTarget) setOrbTarget({ ...orbTarget, targetId: tok.id });
+    else if (saveResolve) resolveSaveAt(tok.id);
+    else {
+      onSelectToken(tok, additive);
+      if (clientX !== undefined && clientY !== undefined && !privateDrag.current) {
+        setHover({ token: tok, x: clientX, y: clientY });
+      }
+    }
+    if (!actualDm && resolveToken(snapshot, tok).dead && !orbTarget && !saveResolve && !explicitTokenInspection()) {
+      setDetailsExpanded(true);
+      nudgeRightPanel();
+    }
+    return true;
+  });
+
+  const handleTokenSelect = useStableCallback((tok: Token, additive: boolean, altKey?: boolean) => {
+    const ptr = lastPointerClientRef.current;
+    applyTokenPick(tok, ptr?.x, ptr?.y, additive, Boolean(altKey));
+  });
+
+  const cycleTokenSelection = useStableCallback((backwards: boolean = false, preferCursorStack: boolean = true) => {
+    const currentId = selectedIds.length === 1 ? selectedIds[0]! : null;
+    const ptr = lastPointerClientRef.current;
+    if (preferCursorStack && ptr) {
+      const stack = pickStackAtClient(ptr.x, ptr.y);
+      if (stack.length >= 2) {
+        const nextId = nextCycledTokenId(stack, currentId, backwards);
+        const tok = nextId ? snapshot.tokens.find((t) => t.id === nextId) : null;
+        if (tok) {
+          onSelectToken(tok, false);
+          if (!privateDrag.current) setHover({ token: tok, x: ptr.x, y: ptr.y });
+          return;
+        }
+      }
+    }
+    const candidates = snapshot.tokens
+      .filter((t) => !t.sharedSightOnly && !t.partiallyRevealed && !doorTokenIds.has(t.id) && !hiddenGhosts.has(t.id) && (isDm || !t.isHidden))
+      .map((t) => {
+        const d = resolveToken(snapshot, t);
+        return {
+          id: t.id,
+          x: t.x,
+          y: t.y,
+          initiativeRank: initiativeRank.get(t.id) ?? null,
+          isObject: !!d.objectKind,
+          isDead: d.dead === true,
+        };
+      });
+    const ordered = orderedCycleTokenIds(candidates);
+    const nextId = nextCycledTokenId(ordered, currentId, backwards);
+    const tok = nextId ? snapshot.tokens.find((t) => t.id === nextId) : null;
+    if (tok) {
+      pickCycleRef.current = null;
+      onSelectToken(tok, false);
+    }
+  });
+
+  useEffect(() => {
+    const onTabKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      const active = document.activeElement as HTMLElement | null;
+      const target = e.target as HTMLElement | null;
+      const isTextControl = (el: HTMLElement | null) =>
+        !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable || !!el.closest('[role="dialog"], .modal, .modal-backdrop'));
+      if (isTextControl(active) || isTextControl(target)) return;
+      if (!snapshot.tokens.length) return;
+      e.preventDefault();
+      cycleTokenSelection(e.shiftKey, true);
+    };
+    window.addEventListener('keydown', onTabKey);
+    return () => window.removeEventListener('keydown', onTabKey);
+  }, [cycleTokenSelection, snapshot.tokens.length]);
   const handleTokenActivate = useStableCallback((tok: Token) => {
     if(areaCast||rayCast)return;
     if(tok.sharedSightOnly||tok.partiallyRevealed)return;
@@ -855,21 +978,52 @@ function MapStageInner({
     setDoorDragPreview(old=>old?.tokenId===tok.id&&old.ids.join('|')===ids.join('|')?old:{tokenId:tok.id,ids});
   });
   const handleTokenMenu = useStableCallback((tok: Token, cx: number, cy: number) => {
-    if(tok.sharedSightOnly||tok.partiallyRevealed)return;
+    const stack = pickStackAtClient(cx, cy, tok.id);
+    // If the user already cycled selection to a behind token in this stack, right-clicking opens its menu.
+    const preferredId =
+      selectedIds.length === 1 && stack.includes(selectedIds[0]!)
+        ? selectedIds[0]!
+        : (stack[0] ?? tok.id);
+    const resolved = snapshot.tokens.find((t) => t.id === preferredId) ?? tok;
+    if (resolved.sharedSightOnly || resolved.partiallyRevealed) return;
 
-    if(rayCast){toggleRayTarget(tok.id,'decrement');return;}
+    if (rayCast) { toggleRayTarget(resolved.id, 'decrement'); return; }
     setHover(null);
     // Also aim the Combat section's target dropdown at the right-clicked token,
     // so closing the menu still leaves the side panel set up to attack it.
-    setCombatTarget(tok.id);
-    setMenu({ token: tok, x: cx, y: cy });
+    setCombatTarget(resolved.id);
+    setMenu({ token: resolved, x: cx, y: cy });
   });
   const handleTokenHover = useStableCallback((tok: Token, cx: number, cy: number) => {
-    if(tok.sharedSightOnly||tok.partiallyRevealed)return;
-
-    if(!privateDrag.current)setHover({ token: tok, x: cx, y: cy });
+    if (privateDrag.current || Konva.isDragging() || presentation.moving() || activeCameraGesture()) return;
+    const nowMs = performance.now();
+    if (nowMs - hoverPickThrottleRef.current < 25 && hover?.token.id === tok.id) return;
+    hoverPickThrottleRef.current = nowMs;
+    const stack = pickStackAtClient(cx, cy, tok.id);
+    const topTok = (stack[0] ? snapshot.tokens.find((t) => t.id === stack[0]) : null) ?? tok;
+    if (topTok.sharedSightOnly || topTok.partiallyRevealed) return;
+    setHover((prev) =>
+      prev && prev.token.id === topTok.id && Math.hypot(prev.x - cx, prev.y - cy) < 2
+        ? prev
+        : { token: topTok, x: cx, y: cy },
+    );
   });
-  const handleTokenHoverEnd = useStableCallback(() => setHover(null));
+  const handleTokenHoverEnd = useStableCallback(() => {
+    const ptr = lastPointerClientRef.current;
+    if (ptr && !privateDrag.current) {
+      const stack = pickStackAtClient(ptr.x, ptr.y);
+      if (stack[0]) {
+        const topTok = snapshot.tokens.find((t) => t.id === stack[0]);
+        if (topTok) {
+          hover3dActiveRef.current = true;
+          setHover({ token: topTok, x: ptr.x, y: ptr.y });
+          return;
+        }
+      }
+    }
+    hover3dActiveRef.current = false;
+    setHover(null);
+  });
   useEffect(()=>{
     const direct=(id:string)=>snapshot.tokens.some(t=>t.id===id&&!t.sharedSightOnly&&!t.partiallyRevealed);
     if(menu&&!direct(menu.token.id))setMenu(null);
@@ -1179,7 +1333,9 @@ function MapStageInner({
   // Content-stable so TokenShape's memo isn't defeated by each snapshot's fresh arrays.
   const terrainZones=useContentStable(useMemo(()=>snapshot.measurements.filter(m=>m.spellName==='Spike Growth').map(m=>({...m.origin,radiusFt:m.spellArea!.spec.sizeFt})),[snapshot.measurements]));
   const movementWalls=useContentStable(map?.walls);
-  const miniatureTokens = useMemo<MiniatureToken[]>(() => snapshot.tokens.flatMap((token) => {
+  const miniatureTokens = useMemo<MiniatureToken[]>(() => {
+    const claimedCharId = snapshot.characters.find((ch) => ch.claimedBy === mySocketId)?.id;
+    return snapshot.tokens.flatMap((token) => {
     if(legacy)return [];
     if(map?.walls?.some(w=>w.tokenId===token.id))return [];
     if (!(token.kind === 'pc' ? use3dTokens : use3dMonsters)) return [];
@@ -1189,6 +1345,18 @@ function MapStageInner({
     const display = resolveToken(snapshot, token), dead = display.dead === true;
     const appearance=monster??snapshot.characters.find(c=>c.id===token.refId);
     const definition = dead ? DEATH_SKULL : miniatureForQuality(resolveMiniature(display.name, token.kind, appearance, token.refId),graphics.modelQuality);
+    const showOnBaseHp =
+      hpDisplay === 'arc' &&
+      !dead &&
+      !token.sharedSightOnly &&
+      !token.partiallyRevealed &&
+      !display.objectKind &&
+      (snapshot.role === 'dm' || (token.kind === 'pc' && !!claimedCharId && token.refId === claimedCharId)) &&
+      !!display.maxHp &&
+      display.maxHp > 0 &&
+      display.curHp !== undefined;
+    const hpFrac = showOnBaseHp ? Math.max(0, Math.min(1, display.curHp! / display.maxHp!)) : null;
+    const tempHpFrac = showOnBaseHp && display.tempHp && display.tempHp > 0 ? display.tempHp / display.maxHp! : 0;
     return definition ? [{ id: token.id, x: token.x, y: token.y,
       facing: token.facing ?? 0,
       mirrorImages:dead || token.partiallyRevealed ? 0 : mirrorImageCount(display.conditions),
@@ -1197,6 +1365,8 @@ function MapStageInner({
       invisible:token.invisible,
       carriedLantern:!dead && !token.sharedSightOnly && !token.partiallyRevealed && token.carriedLantern,
       combatRole: !dead && !token.sharedSightOnly && !token.partiallyRevealed && token.kind==='monster'&&!monster?.objectKind?token.combatRole:undefined,
+      hpFrac,
+      tempHpFrac,
       hunterMarked: !dead && !token.partiallyRevealed && !!token.markLabels?.some(label=>/hunter.s mark/i.test(label)),
       conditionColors: dead || token.sharedSightOnly || token.partiallyRevealed ? [] : presentAuras(display.conditions.filter(c=>!c.id.startsWith("spell-mark:") || !/hunter.s mark/i.test(c.label))).map(a=>AURA_HEX[a]),
       outline: token.sharedSightOnly || token.partiallyRevealed || monster?.objectKind ? undefined : monster ? DISPOSITION_HEX[monster.disposition] : DISPOSITION_HEX.friendly,
@@ -1205,8 +1375,10 @@ function MapStageInner({
       shade: !dead && monster && !monster.objectKind ? monsterVariation(productionFamily(monster), token.refId).shade : undefined,
       activeTurn: !token.partiallyRevealed && token.id === activeTurnTokenId,
       selected: !token.sharedSightOnly && !token.partiallyRevealed && (orbTarget ? orbTarget.targetId === token.id : selectedIds.includes(token.id)),
+      hovered: !token.sharedSightOnly && !token.partiallyRevealed && hover?.token.id === token.id,
       diameter: miniatureBaseWidthFt(token, monster ?? { name: resolveToken(snapshot, token).name }) * pxPerFoot, hidden: token.isHidden, definition }] : [];
-  }), [legacy,snapshot,legacyAffinity, isDm, pxPerFoot, activeTurnTokenId, selectedIds, orbTarget, use3dTokens, use3dMonsters, hiddenGhosts, miniatureCatalogRevision, graphics.modelQuality]);
+    });
+  }, [legacy,snapshot,legacyAffinity, isDm, mySocketId, hpDisplay, pxPerFoot, activeTurnTokenId, selectedIds, hover?.token.id, orbTarget, use3dTokens, use3dMonsters, hiddenGhosts, miniatureCatalogRevision, graphics.modelQuality]);
   const miniatureIds=useMemo(()=>new Set(miniatureTokens.map(m=>m.id)),[miniatureTokens]);
   const getTokenBaseWidthFt = useCallback((token: { id: string; widthFt: number; kind?: string; refId?: string; miniatureWidthFt?: number }) => {
     if (legacy || !(token.kind === 'pc' ? use3dTokens : use3dMonsters)) return token.widthFt;
@@ -2081,7 +2253,21 @@ function MapStageInner({
     clickStart.current = null;
     if (start) {
       const p = e.target.getStage()?.getPointerPosition();
-      if (p && Math.hypot(p.x - start.x, p.y - start.y) <= 5) onSelectToken(null);
+      if (p && Math.hypot(p.x - start.x, p.y - start.y) <= 5) {
+        const me = e.evt as MouseEvent;
+        const cx = 'clientX' in me ? me.clientX : lastPointerClientRef.current?.x;
+        const cy = 'clientY' in me ? me.clientY : lastPointerClientRef.current?.y;
+        const additive = Boolean('shiftKey' in me && (me.shiftKey || me.ctrlKey || me.metaKey));
+        const altKey = Boolean('altKey' in me && me.altKey);
+        const picked3d =
+          (!('button' in me) || me.button === 0) &&
+          !onPlaceAt &&
+          applyTokenPick(null, cx, cy, additive, altKey);
+        if (!picked3d) {
+          pickCycleRef.current = null;
+          onSelectToken(null);
+        }
+      }
     }
     endStroke();
   };
@@ -2170,7 +2356,46 @@ function MapStageInner({
       }
       return;
     }
-    if (!fogActive || !paintingRef.current) return;
+    if (!fogActive || !paintingRef.current) {
+      // Live 3D body hover via lightweight cached micro-box pick hulls — skipped
+      // completely during drags, camera gestures, active mouse buttons, or token motion.
+      const me = e.evt as MouseEvent;
+      if (
+        !legacy &&
+        'clientX' in me &&
+        me.buttons === 0 &&
+        !privateDrag.current &&
+        !featureEditorActive &&
+        !fogActive &&
+        !measureActive &&
+        !pinchRef.current &&
+        !menu &&
+        !Konva.isDragging() &&
+        !presentation.moving() &&
+        !activeCameraGesture()
+      ) {
+        const nowMs = performance.now();
+        if (nowMs - hoverPickThrottleRef.current >= 25) {
+          hoverPickThrottleRef.current = nowMs;
+          const stack = pickStackAtClient(me.clientX, me.clientY);
+          if (stack[0]) {
+            const topTok = snapshot.tokens.find((t) => t.id === stack[0]);
+            if (topTok) {
+              hover3dActiveRef.current = true;
+              setHover((prev) =>
+                prev && prev.token.id === topTok.id && Math.hypot(prev.x - me.clientX, prev.y - me.clientY) < 2
+                  ? prev
+                  : { token: topTok, x: me.clientX, y: me.clientY },
+              );
+            }
+          } else if (hover3dActiveRef.current) {
+            hover3dActiveRef.current = false;
+            if (!e.target.findAncestor('.token', true)) setHover(null);
+          }
+        }
+      }
+      return;
+    }
     const stage = e.target.getStage();
     if (stage) emitFogCell(stage);
   };
@@ -2518,8 +2743,10 @@ function MapStageInner({
         // Use the tactical footprint (at least token.widthFt) for melee crowd
         // adjacency so adjacent 5-ft 3D miniatures always trigger Smart crowd layout.
         const crowdRadius = (Math.max(widthFt, t.widthFt) * pxPerFoot) / 2;
+        // Players only see their own token's HP gauge on the map to keep crowds clean.
+        const showTokenHp = snapshot.role === 'dm' || (t.kind === 'pc' && !!myClaimedCharId && t.refId === myClaimedCharId);
         const hpFrac =
-          d.maxHp && d.maxHp > 0 && d.curHp !== undefined
+          showTokenHp && d.maxHp && d.maxHp > 0 && d.curHp !== undefined
             ? Math.max(0, Math.min(1, d.curHp / d.maxHp))
             : null;
         return {
@@ -2549,12 +2776,13 @@ function MapStageInner({
       tilted: tiltDegrees > 0,
       labelDensity,
       hpDisplay,
-      showHpNumbers: snapshot.role === 'dm',
+      showHpNumbers: snapshot.role === 'dm' || !!myClaimedCharId,
       peekAll,
     });
   }, [
     snapshot,
     entities,
+    myClaimedCharId,
     doors,
     hiddenGhosts,
     legacy,
@@ -2604,7 +2832,8 @@ function MapStageInner({
         reducedEffects={legacy}
         sharedDarkvision={!!t.sharedSightOnly&&!!snapshot.playerVision?.heavy}
         display={d}
-        showHpNumbers={snapshot.role==='dm'}
+        showHp={snapshot.role === 'dm' || (t.kind === 'pc' && !!myClaimedCharId && t.refId === myClaimedCharId)}
+        showHpNumbers={snapshot.role === 'dm' || (t.kind === 'pc' && !!myClaimedCharId && t.refId === myClaimedCharId)}
         hpDisplay={hpDisplay}
         crowdLayout={crowdLayouts.get(t.id)}
         gridSizePx={grid}
@@ -2680,8 +2909,9 @@ function MapStageInner({
 
   return (
     <div className="stage-wrap" data-motion-stage={legacyMovement.playback?'playing':'2'} data-render-mode={legacy?'legacy':'standard'} data-retained-rendering={String(retained)} ref={containerRef} {...activeSelectionBox.handlers}
-      onPointerDownCapture={e=>{flushZoomHit();if(!rotateStart(e))activeSelectionBox.handlers.onPointerDownCapture(e);}}
-      onPointerMoveCapture={e=>{if(!rotateMove(e))activeSelectionBox.handlers.onPointerMoveCapture(e);}}
+      onPointerDownCapture={e=>{lastPointerClientRef.current={x:e.clientX,y:e.clientY};flushZoomHit();if(!rotateStart(e))activeSelectionBox.handlers.onPointerDownCapture(e);}}
+      onPointerMoveCapture={e=>{lastPointerClientRef.current={x:e.clientX,y:e.clientY};if(!rotateMove(e))activeSelectionBox.handlers.onPointerMoveCapture(e);}}
+      onPointerLeave={()=>{lastPointerClientRef.current=null;if(hover3dActiveRef.current){hover3dActiveRef.current=false;setHover(null);}}}
       onPointerUpCapture={e=>{if(!rotateEnd(e))activeSelectionBox.handlers.onPointerUpCapture(e);}}
       onPointerCancelCapture={e=>{if(!rotateEnd(e))activeSelectionBox.handlers.onPointerCancelCapture();}}
       onLostPointerCapture={e=>{if(!rotateEnd(e))activeSelectionBox.handlers.onLostPointerCapture();}}
@@ -2697,7 +2927,7 @@ function MapStageInner({
       {!map && <div className="stage-empty">No active map yet.</div>}
       {map && (
         <>
-          <MapToolbarPortals toolSlot={toolSlot} zoomBy={zoomBy} view={view} resetView={resetView} legacy={legacy} animateView={animateView} tilted={tilted} projectionState={projectionState} actualDm={actualDm} dmViewMode={dmViewMode} setDmViewMode={setDmViewMode} partyPreview={partyPreview} sourceSnapshot={sourceSnapshot} chooseTilt={chooseTilt} rotationLabel={rotationLabel} rotationDegrees={rotationDegrees} map={map} tiles={tiles} animateMap={animateMap} mapAnimation={mapAnimation} doors={doors} openDoorControls={openDoorControls} wallTool={wallTool} wallSnap={wallSnap} setWallSnap={setWallSnap} comfyOk={comfyOk} generateScenery={generateScenery} tilesMode={tilesMode} setTilesMode={setTilesMode} addTileFromFile={addTileFromFile} reorderMapImage={reorderMapImage} removeMapImage={removeMapImage} setTool={setTool} setRemoveMode={setRemoveMode} setScaleMode={setScaleMode} setMatchMode={setMatchMode} setAnnotate={setAnnotate} setFogBrush={setFogBrush} placeLight={placeLight} setMenu={setMenu} setWallTool={setWallTool} setWallAnchor={setWallAnchor} setWallPointer={setWallPointer} hideCursor={hideCursor} cancelWallStroke={cancelWallStroke} onSelectAllLights={selectAllLights} tool={tool} snap={snap} setSnap={setSnap} removeMode={removeMode} snapshot={snapshot} pendingRef={pendingRef} setDraft={setDraft} clearMeasurements={clearMeasurements} annotate={annotate} annoColor={annoColor} setAnnoColor={setAnnoColor} clearAnnotations={clearAnnotations} decalsLocked={decalsLocked} toggleDecalsLocked={toggleDecalsLocked} derivedFtPerSquare={derivedFtPerSquare} widthFt={widthFt} setWidthFt={setWidthFt} gridPx={gridPx} scaleMode={scaleMode} matchMode={matchMode} commitScaleFeet={commitScaleFeet} setMapGrid={setMapGrid} setScaleLine={setScaleLine} setScalePrompt={setScalePrompt} setVisionFog={setVisionFog} mapFogEnabled={mapFogEnabled} tokenFogEnabled={tokenFogEnabled} paintLayer={paintLayer} setPaintLayer={setPaintLayer} fogBrush={fogBrush} brushSize={brushSize} setBrushSize={setBrushSize} toggleLayer={toggleLayer} coverFog={coverFog} revealAll={revealAll} labelDensity={labelDensity} setLabelDensity={setLabelDensity} hpDisplay={hpDisplay} setHpDisplay={setHpDisplay} />
+          <MapToolbarPortals toolSlot={toolSlot} zoomBy={zoomBy} view={view} resetView={resetView} legacy={legacy} animateView={animateView} tilted={tilted} projectionState={projectionState} actualDm={actualDm} dmViewMode={dmViewMode} setDmViewMode={setDmViewMode} partyPreview={partyPreview} sourceSnapshot={sourceSnapshot} chooseTilt={chooseTilt} rotationLabel={rotationLabel} rotationDegrees={rotationDegrees} map={map} tiles={tiles} animateMap={animateMap} mapAnimation={mapAnimation} doors={doors} openDoorControls={openDoorControls} wallTool={wallTool} wallSnap={wallSnap} setWallSnap={setWallSnap} comfyOk={comfyOk} generateScenery={generateScenery} tilesMode={tilesMode} setTilesMode={setTilesMode} addTileFromFile={addTileFromFile} reorderMapImage={reorderMapImage} removeMapImage={removeMapImage} setTool={setTool} setRemoveMode={setRemoveMode} setScaleMode={setScaleMode} setMatchMode={setMatchMode} setAnnotate={setAnnotate} setFogBrush={setFogBrush} placeLight={placeLight} setMenu={setMenu} setWallTool={setWallTool} setWallAnchor={setWallAnchor} setWallPointer={setWallPointer} hideCursor={hideCursor} cancelWallStroke={cancelWallStroke} onSelectAllLights={selectAllLights} tool={tool} snap={snap} setSnap={setSnap} removeMode={removeMode} snapshot={snapshot} pendingRef={pendingRef} setDraft={setDraft} clearMeasurements={clearMeasurements} annotate={annotate} annoColor={annoColor} setAnnoColor={setAnnoColor} clearAnnotations={clearAnnotations} decalsLocked={decalsLocked} toggleDecalsLocked={toggleDecalsLocked} derivedFtPerSquare={derivedFtPerSquare} widthFt={widthFt} setWidthFt={setWidthFt} gridPx={gridPx} scaleMode={scaleMode} matchMode={matchMode} commitScaleFeet={commitScaleFeet} setMapGrid={setMapGrid} setScaleLine={setScaleLine} setScalePrompt={setScalePrompt} setVisionFog={setVisionFog} mapFogEnabled={mapFogEnabled} tokenFogEnabled={tokenFogEnabled} paintLayer={paintLayer} setPaintLayer={setPaintLayer} fogBrush={fogBrush} brushSize={brushSize} setBrushSize={setBrushSize} toggleLayer={toggleLayer} coverFog={coverFog} revealAll={revealAll} labelDensity={labelDensity} setLabelDensity={setLabelDensity} hpDisplay={hpDisplay} setHpDisplay={setHpDisplay} onCycleToken={(backwards) => cycleTokenSelection(backwards, false)} />
           <Stage
             ref={stageRef}
             key={`${dprKey}:${legacy}`}
@@ -2710,7 +2940,20 @@ function MapStageInner({
             onMouseUp={handlePointerUp}
             onTouchEnd={handlePointerUp}
             onContextMenu={(e)=>{
-              if(!featureEditorActive||!map)return;
+              if(!map)return;
+              if(!featureEditorActive){
+                if(!e.target.findAncestor('.token', true)){
+                  const me=e.evt as MouseEvent;
+                  const stack=pickStackAtClient(me.clientX,me.clientY);
+                  if(stack.length){
+                    e.evt.preventDefault();
+                    const preferredId=selectedIds.length===1&&stack.includes(selectedIds[0]!) ? selectedIds[0]! : stack[0]!;
+                    const tok=snapshot.tokens.find(t=>t.id===preferredId);
+                    if(tok)handleTokenMenu(tok,me.clientX,me.clientY);
+                  }
+                }
+                return;
+              }
               e.evt.preventDefault();
               const stage=e.target.getStage(),raw=stage?pointerToImage(stage):null;
               if(!raw)return;

@@ -246,20 +246,20 @@ export function computeTokenCrowdLayout(
     if (labelDensity === 'minimal') {
       showName = !t.isDead && focused;
       showHp = hasHp && (hpDisplay === 'arc' || focused || isDamaged || t.kind === 'pc');
-      showExactHp = hasHp && showHpNumbers && focused;
+      showExactHp = hasHp && showHpNumbers && (t.hovered || peekAll);
       showInitiative = !t.isDead && t.hasInitiative && focused;
       compactBar = !focused;
     } else if (labelDensity === 'smart') {
       showName = !t.isDead;
       if (inCrowd) {
         showHp = hasHp && (hpDisplay === 'arc' || focused || isDamaged || t.kind === 'pc');
-        showExactHp = hasHp && showHpNumbers && (focused || isDamaged);
-        compactBar = !showExactHp;
       } else {
         showHp = hasHp;
-        showExactHp = hasHp && showHpNumbers;
-        compactBar = !showExactHp;
       }
+      // Keep the battlefield uncluttered by showing the base-rim HP arc / bar
+      // cleanly and revealing exact numeric HP only on hover or Alt-peek.
+      showExactHp = hasHp && showHpNumbers && (t.hovered || peekAll);
+      compactBar = !showExactHp;
       showInitiative = !t.isDead && t.hasInitiative;
     } else {
       // 'full'

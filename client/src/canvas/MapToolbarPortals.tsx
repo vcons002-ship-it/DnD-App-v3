@@ -104,6 +104,7 @@ export function MapToolbarPortals({
   setLabelDensity,
   hpDisplay,
   setHpDisplay,
+  onCycleToken,
 }: {
   toolSlot: HTMLElement | null;
   zoomBy: (factor: number) => void;
@@ -196,6 +197,7 @@ export function MapToolbarPortals({
   setLabelDensity: (density: TokenLabelDensity) => void;
   hpDisplay: TokenHpDisplay;
   setHpDisplay: (display: TokenHpDisplay) => void;
+  onCycleToken?: (backwards?: boolean) => void;
 }) {
   const showTargetLine = useStore((s) => s.showTargetLine);
   const toggleTargetLine = useStore((s) => s.toggleTargetLine);
@@ -234,6 +236,16 @@ export function MapToolbarPortals({
               ↷
             </button>
           </span>
+          {onCycleToken && (
+            <button
+              className="btn tiny"
+              aria-label="Next token"
+              title="Next token (Tab / Shift+Tab) — cycles stacked tokens under cursor, or all tokens on the map"
+              onClick={(e) => onCycleToken(e.shiftKey)}
+            >
+              ⇥
+            </button>
+          )}
           <CompactToolbarMenu label="View" forceCompact={actualDm}>
             <LegacyModeControl toolbar />
             <div className="battlefield-view-options" role="group" aria-label="Your battlefield view">
@@ -292,7 +304,7 @@ export function MapToolbarPortals({
                 Token labels
               </span>
               {([
-                ['smart', 'Smart', 'Auto-declutter melee crowds, flip/nudge overlapping names, and spotlight hovered/active tokens (hold Alt to peek all)'],
+                ['smart', 'Smart', 'Auto-declutter melee crowds and keep numeric HP hidden until hovered or Alt-peeked'],
                 ['full', 'Full', 'Always show every token name, HP, and initiative badge with overlap avoidance'],
                 ['minimal', 'Minimal', 'Show only health indicators in melee until hovered, selected, targeted, active turn, or Alt-peeked'],
               ] as const).map(([value, text, tip]) => (
