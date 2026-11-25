@@ -12,6 +12,8 @@ export type DraftMeasure = {
   origin: Pt;
   target: Pt;
   tokenId?: string;
+  /** Starting token when a ruler drag begins on a token so the line measures from its base edge. */
+  originTokenId?: string;
 };
 
 /** Standard (small/large) sizes in feet — classic 5e spell footprints. */

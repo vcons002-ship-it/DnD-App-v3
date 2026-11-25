@@ -43,7 +43,7 @@ export function createMiniatureNameLayer(scene:Scene,depth:DepthTexture,resoluti
           entry.texture.dispose();entry.texture=new CanvasTexture(label.canvas);entry.texture.colorSpace=SRGBColorSpace;
           entry.canvas=label.canvas;entry.mesh.material.map=entry.texture;textureUpdates++;
         }
-        entry.covered.value=label.emphasized?1:(label.coveredOpacity??.22);
+        entry.covered.value=label.emphasized?.88:(label.coveredOpacity??.22);
         entry.mesh.layers.set(shared.has(label.id)?4:MINIATURE_NAME_LAYER);
         entry.mesh.material.opacity=shared.has(label.id)?label.opacity*0.78:label.opacity;
         const position=entry.mesh.geometry.getAttribute('position');

@@ -168,10 +168,11 @@ describe('tokenCrowdLayout', () => {
     expect(peek.get('b')!.shortName).toBeUndefined();
   });
 
-  it('abbreviates duplicate numbered monster names cleanly in melee clusters', () => {
+  it('abbreviates duplicate numbered monster names cleanly without ellipses in melee clusters', () => {
     expect(abbreviateCrowdName('Dwarf Paladin 2', false, 3, false)).toBe('DP 2');
+    expect(abbreviateCrowdName('Dwarf Paladin 2', true, 3, false)).toBe('DP');
     expect(abbreviateCrowdName('Goblin 3', false, 3, false)).toBe('Gob 3');
-    expect(abbreviateCrowdName('Ancient Red Dragon', false, 1, true)).toBe('Ancient Red…');
+    expect(abbreviateCrowdName('Ancient Red Dragon', false, 1, true)).toBe('Ancient Red D');
     expect(abbreviateCrowdName('Goblin', true, 1, false)).toBeUndefined();
   });
 });

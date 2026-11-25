@@ -1430,7 +1430,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
         const badgeCanvas=document.createElement('canvas');badgeCanvas.width=badgeCanvas.height=128;
         const badgeTexture=new CanvasTexture(badgeCanvas);
         const badgeMesh=new Mesh(new PlaneGeometry(.44,.44),new MeshBasicMaterial({map:badgeTexture,transparent:true,depthTest:true,depthWrite:false,toneMapped:false}));
-        badgeMesh.rotation.x=-Math.PI/2;badgeMesh.position.set(-.5,.004,.5);badgeMesh.renderOrder=-1;
+        badgeMesh.rotation.x=-Math.PI/2;badgeMesh.position.set(-.62,.004,-.18);badgeMesh.renderOrder=-1;
         badgeMesh.name='token-combat-role-ground';
         const combatBadge=new Group();combatBadge.add(badgeMesh);root.add(combatBadge);
         const cloned = new Map<Material, Material>();
