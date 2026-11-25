@@ -18,7 +18,7 @@ import type {
 } from './types.js';
 import type { AbilityKey } from './skills.js';
 import { cleanDiceRules } from './diceRules.js';
-import { rollDice } from './dice.js';
+import { isValidDiceExpression } from './dice.js';
 import { hasteAcBonus, hasMageArmor, shieldAcBonus, shieldOfFaithAcBonus, slowSpellPenalty } from './spellBuffs.js';
 
 const ABILITIES: AbilityKey[] = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
@@ -301,7 +301,7 @@ export function sanitizeItems(
 
 /** A dice string the roller can actually evaluate (empty/garbled → not kept). */
 const validDice = (s: unknown): s is string =>
-  typeof s === 'string' && s.trim() !== '' && rollDice(s) !== null;
+  typeof s === 'string' && s.trim() !== '' && isValidDiceExpression(s);
 
 /**
  * Validate an untrusted weapon list (JSON sheet imports, hand-edited saves,

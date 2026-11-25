@@ -7,6 +7,7 @@ import { CompactToolbarMenu } from '../components/CompactToolbarMenu';
 import { FogMenu } from '../components/FogMenu';
 import { LegacyModeControl } from '../components/LegacyModeControl';
 import { TokenAppearanceControl } from '../components/TokenAppearanceControl';
+import type { TokenHpDisplay, TokenLabelDensity } from '../lib/tokenHudPreferences';
 import { MeasureMenu } from '../components/MeasureMenu';
 import { ScaleMenu } from '../components/ScaleMenu';
 import { WallMenu, type WallTool } from '../components/WallMenu';
@@ -99,6 +100,10 @@ export function MapToolbarPortals({
   toggleLayer,
   coverFog,
   revealAll,
+  labelDensity,
+  setLabelDensity,
+  hpDisplay,
+  setHpDisplay,
 }: {
   toolSlot: HTMLElement | null;
   zoomBy: (factor: number) => void;
@@ -187,6 +192,10 @@ export function MapToolbarPortals({
   toggleLayer: (layer: FogLayer) => void;
   coverFog: (mapId: string, layer: FogLayer) => void;
   revealAll: (layer: FogLayer) => void;
+  labelDensity: TokenLabelDensity;
+  setLabelDensity: (density: TokenLabelDensity) => void;
+  hpDisplay: TokenHpDisplay;
+  setHpDisplay: (display: TokenHpDisplay) => void;
 }) {
   const showTargetLine = useStore((s) => s.showTargetLine);
   const toggleTargetLine = useStore((s) => s.toggleTargetLine);
@@ -278,6 +287,45 @@ export function MapToolbarPortals({
               </button>
             </div>
             <TokenAppearanceControl toolbar forceCompact={actualDm} />
+            <div className="battlefield-view-options" role="group" aria-label="Token label density">
+              <span className="muted" title="Control how crowded token names, HP numbers, and initiative badges appear. Hold Alt anytime to peek all labels.">
+                Token labels
+              </span>
+              {([
+                ['smart', 'Smart', 'Auto-declutter melee crowds, flip/nudge overlapping names, and spotlight hovered/active tokens (hold Alt to peek all)'],
+                ['full', 'Full', 'Always show every token name, HP, and initiative badge with overlap avoidance'],
+                ['minimal', 'Minimal', 'Show only health indicators in melee until hovered, selected, targeted, active turn, or Alt-peeked'],
+              ] as const).map(([value, text, tip]) => (
+                <button
+                  key={value}
+                  className={`btn tiny ${labelDensity === value ? 'on' : ''}`}
+                  aria-pressed={labelDensity === value}
+                  title={tip}
+                  onClick={() => setLabelDensity(value)}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+            <div className="battlefield-view-options" role="group" aria-label="Token health style">
+              <span className="muted">Health</span>
+              <button
+                className={`btn tiny ${hpDisplay === 'arc' ? 'on' : ''}`}
+                aria-pressed={hpDisplay === 'arc'}
+                title="Wrap a tabletop-style colored health arc around each token's base rim"
+                onClick={() => setHpDisplay('arc')}
+              >
+                Base arc
+              </button>
+              <button
+                className={`btn tiny ${hpDisplay === 'bar' ? 'on' : ''}`}
+                aria-pressed={hpDisplay === 'bar'}
+                title="Show the classic horizontal health bar under each token"
+                onClick={() => setHpDisplay('bar')}
+              >
+                Bar
+              </button>
+            </div>
             <button
               className={`btn tiny ${showTargetLine ? 'on' : ''}`}
               aria-label="Toggle combat target line"

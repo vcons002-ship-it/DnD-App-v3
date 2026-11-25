@@ -18,6 +18,7 @@ export function CharacterItems({
   const setItem = useStore((s) => s.setItem);
   const removeItem = useStore((s) => s.removeItem);
   const useItem = useStore((s) => s.useItem);
+  const liveDiceActive = useStore((s) => !!s.liveDice);
   const updateCharacter = useStore((s) => s.updateCharacter);
   const [name, setName] = useState('');
   const [qty, setQty] = useState(1);
@@ -130,7 +131,8 @@ export function CharacterItems({
               return fx ? (
                 <button
                   className="item-use"
-                  title={`Use one — ${describeConsumable(fx)}`}
+                  disabled={liveDiceActive}
+                  title={liveDiceActive ? 'Wait for the current roll to finish' : `Use one — ${describeConsumable(fx)}`}
                   onClick={() => useItem(character.id, it.id)}
                 >
                   🧪

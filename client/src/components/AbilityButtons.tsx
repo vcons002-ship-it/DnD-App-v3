@@ -64,6 +64,7 @@ export function AbilityButtons({
   buffTargetId,
   variant = 'inline',
   onAfter,
+  spentEconomy,
 }: {
   abilities: SheetAbility[];
   kind: TokenKind;
@@ -73,6 +74,7 @@ export function AbilityButtons({
   buffTargetId?: string;
   variant?: 'menu' | 'inline';
   onAfter?: () => void;
+  spentEconomy?: { action: boolean; bonus: boolean; reaction: boolean };
 }) {
   const snapshot=useStore(s=>s.snapshot);
   const [dispelAbility,setDispelAbility]=useState<SheetAbility|null>(null);
@@ -251,11 +253,22 @@ export function AbilityButtons({
             : saveOnly ? 'Cast and force the selected target to roll its saving throw.' : 'Cast at the selected target.';
         // A spent limited-use action stays clickable (the DM decides), but reads as spent.
         const spent = !!effectiveRecharge(a)?.spent;
+        const economyUsed =
+          !menu &&
+          !!spentEconomy &&
+          (groupBucket === 'bonus'
+            ? spentEconomy.bonus
+            : groupBucket === 'reaction'
+              ? spentEconomy.reaction
+              : spentEconomy.action);
+        const economyUsedNote = economyUsed
+          ? `${groupBucket === 'bonus' ? 'Bonus Action' : groupBucket === 'reaction' ? 'Reaction' : 'Action'} marked used this turn — click anyway to roll.`
+          : '';
         const btn = (
           <button
             key={menu ? a.id : 'btn'}
-            className={`${menu ? 'btn tiny fm-spell-attack' : 'btn tiny attack-row'}${spell || a.type === 'spell' ? ' spell-attack-btn' : ' ability-attack-btn'}${spent ? ' recharge-spent' : ''}`}
-            title={[restriction, a.description || 'Ability', workflow, support?.manual.length ? `You handle: ${support.manual.join('; ')}` : '', manualRiderNote(a), spent ? 'Spent — ready it from its ⟳ chip after a successful recharge roll.' : ''].filter(Boolean).join('\n')}
+            className={`${menu ? 'btn tiny fm-spell-attack' : 'btn tiny attack-row'}${spell || a.type === 'spell' ? ' spell-attack-btn' : ' ability-attack-btn'}${spent ? ' recharge-spent' : ''}${economyUsed ? ' is-economy-spent' : ''}`}
+            title={[restriction, a.description || 'Ability', workflow, support?.manual.length ? `You handle: ${support.manual.join('; ')}` : '', manualRiderNote(a), spent ? 'Spent — ready it from its ⟳ chip after a successful recharge roll.' : '', economyUsedNote].filter(Boolean).join('\n')}
             disabled={!!spellActionBlock(caster) || !!restriction || spell&&cost.unavailable || (!summon&&!isCommandSpell(a)&&!area && !manualCast && !menu && !selfSpell && !['invisibility','dispel magic'].includes(advancedSpell(a)??'') && !['misty step','pass without trace'].includes(partySpell(a)??'') && !multiple && !(cSpell === 'heroism' && (level ?? 1) > 1) && (allyBuff ? (needsRequiredTarget && !(buffTargetId ?? healTargetId ?? targetTokenId)) : execution.roll?.kind === 'heal' ? execution.roll.healTarget !== 'self' && !healTargetId : !targetTokenId))}
             onClick={() => cast(a)}
           >
@@ -304,11 +317,12 @@ export function AbilityButtons({
         return (
           <Fragment key={a.id}>
             {showHeader && (
-              <div className={`ability-group-header is-${groupBucket}`}>
+              <div className={`ability-group-header is-${groupBucket}${economyUsed ? ' is-economy-spent' : ''}`}>
                 {groupBucket === 'bonus' ? '⚡ Bonus Actions' : groupBucket === 'reaction' ? '↩ Reactions' : '● Actions'}
+                {economyUsed && <span className="ability-group-used">used</span>}
               </div>
             )}
-            <div className={`combat-ability-row${spell || a.type === 'spell' ? ' is-spell' : ' is-ability'}${damageTypeSelect || choiceSelect || abilityKey(a) === 'hex' || upcastable(a) ? ' has-options' : ''}`}>
+            <div className={`combat-ability-row${spell || a.type === 'spell' ? ' is-spell' : ' is-ability'}${damageTypeSelect || choiceSelect || abilityKey(a) === 'hex' || upcastable(a) ? ' has-options' : ''}${economyUsed ? ' is-economy-spent' : ''}`}>
               {choosing?null:btn}
               <RechargeChip ability={a} kind={kind} refId={caster.id} />
               {(damageTypeSelect || choiceSelect || abilityKey(a) === 'hex' || upcastable(a)) && <span className="combat-ability-options-tag" aria-hidden="true">{upcastable(a) && !damageTypeSelect && !choiceSelect && abilityKey(a) !== 'hex' ? '↳ Slot' : '↳'}</span>}{damageTypeSelect}{choiceSelect}

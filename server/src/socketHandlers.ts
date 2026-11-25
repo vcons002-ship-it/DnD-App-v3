@@ -472,6 +472,7 @@ export function registerSocketHandlers(io: IOServer, options:{livePhysics?:boole
             };
             const meta={saveDiceArt,diceTheme:undefined as 'gold'|undefined,dmDice,affinity:npc?.disposition,ready:prepareTray,waitForPresentation:waitForDicePresentation,onFacing:()=>broadcastSnapshots(io,sid),roller,attacker:actor?.name??npc?.name??roller,className:actor?.className??'',label:trigOffer?.ability.name??ability?.name??pending?.weapon??(sourceEntry?.apply?.orb?sourceEntry.apply.orb.spellName??'Chromatic Orb':undefined)??(actor??npc)?.weapons[payload?.weaponIndex]?.name??payload?.label??payload?.skill??payload?.ability??event.split(':').join(' ')};
             if(event==='combat:hitFeature')meta.label=actor?.sheetAbilities.find(a=>a.id===payload?.abilityId)?.name??meta.label;
+            else if(event==='item:use')meta.label=actor?.items.find(i=>i.id===payload?.itemId)?.name??meta.label;
             if(event==='death:roll')meta.label='Death Saving Throw';
             else if(event==='hitDice:spend')meta.label='Hit Dice';
             else if(event==='character:levelRollHp')meta.label='Level-up Hit Point Increase';

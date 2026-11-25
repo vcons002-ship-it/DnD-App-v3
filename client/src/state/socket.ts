@@ -967,13 +967,24 @@ export const useStore = create<Store>((set, get) => ({
       if(previous?.id===frame.id && previous.seq>=frame.seq)return;
       if(readDiceRenderingMode()==='2d'&&previous?.id===frame.id&&!frame.done&&!frame.calculation&&frame.awaitingStart===previous.awaitingStart&&frame.sides.length===previous.sides.length)return;
       if(previous?.id!==frame.id)get().dismissRollFx();
-      if(frame.done)completedLiveTrays.set(frame.id,frame);
+      if(frame.done){
+        completedLiveTrays.delete(frame.id);
+        completedLiveTrays.set(frame.id,frame);
+        while(completedLiveTrays.size>8)completedLiveTrays.delete(completedLiveTrays.keys().next().value!);
+      }
       set({liveDice:frame});
     });
-    socket.on('dice:finished',({id})=>{
+    const finishLiveDice=(id:string)=>{
       if(get().liveDice?.id===id)set({liveDice:null});
       if(get().skippedLiveDiceId===id)set({skippedLiveDiceId:null});
-      completedLiveTrays.clear();
+    };
+    const pendingDiceFinished:string[]=[];
+    socket.on('dice:finished',({id})=>{
+      // State frames with updated server sprites can still be preloading images;
+      // defer clearing liveDice so the resting 3D tray hands off smoothly to rollFx
+      // without flickering or dropping its cached tray before acceptSnapshot runs.
+      if(renderPending){pendingDiceFinished.push(id);return;}
+      finishLiveDice(id);
     });
     socket.on('dice:resolving',({id,active})=>{
       if(active)set({resolvingDice:id});
@@ -1094,7 +1105,10 @@ export const useStore = create<Store>((set, get) => ({
       if (immediate.some((e) => e.delta < 0 &&
         (!get().showRollAnim || !e.rollId || current?.rollId !== e.rollId))) playHit();
     };
-    flushRenderHp=()=>{for(const payload of renderHpQueue.splice(0))handleRenderedHp(payload);};
+    flushRenderHp=()=>{
+      for(const id of pendingDiceFinished.splice(0))finishLiveDice(id);
+      for(const payload of renderHpQueue.splice(0))handleRenderedHp(payload);
+    };
     socket.on('fx:hp',payload=>{if(renderPending){if(renderHpQueue.length<128)renderHpQueue.push(payload);}else handleRenderedHp(payload);});
     // Live drag preview from another user — update the ghost and (re)arm its
     // expiry. Visible tethers clear ~0.3 s after updates stop; concealment lasts
