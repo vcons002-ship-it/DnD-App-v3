@@ -48,7 +48,7 @@ function measureTokenTextWidth(text: string, fontSize: number, bold = false): nu
 /** Battlefield disposition dot colours. */
 export const DISPOSITION_HEX: Record<string, string> = {
   friendly: '#39c46b',
-  neutral: '#f5c518',
+  neutral: '#94a3b8',
   enemy: '#e23b3b',
 };
 
@@ -456,7 +456,7 @@ function TokenShapeInner({
       const t = (Math.sin(frame.time / 280) + 1) / 2; // 0..1 ease
       node.radius(turnRingR + t * 2.4);
       node.strokeWidth(rings2D.turnStrokeWidth + t * 1.4);
-      node.opacity(0.78 + t * 0.22);
+      node.opacity(0.62 + t * 0.38);
       invalidateRetainedToken(node);
       layer?.batchDraw();
     });
@@ -1056,7 +1056,7 @@ function TokenShapeInner({
             fontStyle="bold" fill={activeTurn ? '#ffe88a' : token.sharedSightOnly ? '#8a919e' : layout.focused ? '#f5f7fb' : '#dde3ec'} opacity={token.sharedSightOnly ? 0.75 : 1} stroke="#000000dd" strokeWidth={1.7} fillAfterStrokeEnabled />
         </Group>
       )}
-      {/* Disposition dot (top-left): green friendly · amber neutral · red enemy. */}
+      {/* Disposition dot (top-left): green friendly · slate neutral · red enemy. */}
       {display.disposition && !miniatureReady && !miniaturePending && !token.sharedSightOnly && !token.partiallyRevealed && (
         <Circle
           name="token-affinity-dot"

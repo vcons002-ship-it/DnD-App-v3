@@ -71,7 +71,7 @@ export function affinityPalette(aff: TargetAffinity = 'enemy') {
     return { glow: '#39c46b', core: '#8cf0ae', spark: '#e8fff0', bg: '#082612eb', border: '#39c46b' };
   }
   if (aff === 'neutral') {
-    return { glow: '#f5c518', core: '#ffe678', spark: '#fffbe6', bg: '#2b2206eb', border: '#f5c518' };
+    return { glow: '#94a3b8', core: '#cbd5e1', spark: '#f1f5f9', bg: '#161c26eb', border: '#94a3b8' };
   }
   return { glow: '#e23b3b', core: '#ff8a8a', spark: '#ffe6e6', bg: '#2b0909eb', border: '#e23b3b' };
 }

@@ -84,7 +84,7 @@ export function BulkActionsPanel({
                   disp === 'friendly'
                     ? 'Players see full stats'
                     : disp === 'neutral'
-                      ? 'Players see name + conditions (amber dot)'
+                      ? 'Players see name + conditions (slate dot)'
                       : 'Players see name + conditions (red dot)'
                 }
               >
