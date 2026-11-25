@@ -600,8 +600,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       if (!casterTok || casterTok.kind === 'pc') return 'friendly';
       return st.snapshot?.monsters.find((m) => m.id === casterTok.refId)?.disposition ?? 'enemy';
     })();
-    const innerHex = aff === 'unknown' ? '#8e96a4' : aff === 'friendly' ? '#39c46b' : aff === 'neutral' ? '#f5c518' : '#e23b3b';
-    const outerHex = aff === 'unknown' ? '#c8d0dc' : aff === 'friendly' ? '#8cf0ae' : aff === 'neutral' ? '#ffe678' : '#ff8a8a';
+    const innerHex = aff === 'unknown' ? '#8e96a4' : aff === 'friendly' ? '#39c46b' : aff === 'neutral' ? '#94a3b8' : '#e23b3b';
+    const outerHex = aff === 'unknown' ? '#c8d0dc' : aff === 'friendly' ? '#8cf0ae' : aff === 'neutral' ? '#cbd5e1' : '#ff8a8a';
     instance.targetInnerRing.material.color.set(innerHex);
     instance.targetOuterMaterial.color.set(outerHex);
     const fade = token.hidden ? 0.45 : 1;
@@ -637,6 +637,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       paintedReducedMotion = reducedMotion.matches;
       lastPaint = now;drawnCameraKey = currentCameraKey();
       const seconds = (now - started) / 1000;
+      const turnPulse = reducedMotion.matches ? 1 : (Math.sin(seconds / 0.28) + 1) / 2;
       setHostData('mirrorImageCount',String(props.tokens.reduce((n,t)=>n+(instances.has(t.id)?t.mirrorImages??0:0),0)));
       if(moves.size>0)tokensDirty=true;
       for(const [id,move] of moves)if(move.until<now)moves.delete(id);
@@ -663,9 +664,9 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     instance.hpArcGroup.rotation.y=screenYaw;
     if (token.activeTurn || instance.turnFlareStart !== undefined) {
       instance.turnRingGroup.rotation.y=screenYaw;
-      const pulse = reducedMotion.matches ? 0 : (Math.sin(seconds / 0.28) + 1) / 2;
-      instance.turnRingGroup.scale.setScalar(token.definition.baseDiameter * (1 + pulse * (TURN_PULSE_MAX_SCALE - 1)));
-      instance.turnRing.material.opacity = (reducedMotion.matches ? 0.96 : 0.84 + pulse * 0.16) * (token.hidden ? 0.45 : 1);
+      const ringScalePulse = reducedMotion.matches ? 0 : turnPulse;
+      instance.turnRingGroup.scale.setScalar(token.definition.baseDiameter * (1 + ringScalePulse * (TURN_PULSE_MAX_SCALE - 1)));
+      instance.turnRing.material.opacity = (reducedMotion.matches ? 0.96 : 0.58 + turnPulse * 0.42) * (token.hidden ? 0.45 : 1);
       let flareEnv = 0;
       if (instance.turnFlareStart !== undefined) {
         const flareAge = (now - instance.turnFlareStart) / 1000;
@@ -689,7 +690,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           instance.turnBeam.rotation.y = seconds * 0.55;
         }
       }
-      instance.turnSpotlight.material.opacity = Math.min(1, (reducedMotion.matches ? 0.95 : 0.78 + pulse * 0.22 + flareEnv * 0.3)) * (token.hidden ? 0.45 : 1);
+      instance.turnSpotlight.material.opacity = Math.min(1, (reducedMotion.matches ? 0.92 : 0.48 + turnPulse * 0.52 + flareEnv * 0.3)) * (token.hidden ? 0.45 : 1);
     }
         updateTargetRing(token, instance, seconds);
         if (animated) { instance.mixer?.setTime(seconds); applyFx(instance, seconds); }
@@ -1002,7 +1003,7 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
           lastHighlightMaskKey = '';
         }
         visionLift?.render(false);
-        silhouette.render(renderer,outlineRects,hasHighlightXray,hasBoldOutline);
+        silhouette.render(renderer,outlineRects,hasHighlightXray,hasBoldOutline,turnPulse);
         // Flashing spells light terrain in sight. Outside magical darkness all
         // of it is visible already, so only heavy darkness needs the reach.
         const flashes=useComposite&&sightFrame?.enabled&&sightFrame.grade?.heavy?impactLights.filter(l=>l.revealsTerrain).map(l=>({source:l,
@@ -1180,8 +1181,8 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
     instance.outlineHovered = outlineHovered;
     instance.outlineActiveTurn = outlineActiveTurn;
     const baseAlpha = (outlineHidden ? 0.45 : 1) * (outlineSelected ? 1 : outlineActiveTurn ? 0.96 : outlineHovered ? 0.54 : 1);
-    const outlineId = silhouette.slot(activeOutline, baseAlpha, outlineBold);
-    const weaponOutlineId = outlineId ? silhouette.slot(activeOutline, baseAlpha * (outlineSelected ? 0.78 : outlineActiveTurn ? 0.72 : outlineHovered ? 0.55 : 0.25), outlineBold) : 0;
+    const outlineId = silhouette.slot(activeOutline, baseAlpha, outlineBold, outlineActiveTurn);
+    const weaponOutlineId = outlineId ? silhouette.slot(activeOutline, baseAlpha * (outlineSelected ? 0.78 : outlineActiveTurn ? 0.72 : outlineHovered ? 0.55 : 0.25), outlineBold, outlineActiveTurn) : 0;
     const model = instance.root.children[0];
     model?.traverse(node => { if (node instanceof Mesh) node.userData.outlineId = node.userData.outlineWeapon ? weaponOutlineId : outlineId; });
     if (instance.depthBodyProxy) instance.depthBodyProxy.userData.outlineId = outlineId;
@@ -1345,7 +1346,20 @@ function createEngine(host: HTMLDivElement, initial: Props, report: (ids: string
       }
       if (!assets.has(definition.url)) assets.set(definition.url, loader.loadAsync(definition.url).catch(error=>{if(!definition.fallbackUrl)throw error;console.warn('Lighter miniature unavailable; loading original',definition.id);return loader.loadAsync(definition.fallbackUrl);})
         .then(async gltf => {
-          try { return await prepareMiniatureBase(gltf, definition, Math.min(8, renderer.capabilities.getMaxAnisotropy())); }
+          const maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+          gltf.scene.traverse(node => {
+            if (!(node instanceof Mesh)) return;
+            for (const material of Array.isArray(node.material) ? node.material : [node.material]) {
+              if (!material || typeof material !== 'object') continue;
+              for (const value of Object.values(material)) {
+                if (value instanceof Texture && value.anisotropy < maxAniso) {
+                  value.anisotropy = maxAniso;
+                  value.needsUpdate = true;
+                }
+              }
+            }
+          });
+          try { return await prepareMiniatureBase(gltf, definition, maxAniso); }
           catch (error) { console.warn('Miniature base texture unavailable', error); return gltf; }
         }).catch(() => { failedAssets.add(definition.url); if (!disposed) invalidate(); return null; }));
       if (definition.fxUrl && !manifests.has(definition.fxUrl)) {

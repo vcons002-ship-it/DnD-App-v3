@@ -731,7 +731,7 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
 .disposition-btns { display: flex; gap: 6px; }
 .disposition-btns .btn { flex: 1; }
 .disp-friendly.on { background: #1f3a2a; border-color: var(--green); color: #fff; }
-.disp-neutral.on { background: #3a3320; border-color: var(--gold); color: #fff; }
+.disp-neutral.on { background: #263140; border-color: #94a3b8; color: #fff; }
 .disp-enemy.on { background: #3a2326; border-color: var(--red); color: #fff; }
 
 /* Editable stat block (DM) */
@@ -1028,7 +1028,7 @@ button.sb-ability-roll:hover, button.sb-ability-roll.on { border-color: var(--ac
    neutral amber, enemy red, object gray. Tints stay faint for text contrast. */
 .data-card.pc { box-shadow: inset 0 0 0 2px #5ce1ff44; background: #5ce1ff10; border-left-color: var(--cyan-bright); }
 .data-card.disp-friendly { background: #39c46b12; border-left-color: #39c46b88; }
-.data-card.disp-neutral { background: #f5c51810; border-left-color: var(--gold); }
+.data-card.disp-neutral { background: #94a3b814; border-left-color: #94a3b899; }
 .data-card.disp-enemy { background: #e23b3b12; border-left-color: #e23b3b88; }
 .data-card.obj { border-left-color: #8a8f9888; }
 /* Turn/selection markers stay on top of the tints. */

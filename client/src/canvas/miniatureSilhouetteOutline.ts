@@ -32,16 +32,16 @@ export function mergeOutlineRects(rects:readonly OutlineRect[]):OutlineRect[]{
 /** Border palette IDs occupy G of the existing body mask; R/A remain unchanged for
  * personal visibility and raised body compositing. No model-shell geometry. */
 export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, inverse: {value: Matrix4}, highlightMask?: Texture) {
-  // 2-row palette: row 0 = RGBA color, row 1 = style flags (R > 0.5 => bold selection silhouette).
+  // 2-row palette: row 0 = RGBA color, row 1 = style flags (R > 0.5 => bold, G > 0.5 => active-turn pulse).
   const bytes = new Uint8Array(256 * 2 * 4), slots = new Map<string, number>();
   const palette = new DataTexture(bytes, 256, 2, RGBAFormat);
   palette.minFilter = palette.magFilter = NearestFilter; palette.generateMipmaps = false;
   const material = new ShaderMaterial({
-    uniforms: {body: {value: mask}, bodyDepth: {value: depth}, highlight: {value: highlightMask ?? mask}, hasHighlight: {value: 0}, hasBold: {value: 1},
+    uniforms: {body: {value: mask}, bodyDepth: {value: depth}, highlight: {value: highlightMask ?? mask}, hasHighlight: {value: 0}, hasBold: {value: 1}, turnPulse: {value: 1},
       palette: {value: palette}, inverseProjection: inverse,
       resolution: {value: new Vector2(1, 1)}, pixelRatio: {value: 1}},
     vertexShader: 'varying vec2 screenUv; void main(){screenUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
-    fragmentShader: `uniform sampler2D body,bodyDepth,highlight,palette; uniform float hasHighlight,hasBold; uniform vec2 resolution; uniform float pixelRatio;
+    fragmentShader: `uniform sampler2D body,bodyDepth,highlight,palette; uniform float hasHighlight,hasBold,turnPulse; uniform vec2 resolution; uniform float pixelRatio;
       uniform mat4 inverseProjection; varying vec2 screenUv;
       vec2 snapUv(vec2 uv){return (floor(uv*resolution)+.5)/resolution;}
       vec4 maskAt(vec2 uv){return texture2D(body,snapUv(uv));}
@@ -68,6 +68,7 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
             if(centerEmpty||edepth<centerDepth){
               vec4 style=texture2D(palette,vec2((id+.5)/256.,.75));
               bool bold=style.r>.5;
+              bool pulsing=style.g>.5;
               vec4 nearBody=maskAt(edge+stepUv*1.5),deepBody=maskAt(edge+stepUv*3.5);
               float coverage=nearBody.a*deepBody.a;
               if(abs(slotOf(nearBody)-eslot)>.5||abs(slotOf(deepBody)-eslot)>.5)coverage=0.;
@@ -80,9 +81,11 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
               float tolerance=10.*abs(inverseProjection[1][1]/here.w)/max(1.,resolution.y/pixelRatio);
               coverage*=1.-smoothstep(tolerance,tolerance*2.,max(0.,viewDepth(edge)-viewDepth(edge+stepUv*3.5)));
               vec4 color=texture2D(palette,vec2((id+.5)/256.,.25));
-              float strength=bold
+              if(pulsing)color.rgb=mix(color.rgb,vec3(1.,.96,.74),.38*turnPulse);
+              float pulseMul=pulsing?mix(.62,1.,turnPulse):1.;
+              float strength=(bold
                 ? max(smoothstep(.15,.7,coverage),m.a*.85)*color.a
-                : smoothstep(.25,.85,coverage)*color.a*.7;
+                : smoothstep(.25,.85,coverage)*color.a*.7)*pulseMul;
               if(strength>.01&&(edepth<bestDepth-.00001||(abs(edepth-bestDepth)<=.00001&&strength>best))){
                 best=strength;bestDepth=edepth;border=color;
               }
@@ -96,8 +99,10 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
               if(centerEmpty||odepth<centerDepth){
                 vec4 ostyle=texture2D(palette,vec2((oid+.5)/256.,.75));
                 if(ostyle.r>.5){
+                  bool opulsing=ostyle.g>.5;
                   vec4 ocolor=texture2D(palette,vec2((oid+.5)/256.,.25));
-                  float ostrength=ocolor.a*.72;
+                  if(opulsing)ocolor.rgb=mix(ocolor.rgb,vec3(1.,.96,.74),.45*turnPulse);
+                  float ostrength=ocolor.a*(opulsing?mix(.26,.88,turnPulse):.72);
                   if(ostrength>.01&&(odepth<bestDepth-.00001||(abs(odepth-bestDepth)<=.00001&&ostrength>best))){
                     best=ostrength;bestDepth=odepth;border=ocolor;
                   }
@@ -181,24 +186,25 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
     uvs[t+10] = u0; uvs[t+11] = v1;
   };
   return {
-    slot(color: string | undefined, opacity = 1, bold = false) {
+    slot(color: string | undefined, opacity = 1, bold = false, pulse = false) {
       if (!color) return 0;
-      const key = `${color}:${opacity}:${bold ? 1 : 0}`; let id = slots.get(key);
+      const key = `${color}:${opacity}:${bold ? 1 : 0}:${pulse ? 1 : 0}`; let id = slots.get(key);
       if (id !== undefined) return id;
       if (slots.size >= 255) return 0;
       id = slots.size + 1; slots.set(key, id);
       // The overlay writes display-space colors, matching the existing border.
       const c = new Color(color).convertLinearToSRGB();
       bytes.set([Math.round(c.r*255),Math.round(c.g*255),Math.round(c.b*255),Math.round(opacity*255)], id*4);
-      bytes.set([bold ? 255 : 0, 0, 0, 255], (256 + id) * 4);
+      bytes.set([bold ? 255 : 0, pulse ? 255 : 0, 0, 255], (256 + id) * 4);
       palette.needsUpdate = true; return id;
     },
-    render(renderer: WebGLRenderer,rectangles?:readonly OutlineRect[],hasHighlight=false,hasBold=true) {
+    render(renderer: WebGLRenderer,rectangles?:readonly OutlineRect[],hasHighlight=false,hasBold=true,turnPulse=1) {
       material.uniforms.resolution.value.set(renderer.domElement.width,renderer.domElement.height);
       const pixelRatio=renderer.getPixelRatio();
       material.uniforms.pixelRatio.value=pixelRatio;
       material.uniforms.hasHighlight.value=hasHighlight?1:0;
       material.uniforms.hasBold.value=hasBold?1:0;
+      material.uniforms.turnPulse.value=turnPulse;
       let count = 0;
       if (rectangles) {
         const merged = mergeOutlineRects(rectangles);

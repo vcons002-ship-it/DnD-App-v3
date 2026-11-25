@@ -28,7 +28,7 @@ import { ConnectionStatus } from '../components/ConnectionStatus';
 
 const DISPOSITION_HEX: Record<string, string> = {
   friendly: '#39c46b',
-  neutral: '#f5c518',
+  neutral: '#94a3b8',
   enemy: '#e23b3b',
 };
 const ABILITIES = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
