@@ -31,47 +31,109 @@ export function mergeOutlineRects(rects:readonly OutlineRect[]):OutlineRect[]{
 
 /** Border palette IDs occupy G of the existing body mask; R/A remain unchanged for
  * personal visibility and raised body compositing. No model-shell geometry. */
-export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, inverse: {value: Matrix4}) {
-  const bytes = new Uint8Array(256 * 4), slots = new Map<string, number>();
-  const palette = new DataTexture(bytes, 256, 1, RGBAFormat);
+export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, inverse: {value: Matrix4}, highlightMask?: Texture) {
+  // 2-row palette: row 0 = RGBA color, row 1 = style flags (R > 0.5 => bold selection silhouette).
+  const bytes = new Uint8Array(256 * 2 * 4), slots = new Map<string, number>();
+  const palette = new DataTexture(bytes, 256, 2, RGBAFormat);
   palette.minFilter = palette.magFilter = NearestFilter; palette.generateMipmaps = false;
   const material = new ShaderMaterial({
-    uniforms: {body: {value: mask}, bodyDepth: {value: depth}, palette: {value: palette}, inverseProjection: inverse,
+    uniforms: {body: {value: mask}, bodyDepth: {value: depth}, highlight: {value: highlightMask ?? mask}, hasHighlight: {value: 0}, hasBold: {value: 1},
+      palette: {value: palette}, inverseProjection: inverse,
       resolution: {value: new Vector2(1, 1)}, pixelRatio: {value: 1}},
     vertexShader: 'varying vec2 screenUv; void main(){screenUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
-    fragmentShader: `uniform sampler2D body,bodyDepth,palette; uniform vec2 resolution; uniform float pixelRatio;
+    fragmentShader: `uniform sampler2D body,bodyDepth,highlight,palette; uniform float hasHighlight,hasBold; uniform vec2 resolution; uniform float pixelRatio;
       uniform mat4 inverseProjection; varying vec2 screenUv;
-      vec4 maskAt(vec2 uv){return texture2D(body,(floor(uv*resolution)+.5)/resolution);}
+      vec2 snapUv(vec2 uv){return (floor(uv*resolution)+.5)/resolution;}
+      vec4 maskAt(vec2 uv){return texture2D(body,snapUv(uv));}
+      vec4 highlightAt(vec2 uv){return texture2D(highlight,snapUv(uv));}
+      float depthAt(vec2 uv){return texture2D(bodyDepth,snapUv(uv)).r;}
       float indexOf(vec4 m){return floor(m.g*255.+.5);}
-      float viewDepth(vec2 uv){vec4 p=inverseProjection*vec4(uv*2.-1.,texture2D(bodyDepth,uv).r*2.-1.,1.);return p.z/p.w;}
+      float slotOf(vec4 m){return floor(m.b*255.+.5);}
+      float viewDepth(vec2 uv){vec4 p=inverseProjection*vec4(uv*2.-1.,depthAt(uv)*2.-1.,1.);return p.z/p.w;}
       void main(){
-        // Only the outside silhouette: never paint across the front figure,
-        // internal mesh seams or surfaces. Eight directions produce a thin rim.
-        if(texture2D(body,screenUv).a>.1)discard;
-        float best=0.;vec4 border=vec4(0.);
+        // Draw outlines over empty background AND over farther tokens behind the
+        // silhouette, while never painting across the same miniature or over a
+        // closer foreground figure.
+        vec4 center=maskAt(screenUv);
+        bool centerEmpty=center.a<.1;
+        float centerSlot=slotOf(center);
+        float centerDepth=centerEmpty?1.:depthAt(screenUv);
+        float best=0.;float bestDepth=2.;vec4 border=vec4(0.);
         for(int i=0;i<8;i++){
           float angle=float(i)*.78539816339;vec2 direction=vec2(cos(angle),sin(angle));
           vec2 stepUv=direction*pixelRatio/resolution;
-          vec2 edge=screenUv+stepUv*1.5;vec4 m=maskAt(edge);float id=indexOf(m);
-          if(m.a<.5||id<.5)continue;
-          vec4 nearBody=maskAt(edge+stepUv*1.5),deepBody=maskAt(edge+stepUv*3.5);
-          // Thin weapons cannot become thicker colored weapons. Also reject a
-          // base/other body behind them using the same depth-thickness test.
-          float coverage=nearBody.a*deepBody.a;
-          if(abs(indexOf(nearBody)-id)>.5||abs(indexOf(deepBody)-id)>.5)coverage=0.;
-          // Sampling along a blade's length must not mistake it for a wide body.
-          // Require width across that direction as well, in CSS pixels.
-          vec2 crossUv=vec2(-direction.y,direction.x)*pixelRatio/resolution*2.5;
-          vec2 inner=edge+stepUv*2.;
-          vec4 left=maskAt(inner-crossUv),right=maskAt(inner+crossUv);
-          coverage*=left.a*right.a;
-          if(abs(indexOf(left)-id)>.5||abs(indexOf(right)-id)>.5)coverage=0.;
-          vec4 here=inverseProjection*vec4(edge*2.-1.,texture2D(bodyDepth,edge).r*2.-1.,1.);
-          float tolerance=10.*abs(inverseProjection[1][1]/here.w)/max(1.,resolution.y/pixelRatio);
-          coverage*=1.-smoothstep(tolerance,tolerance*2.,max(0.,viewDepth(edge)-viewDepth(edge+stepUv*3.5)));
-          vec4 color=texture2D(palette,vec2((id+.5)/256.,.5));
-          float strength=smoothstep(.25,.85,coverage)*color.a*.7;
-          if(strength>best){best=strength;border=color;}
+          vec2 edge=screenUv+stepUv*1.5;vec4 m=maskAt(edge);float id=indexOf(m);float eslot=slotOf(m);
+          if(m.a>=.5&&id>=.5&&(centerEmpty||abs(eslot-centerSlot)>.5)){
+            float edepth=depthAt(edge);
+            if(centerEmpty||edepth<centerDepth){
+              vec4 style=texture2D(palette,vec2((id+.5)/256.,.75));
+              bool bold=style.r>.5;
+              vec4 nearBody=maskAt(edge+stepUv*1.5),deepBody=maskAt(edge+stepUv*3.5);
+              float coverage=nearBody.a*deepBody.a;
+              if(abs(slotOf(nearBody)-eslot)>.5||abs(slotOf(deepBody)-eslot)>.5)coverage=0.;
+              vec2 crossUv=vec2(-direction.y,direction.x)*pixelRatio/resolution*(bold?1.6:2.5);
+              vec2 inner=edge+stepUv*2.;
+              vec4 left=maskAt(inner-crossUv),right=maskAt(inner+crossUv);
+              coverage*=left.a*right.a;
+              if(abs(slotOf(left)-eslot)>.5||abs(slotOf(right)-eslot)>.5)coverage=0.;
+              vec4 here=inverseProjection*vec4(edge*2.-1.,edepth*2.-1.,1.);
+              float tolerance=10.*abs(inverseProjection[1][1]/here.w)/max(1.,resolution.y/pixelRatio);
+              coverage*=1.-smoothstep(tolerance,tolerance*2.,max(0.,viewDepth(edge)-viewDepth(edge+stepUv*3.5)));
+              vec4 color=texture2D(palette,vec2((id+.5)/256.,.25));
+              float strength=bold
+                ? max(smoothstep(.15,.7,coverage),m.a*.85)*color.a
+                : smoothstep(.25,.85,coverage)*color.a*.7;
+              if(strength>.01&&(edepth<bestDepth-.00001||(abs(edepth-bestDepth)<=.00001&&strength>best))){
+                best=strength;bestDepth=edepth;border=color;
+              }
+            }
+          }
+          // Outer soft rim pass only when a selected/active/hovered bold outline exists.
+          if(hasBold>.5){
+            vec2 outerEdge=screenUv+stepUv*3.1;vec4 om=maskAt(outerEdge);float oid=indexOf(om);float oslot=slotOf(om);
+            if(om.a>=.5&&oid>=.5&&(centerEmpty||abs(oslot-centerSlot)>.5)){
+              float odepth=depthAt(outerEdge);
+              if(centerEmpty||odepth<centerDepth){
+                vec4 ostyle=texture2D(palette,vec2((oid+.5)/256.,.75));
+                if(ostyle.r>.5){
+                  vec4 ocolor=texture2D(palette,vec2((oid+.5)/256.,.25));
+                  float ostrength=ocolor.a*.72;
+                  if(ostrength>.01&&(odepth<bestDepth-.00001||(abs(odepth-bestDepth)<=.00001&&ostrength>best))){
+                    best=ostrength;bestDepth=odepth;border=ocolor;
+                  }
+                }
+              }
+            }
+          }
+        }
+        // X-ray shine-through pass: when a Selected or Hovered token is occluded
+        // behind another miniature, draw a translucent silhouette rim through the
+        // foreground figure so it remains unmistakable in congested crowds.
+        if(hasHighlight>.5&&!centerEmpty){
+          vec4 hcenter=highlightAt(screenUv);
+          if(hcenter.a<.1){
+            float xrayBest=0.;vec4 xrayColor=vec4(0.);
+            for(int i=0;i<8;i++){
+              float angle=float(i)*.78539816339;vec2 direction=vec2(cos(angle),sin(angle));
+              vec2 stepUv=direction*pixelRatio/resolution;
+              vec2 hedge=screenUv+stepUv*1.7;vec4 hm=highlightAt(hedge);float hid=indexOf(hm);float hslot=slotOf(hm);
+              if(hm.a>=.5&&hid>=.5&&abs(hslot-centerSlot)>.5){
+                vec4 hc=texture2D(palette,vec2((hid+.5)/256.,.25));
+                float s=hc.a*.56;
+                if(s>xrayBest){xrayBest=s;xrayColor=hc;}
+              }
+              vec2 houter=screenUv+stepUv*3.0;vec4 hom=highlightAt(houter);float hoid=indexOf(hom);float hoslot=slotOf(hom);
+              if(hom.a>=.5&&hoid>=.5&&abs(hoslot-centerSlot)>.5){
+                vec4 hoc=texture2D(palette,vec2((hoid+.5)/256.,.25));
+                float s=hoc.a*.32;
+                if(s>xrayBest){xrayBest=s;xrayColor=hoc;}
+              }
+            }
+            if(xrayBest>.01){
+              if(best<.01){border=xrayColor;best=xrayBest;}
+              else{border.rgb=mix(border.rgb,xrayColor.rgb,xrayBest);best=max(best,xrayBest);}
+            }
+          }
         }
         if(best<.01)discard;
         gl_FragColor=vec4(border.rgb,best);
@@ -119,21 +181,24 @@ export function createMiniatureSilhouetteOutline(mask: Texture, depth: Texture, 
     uvs[t+10] = u0; uvs[t+11] = v1;
   };
   return {
-    slot(color: string | undefined, opacity = 1) {
+    slot(color: string | undefined, opacity = 1, bold = false) {
       if (!color) return 0;
-      const key = color + ':' + opacity; let id = slots.get(key);
+      const key = `${color}:${opacity}:${bold ? 1 : 0}`; let id = slots.get(key);
       if (id !== undefined) return id;
       if (slots.size >= 255) return 0;
       id = slots.size + 1; slots.set(key, id);
       // The overlay writes display-space colors, matching the existing border.
       const c = new Color(color).convertLinearToSRGB();
       bytes.set([Math.round(c.r*255),Math.round(c.g*255),Math.round(c.b*255),Math.round(opacity*255)], id*4);
+      bytes.set([bold ? 255 : 0, 0, 0, 255], (256 + id) * 4);
       palette.needsUpdate = true; return id;
     },
-    render(renderer: WebGLRenderer,rectangles?:readonly OutlineRect[]) {
+    render(renderer: WebGLRenderer,rectangles?:readonly OutlineRect[],hasHighlight=false,hasBold=true) {
       material.uniforms.resolution.value.set(renderer.domElement.width,renderer.domElement.height);
       const pixelRatio=renderer.getPixelRatio();
       material.uniforms.pixelRatio.value=pixelRatio;
+      material.uniforms.hasHighlight.value=hasHighlight?1:0;
+      material.uniforms.hasBold.value=hasBold?1:0;
       let count = 0;
       if (rectangles) {
         const merged = mergeOutlineRects(rectangles);

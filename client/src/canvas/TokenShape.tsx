@@ -4,7 +4,6 @@ import {mirrorImageCount,MIRROR_IMAGE_SPREAD} from '../../../shared/linkedSpells
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {resolveWallMovement,wallCollisionRadiusFt,type MapWall} from '../../../shared/mapWalls';
 import {
-  Arc,
   Group,
   Circle,
   Rect,
@@ -28,6 +27,7 @@ import {renderedImage} from '../lib/renderImages';
 import {invalidateRetainedToken} from './retainedTokenLayer';
 import {DEFAULT_CROWD_LAYOUT,type TokenCrowdLayout} from '../lib/tokenCrowdLayout';
 import type {TokenHpDisplay} from '../lib/tokenHudPreferences';
+import {computeTokenRingLayout2D} from '../lib/tokenRings';
 
 const isImageIcon = (icon: string): boolean =>
   icon.startsWith('/') || icon.startsWith('http');
@@ -60,6 +60,7 @@ type Props = {
   presentation?: TokenPresentation;
   sharedDarkvision?: boolean;
   display: TokenDisplay;
+  showHp?: boolean;
   showHpNumbers?: boolean;
   hpDisplay?: TokenHpDisplay;
   crowdLayout?: TokenCrowdLayout;
@@ -118,6 +119,7 @@ function TokenShapeInner({
   presentation,
   sharedDarkvision=false,
   display,
+  showHp=true,
   showHpNumbers=false,
   hpDisplay='arc',
   crowdLayout,
@@ -435,8 +437,9 @@ function TokenShapeInner({
     onHover?.(token, e.evt.clientX, e.evt.clientY);
   const handleMouseOut = () => onHoverEnd?.(token);
 
-  // Pulse the active-turn ring so whose turn it is reads at a glance.
-  const turnRingR = radius + 9 + auras.length * 5;
+  // Concentric 2D ground rings: inner conditions -> outer selection -> outermost active turn.
+  const rings2D = computeTokenRingLayout2D(radius, auras.length, selected);
+  const turnRingR = rings2D.turnRadius;
   const turnRing = useRef<Konva.Circle>(null);
   useEffect(() => {
     const node = turnRing.current;
@@ -451,9 +454,9 @@ function TokenShapeInner({
       if (!frame || frame.time - last < 50) return;
       last = frame.time;
       const t = (Math.sin(frame.time / 280) + 1) / 2; // 0..1 ease
-      node.radius(turnRingR + t * 6);
-      node.strokeWidth(5 + t * 4);
-      node.opacity(0.65 + t * 0.35);
+      node.radius(turnRingR + t * 2.4);
+      node.strokeWidth(rings2D.turnStrokeWidth + t * 1.4);
+      node.opacity(0.78 + t * 0.22);
       invalidateRetainedToken(node);
       layer?.batchDraw();
     });
@@ -461,10 +464,10 @@ function TokenShapeInner({
     return () => {
       anim.stop();
     };
-  }, [activeTurn, turnRingR, miniatureReady,reducedEffects]);
+  }, [activeTurn, turnRingR, rings2D.turnStrokeWidth, miniatureReady, reducedEffects]);
 
   const layout = crowdLayout ?? DEFAULT_CROWD_LAYOUT;
-  const effectiveShowHp = !isDead && hpFrac !== null && layout.showHp;
+  const effectiveShowHp = showHp && !isDead && hpFrac !== null && layout.showHp;
   const useArc = hpDisplay === 'arc' && effectiveShowHp;
   const effectiveShowExactHp =
     effectiveShowHp &&
@@ -524,10 +527,15 @@ function TokenShapeInner({
   const hpBarWidth = Math.max(28, Math.round(radius * 1.4));
   const hpBarHeight = effectiveShowExactHp ? hpFontSize + 2 : layout.compactBar ? 3.5 : 4.5;
   const hpBarRadius = hpBarHeight / 2;
-  const arcInner = radius + 1.5;
-  const arcThickness = Math.max(2.6, Math.min(3.8, radius * 0.13));
-  const arcOuter = arcInner + arcThickness;
-  const arcMid = arcInner + arcThickness / 2;
+  // 2D Base-Rim HP arc hugs the inside front edge of the token circle so all
+  // condition/selection/turn rings stay cleanly outside; 3D miniatures render
+  // their camera-facing HP arc directly on top of the 3D pedestal rim.
+  const arcThickness = Math.max(2.6, Math.min(3.4, radius * 0.12));
+  const arcOuter = Math.max(4, radius - 1.0);
+  const arcInner = Math.max(2, arcOuter - arcThickness);
+  const arcMid = (arcInner + arcOuter) / 2;
+  const arcBezelOuter = arcOuter + 1.3;
+  const arcShapePad = Math.ceil(arcBezelOuter + 5);
   const hpColor = hpFrac !== null ? (hpFrac > 0.5 ? '#39c46b' : hpFrac > 0.25 ? '#f5c518' : '#e23b3b') : '#39c46b';
   const hpText = effectiveShowExactHp ? `${display.curHp}/${display.maxHp}` : null;
   const labelHeight = labelFontSize * 1.18;
@@ -535,14 +543,14 @@ function TokenShapeInner({
   const hpPillHeight = hpFontSize + 2;
   const hpPillY = flippedAbove
     ? -radius - labelHeight - hpPillHeight - 8 + layout.yNudge
-    : arcOuter + 1.5 + layout.yNudge;
+    : radius + 2.2 + layout.yNudge;
   const hpBarY = flippedAbove
     ? -radius - labelHeight - hpBarHeight - 8 + layout.yNudge
     : radius + 2 + layout.yNudge;
   const labelY = flippedAbove
     ? -radius - labelHeight - 6 + layout.yNudge
     : useArc
-      ? (effectiveShowExactHp ? hpPillY + hpPillHeight + 1.2 : arcOuter + 1.8 + layout.yNudge)
+      ? (effectiveShowExactHp ? hpPillY + hpPillHeight + 1.2 : radius + 2.6 + layout.yNudge)
       : (effectiveShowHp ? hpBarY + hpBarHeight + 1.5 : radius + 3 + layout.yNudge);
   const nameY = labelY;
   const deathSavesY = Math.ceil((flippedAbove ? radius + 6 : labelY + labelHeight + 2));
@@ -687,25 +695,41 @@ function TokenShapeInner({
       {/* The entire painted token is decoration. Names, badges, HP bars and
           status/turn rings must not steal clicks from nearby token bodies. */}
       <Group ref={tokenArt} name="token-art" listening={false}>
-      {/* Concentric status rings: red (negative), green (buff), blue (concentration). */}
+      {/* Concentric status rings: red (negative), green (buff), blue (concentration) — stacked inside selection & active-turn rings. */}
       {!token.partiallyRevealed && !miniatureReady && !miniaturePending && auras.map((a, i) => (
         <Circle
           key={a}
-          radius={radius + 5 + i * 5}
+          radius={rings2D.conditionRadii[i]}
           stroke={AURA_HEX[a]}
-          strokeWidth={4}
+          strokeWidth={rings2D.conditionStrokeWidth}
+          listening={false}
         />
       ))}
+      {selected && !token.partiallyRevealed && !miniatureReady && !miniaturePending && (
+        <Circle
+          name="selection-ring"
+          radius={rings2D.selectionRadius}
+          stroke="#ffffff"
+          strokeWidth={rings2D.selectionStrokeWidth + 0.4}
+          dash={[rings2D.selectionRadius * 0.72, rings2D.selectionRadius * 0.85]}
+          rotation={24 - viewRotation}
+          shadowColor="#05070c"
+          shadowBlur={4}
+          shadowOpacity={0.95}
+          listening={false}
+        />
+      )}
       {activeTurn && !miniatureReady && !miniaturePending && (
         <Circle
           name="active-turn-ring"
           ref={turnRing}
           radius={turnRingR}
           stroke="#ffd21a"
-          strokeWidth={5}
+          strokeWidth={rings2D.turnStrokeWidth}
           shadowColor="#ffd21a"
-          shadowBlur={16}
+          shadowBlur={14}
           shadowOpacity={0.95}
+          listening={false}
         />
       )}
       {serverLayer&&selected&&<Silhouette outlineOnly/>}
@@ -797,49 +821,81 @@ function TokenShapeInner({
           verticalAlign="middle"
         />
       )}
-      {/* Unified HP display: sleek front Base-Rim Arc (default) or classic horizontal bar. */}
+      {/* Unified HP display: framed front Base-Rim Arc (default) or bordered horizontal bar. */}
       {effectiveShowHp && hpFrac !== null && (
         useArc ? (
+          (!miniatureReady || hpText !== null) && (
           <Group name="token-health" x={0} y={0}>
-            <Arc
-              innerRadius={arcInner}
-              outerRadius={arcOuter}
-              angle={160}
-              rotation={10}
-              fill="#0b0d12d4"
-              stroke="#000000cc"
-              strokeWidth={0.8}
-              listening={false}
-            />
-            <Shape
-              x={-hpBarWidth / 2}
-              y={0}
-              width={hpBarWidth * hpFrac}
-              height={1}
+            {!miniatureReady && <Shape
+              x={-arcShapePad}
+              y={-2}
+              width={arcShapePad * 2}
+              height={arcShapePad + 4}
               listening={false}
               sceneFunc={(ctx) => {
-                const cx = hpBarWidth / 2;
-                const endRad = (170 * Math.PI) / 180;
+                const cx = arcShapePad;
+                const cy = 2;
+                const minRad = (20 * Math.PI) / 180;
+                const maxRad = (160 * Math.PI) / 180;
+                // 1. Dark outer casing separating the HP gauge from base & condition rings.
+                ctx.beginPath();
+                ctx.arc(cx, cy, arcMid, minRad, maxRad, false);
+                ctx.strokeStyle = '#05070cf8';
+                ctx.lineWidth = arcThickness + 2.6;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+                // 2. Crisp metallic bezel frame so the gauge reads unmistakably distinct from rings.
+                ctx.beginPath();
+                ctx.arc(cx, cy, arcMid, minRad, maxRad, false);
+                ctx.strokeStyle = 'rgba(230, 239, 252, 0.58)';
+                ctx.lineWidth = arcThickness + 1.25;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+                // 3. Recessed dark empty trough.
+                ctx.beginPath();
+                ctx.arc(cx, cy, arcMid, minRad, maxRad, false);
+                ctx.strokeStyle = '#121722f5';
+                ctx.lineWidth = arcThickness;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+                // 4. Colored HP fill inset cleanly inside the dark border.
                 if (hpFrac > 0.001) {
-                  const startRad = ((170 - 160 * hpFrac) * Math.PI) / 180;
+                  const startRad = ((160 - 140 * hpFrac) * Math.PI) / 180;
                   ctx.beginPath();
-                  ctx.arc(cx, 0, arcMid, startRad, endRad, false);
+                  ctx.arc(cx, cy, arcMid, startRad, maxRad, false);
                   ctx.strokeStyle = hpColor;
-                  ctx.lineWidth = arcThickness;
-                  ctx.lineCap = 'round';
+                  ctx.lineWidth = Math.max(1.7, arcThickness - 0.85);
+                  ctx.lineCap = 'butt';
                   ctx.stroke();
                 }
+                // 5. Subtle 50% bloodied tick notch across the center of the gauge.
+                ctx.beginPath();
+                ctx.moveTo(cx, cy + arcInner - 0.25);
+                ctx.lineTo(cx, cy + arcOuter + 0.25);
+                ctx.strokeStyle = 'rgba(6, 8, 13, 0.82)';
+                ctx.lineWidth = 1.05;
+                ctx.lineCap = 'butt';
+                ctx.stroke();
+                // 6. Framed cyan temp-HP sliver hugging the outer front-left bezel.
                 if (display.tempHp && display.tempHp > 0 && display.maxHp && display.maxHp > 0) {
-                  const tempSweep = Math.min(40, Math.max(12, (display.tempHp / display.maxHp) * 160));
+                  const tempSweep = Math.min(38, Math.max(12, (display.tempHp / display.maxHp) * 140));
+                  const tempStart = ((160 - tempSweep) * Math.PI) / 180;
+                  const tempR = arcBezelOuter + 1.1;
                   ctx.beginPath();
-                  ctx.arc(cx, 0, arcOuter + 1.6, ((170 - tempSweep) * Math.PI) / 180, endRad, false);
+                  ctx.arc(cx, cy, tempR, tempStart, maxRad, false);
+                  ctx.strokeStyle = '#06080df0';
+                  ctx.lineWidth = 3.4;
+                  ctx.lineCap = 'round';
+                  ctx.stroke();
+                  ctx.beginPath();
+                  ctx.arc(cx, cy, tempR, tempStart, maxRad, false);
                   ctx.strokeStyle = '#5ce1ff';
-                  ctx.lineWidth = 2.2;
+                  ctx.lineWidth = 1.8;
                   ctx.lineCap = 'round';
                   ctx.stroke();
                 }
               }}
-            />
+            />}
             {hpText !== null && (() => {
               const pillText = display.tempHp && display.tempHp > 0 ? `${hpText} +${display.tempHp}` : hpText;
               const pillW = Math.max(30, Math.ceil(measureTokenTextWidth(pillText, hpFontSize) + 8));
@@ -872,34 +928,39 @@ function TokenShapeInner({
                 </Group>
               );
             })()}
-            {token.kind === 'pc' && (display.curHp ?? 1) <= 0 && display.deathSaves && (
-              <Group name="token-death-saves" x={0} y={deathSavesY}>
-                <Rect x={-28} y={0} width={56} height={11} cornerRadius={5.5} fill="#0b0d12eb" stroke={display.deathSaves.successes >= 3 ? '#39c46b' : '#b89650'} strokeWidth={1} />
-                {[0, 1, 2].map((i) => (
-                  <Circle key={`s${i}`} x={-19 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.successes ? '#39c46b' : '#1b2420'} stroke={i < display.deathSaves!.successes ? '#b7f7cc' : '#39c46b88'} strokeWidth={1} />
-                ))}
-                <Rect x={-0.5} y={2} width={1} height={7} fill="#ffffff44" />
-                {[0, 1, 2].map((i) => (
-                  <Circle key={`f${i}`} x={5 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.failures ? '#e23b3b' : '#291a1c'} stroke={i < display.deathSaves!.failures ? '#ffb3b3' : '#e23b3b88'} strokeWidth={1} />
-                ))}
-              </Group>
-            )}
           </Group>
+          )
         ) : (
         <Group name="token-health" y={hpBarY} offsetX={hpBarWidth / 2}>
           <Rect
+            x={-0.8}
+            y={-0.8}
+            width={hpBarWidth + 1.6}
+            height={hpBarHeight + 1.6}
+            fill="#06080df0"
+            stroke="rgba(210, 222, 240, 0.34)"
+            strokeWidth={0.75}
+            cornerRadius={hpBarRadius + 0.8}
+          />
+          <Rect
             width={hpBarWidth}
             height={hpBarHeight}
-            fill={effectiveShowExactHp ? '#0b0d12d9' : '#0009'}
-            stroke={effectiveShowExactHp ? '#000b' : undefined}
-            strokeWidth={effectiveShowExactHp ? 0.75 : 0}
+            fill="#121722f2"
             cornerRadius={hpBarRadius}
           />
           <Rect
-            width={hpBarWidth * hpFrac}
-            height={hpBarHeight}
+            x={0.4}
+            y={0.4}
+            width={Math.max(0, (hpBarWidth - 0.8) * hpFrac)}
+            height={Math.max(1, hpBarHeight - 0.8)}
             fill={hpColor}
-            cornerRadius={hpBarRadius}
+            cornerRadius={Math.max(0.5, hpBarRadius - 0.4)}
+          />
+          <Line
+            points={[hpBarWidth / 2, 0, hpBarWidth / 2, hpBarHeight]}
+            stroke="rgba(6, 8, 13, 0.7)"
+            strokeWidth={0.9}
+            listening={false}
           />
           {hpText !== null && (() => {
             const hpBoxW = Math.max(hpBarWidth + 24, 68);
@@ -942,20 +1003,20 @@ function TokenShapeInner({
               />
             );
           })()}
-          {token.kind === 'pc' && (display.curHp ?? 1) <= 0 && display.deathSaves && (
-            <Group name="token-death-saves" x={hpBarWidth / 2} y={deathSavesY - hpBarY}>
-              <Rect x={-28} y={0} width={56} height={11} cornerRadius={5.5} fill="#0b0d12eb" stroke={display.deathSaves.successes >= 3 ? '#39c46b' : '#b89650'} strokeWidth={1} />
-              {[0, 1, 2].map((i) => (
-                <Circle key={`s${i}`} x={-19 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.successes ? '#39c46b' : '#1b2420'} stroke={i < display.deathSaves!.successes ? '#b7f7cc' : '#39c46b88'} strokeWidth={1} />
-              ))}
-              <Rect x={-0.5} y={2} width={1} height={7} fill="#ffffff44" />
-              {[0, 1, 2].map((i) => (
-                <Circle key={`f${i}`} x={5 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.failures ? '#e23b3b' : '#291a1c'} stroke={i < display.deathSaves!.failures ? '#ffb3b3' : '#e23b3b88'} strokeWidth={1} />
-              ))}
-            </Group>
-          )}
         </Group>
         )
+      )}
+      {!isDead && token.kind === 'pc' && (display.curHp ?? 1) <= 0 && display.deathSaves && (
+        <Group name="token-death-saves" x={0} y={deathSavesY}>
+          <Rect x={-28} y={0} width={56} height={11} cornerRadius={5.5} fill="#0b0d12eb" stroke={display.deathSaves.successes >= 3 ? '#39c46b' : '#b89650'} strokeWidth={1} />
+          {[0, 1, 2].map((i) => (
+            <Circle key={`s${i}`} x={-19 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.successes ? '#39c46b' : '#1b2420'} stroke={i < display.deathSaves!.successes ? '#b7f7cc' : '#39c46b88'} strokeWidth={1} />
+          ))}
+          <Rect x={-0.5} y={2} width={1} height={7} fill="#ffffff44" />
+          {[0, 1, 2].map((i) => (
+            <Circle key={`f${i}`} x={5 + i * 7} y={5.5} radius={2.6} fill={i < display.deathSaves!.failures ? '#e23b3b' : '#291a1c'} stroke={i < display.deathSaves!.failures ? '#ffb3b3' : '#e23b3b88'} strokeWidth={1} />
+          ))}
+        </Group>
       )}
       {effectiveShowName && Math.abs(layout.yNudge) >= 4 && (
         <Line
@@ -1162,6 +1223,7 @@ export const TokenShape = memo(
     p.serverLayer===n.serverLayer && p.serverSprite?.body.key === n.serverSprite?.body.key && p.serverSprite?.hud.key === n.serverSprite?.hud.key && p.serverSprite?.grayscale===n.serverSprite?.grayscale && p.cacheArtwork===n.cacheArtwork &&
     p.presentation === n.presentation &&
     p.sharedDarkvision === n.sharedDarkvision &&
+    p.showHp === n.showHp &&
     p.showHpNumbers === n.showHpNumbers &&
     p.hpDisplay === n.hpDisplay &&
     p.crowdLayout?.inCrowd === n.crowdLayout?.inCrowd &&

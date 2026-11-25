@@ -42,7 +42,7 @@ describe('tokenCrowdLayout', () => {
     expect(a.placement).toBe('below');
     expect(a.yNudge).toBe(0);
     expect(a.hudOpacity).toBe(1);
-    expect(a.showExactHp).toBe(true);
+    expect(a.showExactHp).toBe(false);
     expect(a.useLiveHud).toBe(false);
   });
 
@@ -150,7 +150,7 @@ describe('tokenCrowdLayout', () => {
       peekAll: false,
     });
     expect(minimal.get('a')!.showName).toBe(true);
-    expect(minimal.get('a')!.showExactHp).toBe(true);
+    expect(minimal.get('a')!.showExactHp).toBe(false);
     expect(minimal.get('b')!.showName).toBe(false);
     expect(minimal.get('b')!.showHp).toBe(true);
     expect(minimal.get('b')!.showExactHp).toBe(false);
