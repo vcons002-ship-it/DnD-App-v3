@@ -12,7 +12,7 @@ describe('two-tier miniature detail',()=>{
     }
   });
   it('keeps each graphics mode on its own two-model pair',()=>{
-    expect([40,120,220,360].map(p=>miniatureLodForPixels(p,'high'))).toEqual(['low','low','low','high']);
+    expect([40,120,220,360].map(p=>miniatureLodForPixels(p,'high'))).toEqual(['balanced','balanced','high','high']);
     expect([40,120,220,360].map(p=>miniatureLodForPixels(p,'balanced'))).toEqual(['low','low','balanced','balanced']);
     expect([40,120,220,360].map(p=>miniatureLodForPixels(p,'low'))).toEqual(['battlefield','low','low','low']);
     expect(miniatureLodForPixels(360,'balanced')).toBe('balanced');
@@ -36,7 +36,7 @@ describe('two-tier miniature detail',()=>{
       expect(miniatureLodForPixels(pair.pixels*.86,quality,pair.near)).toBe(pair.near);
       expect(miniatureLodForPixels(pair.pixels*.84,quality,pair.near)).toBe(pair.far);
     }
-    expect(miniatureLodForPixels(100,'high','low')).toBe('low');
+    expect(miniatureLodForPixels(100,'high','balanced')).toBe('balanced');
     expect(miniatureLodForPixels(500,'low','high')).toBe('low');
     expect(miniatureLodForPixels(NaN,'balanced')).toBe('low');
   });
