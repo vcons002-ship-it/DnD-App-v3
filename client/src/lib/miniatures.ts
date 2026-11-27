@@ -32,15 +32,10 @@ function withReviewedHigh<T extends {sha256?:string;highDetail?:MiniatureDetailA
 /** Four-view Hunyuan reconstruction, shared by all defeated creature markers. */
 export const DEATH_SKULL: MiniatureDefinition = {id:'death-skull',url:'/miniatures/objects/death-skull-c1d9470a2def.glb',baseDiameter:1,baseCenter:[0,0,0]};
 export const SPIRITUAL_WEAPON: MiniatureDefinition = {id:'spiritual-weapon',url:'builtin:spiritual-weapon',baseDiameter:1,baseCenter:[0,0,0]};
-// Druk's approved Battlefield sculpt is the runtime choice at every preset and
-// distance. Retain the original detail manifests for authoring and comparisons.
-const fixedBattlefieldModels=new Map(battlefieldManifest.models.filter(m=>m.id==='druk').map(m=>[m.id,m]));
-export const MINIATURES = Object.fromEntries([...manifest.models, ...monsters.models, ...monsters.variants, ...objects.models].map(model => [model.id, fixedBattlefieldModels.get(model.id)??withReviewedHigh(model)])) as unknown as Record<MiniatureDefinition['id'], MiniatureDefinition>;
+export const MINIATURES = Object.fromEntries([...manifest.models, ...monsters.models, ...monsters.variants, ...objects.models].map(model => [model.id, withReviewedHigh(model)])) as unknown as Record<MiniatureDefinition['id'], MiniatureDefinition>;
 const generated: Record<string, MiniatureDefinition> = Object.create(null);
-// Fixed choices have no alternate tier or denser fallback. Excluding them from
-// these maps also leaves generated/uploaded models with the same ID alone.
-const qualityModels=new Map(qualityManifest.models.filter(m=>!fixedBattlefieldModels.has(m.id)).map(m=>[`${m.id}:${m.profile}`,{...MINIATURES[m.id],url:m.url,fallbackUrl:MINIATURES[m.id].url}]));
-const battlefieldModels=new Map(battlefieldManifest.models.filter(m=>!fixedBattlefieldModels.has(m.id)).map(m=>[m.id,{...MINIATURES[m.id],url:m.url,fallbackUrl:qualityModels.get(`${m.id}:low`)?.url??MINIATURES[m.id].url}]));
+const qualityModels=new Map(qualityManifest.models.map(m=>[`${m.id}:${m.profile}`,{...MINIATURES[m.id],url:m.url,fallbackUrl:MINIATURES[m.id].url}]));
+const battlefieldModels=new Map(battlefieldManifest.models.map(m=>[m.id,{...MINIATURES[m.id],url:m.url,fallbackUrl:qualityModels.get(`${m.id}:low`)?.url??MINIATURES[m.id].url}]));
 /** Character variants share the original bases, FX and art. Other families stay
  * on their existing, already reduced geometry. */
 export function miniatureForLod(model:MiniatureDefinition,level:MiniatureLod,quality?:MiniatureLodBudget):MiniatureDefinition{
@@ -52,7 +47,7 @@ export function miniatureForLod(model:MiniatureDefinition,level:MiniatureLod,qua
     const detail=high?model.highDetail:balanced?model.balancedDetail:undefined;
     return detail?{...model,url:detail.url,fallbackUrl:model.url}:model;
   }
-  if(!battlefieldModels.has(model.id))return model;
+  if(!model.url.startsWith('/miniatures/')||!battlefieldModels.has(model.id))return model;
   const selected=level==='battlefield'?battlefieldModels.get(model.id)!:level==='high'?MINIATURES[model.id]:qualityModels.get(`${model.id}:${level}`)??model;
   if(!quality)return selected;
   // A failed coarse asset must not silently fetch a denser/off-screen model.
@@ -67,7 +62,7 @@ export function miniatureForPreload(model:MiniatureDefinition,quality:MiniatureL
 /** Stable IDs/base measurements keep effects, hit areas and facing identical across tiers. */
 export function miniatureForQuality(model:MiniatureDefinition|null,quality:EnvironmentQuality):MiniatureDefinition|null{
   if(quality==='legacy')return null;
-  if(!model||quality==='high'||quality==='auto')return model;
+  if(!model||quality==='high'||quality==='auto'||!model.url.startsWith('/miniatures/'))return model;
   return qualityModels.get(`${model.id}:${quality==='balanced'?'balanced':'low'}`)??model;
 }
 const bundledMonsterIds = new Set([...monsters.models, ...monsters.variants].map(m => m.id));

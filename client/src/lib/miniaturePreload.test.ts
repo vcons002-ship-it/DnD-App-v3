@@ -1,10 +1,12 @@
 import {it,expect,vi} from 'vitest';
 import {MINIATURES,miniatureForLod,miniatureForPreload,miniatureForQuality,miniaturePreloadDefinitions,refreshMiniatureCatalog,resolveMiniature} from './miniatures';
+import manifest from '../../public/miniatures/manifest.json';
+import qualityManifest from '../../public/miniatures/quality-manifest.json';
 import battlefieldManifest from '../../public/miniatures/battlefield-manifest.json';
 import {miniatureLodPair,miniatureLodForPixels} from '../../../shared/miniatureLod';
 
 it('only prepares the coarse character model of the selected graphics pair',()=>{
-  for(const id of ['varis','vanec'])for(const quality of ['high','balanced','low'] as const){
+  for(const id of ['druk','varis','vanec'])for(const quality of ['high','balanced','low'] as const){
     const pair=miniatureLodPair(quality),model=MINIATURES[id];
     const preload=miniatureForPreload(model,quality);
     expect(preload.url).toBe(miniatureForLod(model,pair.far).url);
@@ -15,27 +17,39 @@ it('only prepares the coarse character model of the selected graphics pair',()=>
     expect(near.fallbackUrl).toBe(preload.url);
   }
 });
-it('uses the approved Battlefield Druk at every graphics setting and zoom without alternate downloads',()=>{
-  const expected=battlefieldManifest.models.find(m=>m.id==='druk')!,model=MINIATURES.druk;
-  expect(model.url).toBe(expected.url);
-  expect(model.baseCenter).toEqual(expected.baseCenter);
-  expect(model.baseDiameter).toBe(expected.baseDiameter);
-  expect(model.baseTextureUrl).toBe(expected.baseTextureUrl);
+it('routes Druk across High, Balanced, Low, and Battlefield tiers while preserving base metadata',()=>{
+  const highExpected=manifest.models.find(m=>m.id==='druk')!;
+  const balancedExpected=qualityManifest.models.find(m=>m.id==='druk'&&m.profile==='balanced')!;
+  const lowExpected=qualityManifest.models.find(m=>m.id==='druk'&&m.profile==='low')!;
+  const bfExpected=battlefieldManifest.models.find(m=>m.id==='druk')!;
+  const model=MINIATURES.druk;
+  expect(model.url).toBe(highExpected.url);
+  expect(model.baseCenter).toEqual(highExpected.baseCenter);
+  expect(model.baseDiameter).toBe(highExpected.baseDiameter);
+  expect(model.baseTextureUrl).toBe(highExpected.baseTextureUrl);
   expect(resolveMiniature('Druk','pc')).toBe(model);
   expect(resolveMiniature('Druk','pc',{modelType:'druk'})).toBe(model);
   expect(miniaturePreloadDefinitions(['druk'])).toEqual([model]);
-  for(const quality of ['auto','high','balanced','low','off'] as const){
-    expect(miniatureForQuality(model,quality)).toBe(model);
-    expect(miniatureForPreload(model,quality)).toBe(model);
-    for(const pixels of [0,60,200,400,1200])for(const onScreen of [false,true]){
-      const level=miniatureLodForPixels(pixels,quality,undefined,onScreen);
-      expect(miniatureForLod(model,level,quality)).toBe(model);
-    }
-  }
+  expect(miniatureForQuality(model,'high')?.url).toBe(highExpected.url);
+  expect(miniatureForQuality(model,'auto')?.url).toBe(highExpected.url);
+  expect(miniatureForQuality(model,'balanced')?.url).toBe(balancedExpected.url);
+  expect(miniatureForQuality(model,'low')?.url).toBe(lowExpected.url);
+  expect(miniatureForQuality(model,'off')?.url).toBe(lowExpected.url);
+  expect(miniatureForLod(model,'high').url).toBe(highExpected.url);
+  expect(miniatureForLod(model,'balanced').url).toBe(balancedExpected.url);
+  expect(miniatureForLod(model,'low').url).toBe(lowExpected.url);
+  expect(miniatureForLod(model,'battlefield').url).toBe(bfExpected.url);
   for(const level of ['battlefield','low','balanced','high'] as const){
-    expect(miniatureForLod(model,level)).toBe(model);
+    const resolved=miniatureForLod(model,level);
+    expect(resolved.baseCenter).toEqual(highExpected.baseCenter);
+    expect(resolved.baseDiameter).toBe(highExpected.baseDiameter);
+    expect(resolved.baseTextureUrl).toBe(highExpected.baseTextureUrl);
   }
-  expect(model.fallbackUrl).toBeUndefined();
+  expect(miniatureForLod(model,miniatureLodPair('high').far,'high').url).toBe(balancedExpected.url);
+  expect(miniatureForLod(model,miniatureLodPair('high').near,'high').url).toBe(highExpected.url);
+  expect(miniatureForLod(model,miniatureLodPair('low').far,'low').url).toBe(bfExpected.url);
+  expect(miniatureForLod(model,miniatureLodPair('low').near,'low').url).toBe(lowExpected.url);
+  expect(miniatureLodForPixels(360,'high')).toBe('high');
 });
 it('keeps custom uploads and existing creature sculpts unchanged',()=>{
   for(const id of ['custom-hero','druk']){
