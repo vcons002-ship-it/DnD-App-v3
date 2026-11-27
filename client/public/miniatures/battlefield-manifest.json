@@ -3,9 +3,9 @@
   "models": [
     {
       "id": "druk",
-      "url": "/miniatures/druk-battlefield-shared-3c06f1e45caa.glb",
-      "sha256": "3c06f1e45caafcc59dbe6a20ac91073231510e735b8e8643b62e8c63801e662c",
-      "bytes": 8271404,
+      "url": "/miniatures/druk-battlefield-shared-6dc15c2961b2.glb",
+      "sha256": "6dc15c2961b2624341a14d57a714e1f13b2e6f45a48584bdc2e976e792e1d24a",
+      "bytes": 8270876,
       "triangles": 194641,
       "baseCenter": [
         0.03537392616271973,
@@ -16,14 +16,14 @@
       "baseTextureUrl": "/miniatures/druk-basalt-e19b0a12af0c.png",
       "receipt": "assets/miniatures/battlefield-lod/druk.json",
       "sharedTextureReceipt": "assets/miniatures/shared-textures/druk-battlefield.json",
-      "sharedTextureReceiptSha256": "b0d7d887498e9dc0c6c72d73887bac8fbe56192c044367b7383839362a313076"
+      "sharedTextureReceiptSha256": "dd415fea345766456afa9661190186a80f4af37a1c1c21866d1cadc5d8b5ba9f"
     },
     {
       "id": "varis",
-      "url": "/miniatures/varis-battlefield-shared-49b6f8631a9d.glb",
-      "sha256": "49b6f8631a9d7e51889751a4eaa5b3ef7fca658bae400cacdcb29da9ce3a6fe4",
-      "bytes": 1985464,
-      "triangles": 81756,
+      "url": "/miniatures/varis-battlefield-shared-c948de4bebbf.glb",
+      "sha256": "c948de4bebbf42c553c512c8c1d0c3f7372c2e61af173a06cf9cd6baaa1b851b",
+      "bytes": 2119092,
+      "triangles": 86732,
       "baseCenter": [
         0.08445727825164795,
         -0.9991905093193054,
@@ -32,14 +32,14 @@
       "baseDiameter": 1.2431232929229736,
       "receipt": "assets/miniatures/battlefield-lod/varis.json",
       "sharedTextureReceipt": "assets/miniatures/shared-textures/varis-battlefield.json",
-      "sharedTextureReceiptSha256": "68f1ee31a0129becb6a76bd782527156c1c025f819692787e45ffcfb5617ae72"
+      "sharedTextureReceiptSha256": "4a60c5cb9040d24936342d2b57e36ed8b6fd9896f3231c9eaa708ef0252f4500"
     },
     {
       "id": "vanec",
-      "url": "/miniatures/vanec-tail-root-battlefield-shared-e5b99a23fb66.glb",
-      "sha256": "e5b99a23fb660d9de86adb918d85d1d1a49cf3922629dd6c3d21ff26e8651608",
-      "bytes": 3948408,
-      "triangles": 124155,
+      "url": "/miniatures/vanec-tail-root-battlefield-shared-a8546a2c275a.glb",
+      "sha256": "a8546a2c275a9d1c4d7898a7ec9baff60b09b68cbda89b9b34cf7b4f7da80264",
+      "bytes": 3744900,
+      "triangles": 120257,
       "baseCenter": [
         -0.00920414924621582,
         -0.9993069767951965,
@@ -49,7 +49,7 @@
       "fxUrl": "/miniatures/vanec-fx-2e60effcfd99.json",
       "receipt": "assets/miniatures/battlefield-lod/vanec-tail-root-20261022.json",
       "sharedTextureReceipt": "assets/miniatures/shared-textures/vanec-tail-root-battlefield-20261022.json",
-      "sharedTextureReceiptSha256": "aa489724a0ca36b64f6880e7dba837473e2030cf407c39f2f841629fd5cf8a7b"
+      "sharedTextureReceiptSha256": "4f08ee3c58b358db9c53ea3611e35717a8075a307bbfb1723b815f5fe1e7a6b1"
     }
   ]
 }

@@ -1,10 +1,10 @@
 export type MiniatureLod = 'battlefield' | 'low' | 'balanced' | 'high';
 export type MiniatureLodBudget = 'low' | 'balanced' | 'high' | 'auto' | 'off';
 
-// Low geometry is the visual floor for High/Balanced. Reserve the more heavily
-// reduced Battlefield sculpt for the Low performance preset.
+// High uses Balanced as its distant floor and upgrades at 180 CSS px; Balanced
+// keeps Low/Balanced at 180 px, and Low uses Battlefield/Low at 100 px.
 const PAIRS = {
-  high: {far: 'low', near: 'high', pixels: 300},
+  high: {far: 'balanced', near: 'high', pixels: 180},
   balanced: {far: 'low', near: 'balanced', pixels: 180},
   low: {far: 'battlefield', near: 'low', pixels: 100},
 } as const;

@@ -36,5 +36,3 @@ jobs:
           node scripts/token-assets/validate-runtime.mjs
           node scripts/token-assets/validate-quality-models.mjs
           node scripts/token-assets/validate-battlefield-lod.mjs
-      - name: Reproduce approved Vanec tail texture and deliveries
-        run: node scripts/token-assets/rebuild-vanec-tail.mjs --out "${{ runner.temp }}/vanec-tail-reproduction"

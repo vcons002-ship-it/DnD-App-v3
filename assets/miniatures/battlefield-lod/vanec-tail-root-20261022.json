@@ -19,16 +19,16 @@
       "permissive": true
     }
   },
-  "sourceUrl": "/miniatures/vanec-tail-root-low-9c1f11d325a1.glb",
-  "sourceSha256": "9c1f11d325a1fe505f6282646b77ad034253a0d0fac425882c6efdc18acc11fe",
-  "sourceBytes": 19901780,
-  "sourceTriangles": 207975,
-  "sourceGeometryBytes": 12282568,
-  "geometryBytes": 5909894,
-  "filename": "vanec-tail-root-battlefield-973ad2c8aaf4.glb",
-  "sha256": "973ad2c8aaf4fdd9679d88697e16b2a5906e7c5cb60693b1888e2e39efab67ee",
-  "bytes": 16250236,
-  "triangles": 124155,
+  "sourceUrl": "/miniatures/vanec-light-819b215b8d23.glb",
+  "sourceSha256": "819b215b8d23ccda7f65617721c3e9c9ff8a02b76d394af79b910a7d07ae9073",
+  "sourceBytes": 21088960,
+  "sourceTriangles": 201865,
+  "sourceGeometryBytes": 11896820,
+  "geometryBytes": 5605246,
+  "filename": "vanec-battlefield-2e30ec4741c6.glb",
+  "sha256": "2e30ec4741c6fca43d7033ef1ed5eb9b8700f26835bc12ab632323fa2902ca81",
+  "bytes": 17477340,
+  "triangles": 120257,
   "baseCenter": [
     -0.00920414924621582,
     -0.9993069767951965,
@@ -36,7 +36,7 @@
   ],
   "baseDiameter": 1.1495295763015747,
   "fxUrl": "/miniatures/vanec-fx-2e60effcfd99.json",
-  "textureBytes": 12302292,
+  "textureBytes": 13733090,
   "textures": [
     {
       "name": "",
@@ -91,92 +91,34 @@
       "mime": "image/webp",
       "sha256": "7581a45d5676c80700db208b6534e4796e0086fb5f78f53f46b4f867f082db69",
       "bytes": 3599914
+    },
+    {
+      "name": "Hunyuan_Body_MR",
+      "mime": "image/webp",
+      "sha256": "f3c9ebd692e16852404b5fcaeba4a93d976788640c16d5983cc0efc50cedd426",
+      "bytes": 277940
+    },
+    {
+      "name": "Hunyuan_Body_Albedo",
+      "mime": "image/webp",
+      "sha256": "e7f551b063a9503d90802585e41f0d652c1a6fa5e35fd8acd71272e913a9101d",
+      "bytes": 992590
+    },
+    {
+      "name": "Preserved_Base_Albedo",
+      "mime": "image/webp",
+      "sha256": "ae3deed2609eb36f38e6bd32e50711e5188435f19ac395c5cc1c573b52e4997a",
+      "bytes": 160268
     }
   ],
   "primitives": [
     {
       "nodes": [
-        "Vanec_Preserved_Body"
-      ],
-      "material": "",
-      "before": 44729,
-      "after": 38619,
-      "detail": false,
-      "preserved": false,
-      "seamSafeBody": true,
-      "seamSafeHead": false,
-      "untexturedHair": false,
-      "reduction": {
-        "ratio": 0.2,
-        "error": 0.002,
-        "permissive": false
-      },
-      "actualError": 0.0019530780846253037
-    },
-    {
-      "nodes": [
-        "Vanec_Robe_Local_Repair_rear_hem_slit"
-      ],
-      "material": "Vanec_Local_Robe_Infill_From_Existing_Cloth_Color",
-      "before": 1472,
-      "after": 1472,
-      "detail": false,
-      "preserved": true,
-      "seamSafeBody": false,
-      "seamSafeHead": false,
-      "untexturedHair": false,
-      "reduction": {
-        "ratio": 0.2,
-        "error": 0.002,
-        "permissive": false
-      },
-      "actualError": 0
-    },
-    {
-      "nodes": [
-        "Vanec_Robe_Local_Repair_side_pinhole"
-      ],
-      "material": "Vanec_Local_Robe_Infill_From_Existing_Cloth_Color",
-      "before": 1472,
-      "after": 1472,
-      "detail": false,
-      "preserved": true,
-      "seamSafeBody": false,
-      "seamSafeHead": false,
-      "untexturedHair": false,
-      "reduction": {
-        "ratio": 0.2,
-        "error": 0.002,
-        "permissive": false
-      },
-      "actualError": 0
-    },
-    {
-      "nodes": [
-        "Vanec_Robe_Local_Repair_rear_lower_slit"
-      ],
-      "material": "Vanec_Local_Robe_Infill_From_Existing_Cloth_Color",
-      "before": 1472,
-      "after": 1472,
-      "detail": false,
-      "preserved": true,
-      "seamSafeBody": false,
-      "seamSafeHead": false,
-      "untexturedHair": false,
-      "reduction": {
-        "ratio": 0.2,
-        "error": 0.002,
-        "permissive": false
-      },
-      "actualError": 0
-    },
-    {
-      "nodes": [
         "Vanec_Refined_Head"
       ],
       "material": "PBR_Material",
-      "before": 5683,
-      "after": 5683,
+      "before": 5687,
+      "after": 5687,
       "detail": true,
       "preserved": true,
       "seamSafeBody": false,
@@ -194,8 +136,8 @@
         "Vanec_Refined_Head"
       ],
       "material": "Vanec_Charcoal_Hair_And_Plum_Horns",
-      "before": 85565,
-      "after": 29757,
+      "before": 85649,
+      "after": 29803,
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
@@ -206,7 +148,7 @@
         "error": 0.002,
         "permissive": true
       },
-      "actualError": 0.0019530935678631067
+      "actualError": 0.0019529573619365692
     },
     {
       "nodes": [
@@ -214,7 +156,7 @@
       ],
       "material": "Material_0",
       "before": 3700,
-      "after": 3378,
+      "after": 3380,
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
@@ -225,7 +167,7 @@
         "error": 0.002,
         "permissive": false
       },
-      "actualError": 0.0019993064925074577
+      "actualError": 0.0019886852242052555
     },
     {
       "nodes": [
@@ -233,7 +175,7 @@
       ],
       "material": "Vanec_Left_Hand_Local_Fingertip_Color_Refinement",
       "before": 4640,
-      "after": 3658,
+      "after": 3664,
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
@@ -244,7 +186,7 @@
         "error": 0.002,
         "permissive": false
       },
-      "actualError": 0.0019968629349023104
+      "actualError": 0.0019956855103373528
     },
     {
       "nodes": [
@@ -669,8 +611,8 @@
         "VanecV4_Multiview_Staff_Dense"
       ],
       "material": "VanecV4_Reference_front",
-      "before": 1296,
-      "after": 1276,
+      "before": 1308,
+      "after": 1280,
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
@@ -681,14 +623,14 @@
         "error": 0.002,
         "permissive": false
       },
-      "actualError": 0.0019797589629888535
+      "actualError": 0.0019459945615381002
     },
     {
       "nodes": [
         "VanecV4_Multiview_Staff_Dense"
       ],
       "material": "VanecV4_Reference_back",
-      "before": 1229,
+      "before": 1223,
       "after": 1197,
       "detail": true,
       "preserved": false,
@@ -700,15 +642,15 @@
         "error": 0.002,
         "permissive": false
       },
-      "actualError": 0.00196072761900723
+      "actualError": 0.0019681842532008886
     },
     {
       "nodes": [
         "VanecV4_Multiview_Staff_Dense"
       ],
       "material": "VanecV4_Reference_left",
-      "before": 1238,
-      "after": 1226,
+      "before": 1254,
+      "after": 1232,
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
@@ -719,15 +661,15 @@
         "error": 0.002,
         "permissive": false
       },
-      "actualError": 0.0018353734631091356
+      "actualError": 0.0018691939767450094
     },
     {
       "nodes": [
         "VanecV4_Multiview_Staff_Dense"
       ],
       "material": "VanecV4_Reference_right",
-      "before": 1235,
-      "after": 1219,
+      "before": 1221,
+      "after": 1211,
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
@@ -738,7 +680,7 @@
         "error": 0.002,
         "permissive": false
       },
-      "actualError": 0.0019395631970837712
+      "actualError": 0.001466574496589601
     },
     {
       "nodes": [
@@ -746,7 +688,7 @@
       ],
       "material": "",
       "before": 43476,
-      "after": 22958,
+      "after": 23284,
       "detail": true,
       "preserved": false,
       "seamSafeBody": false,
@@ -757,10 +699,105 @@
         "error": 0.002,
         "permissive": false
       },
-      "actualError": 0.0019527284894138575
+      "actualError": 0.0019517707405611873
+    },
+    {
+      "nodes": [
+        "Vanec_Preserved_Body"
+      ],
+      "material": "Hunyuan_Body_PBR",
+      "before": 32922,
+      "after": 29682,
+      "detail": false,
+      "preserved": false,
+      "seamSafeBody": true,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.2,
+        "error": 0.002,
+        "permissive": false
+      },
+      "actualError": 0.0019895650912076235
+    },
+    {
+      "nodes": [
+        "Vanec_Preserved_Body"
+      ],
+      "material": "Preserved_Original_Regions",
+      "before": 5601,
+      "after": 4653,
+      "detail": false,
+      "preserved": false,
+      "seamSafeBody": true,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.2,
+        "error": 0.002,
+        "permissive": false
+      },
+      "actualError": 0.001980303321033716
+    },
+    {
+      "nodes": [
+        "Vanec_Robe_Local_Repair_rear_hem_slit"
+      ],
+      "material": "Hunyuan_Body_PBR",
+      "before": 1472,
+      "after": 1472,
+      "detail": false,
+      "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.2,
+        "error": 0.002,
+        "permissive": false
+      },
+      "actualError": 0
+    },
+    {
+      "nodes": [
+        "Vanec_Robe_Local_Repair_side_pinhole"
+      ],
+      "material": "Hunyuan_Body_PBR",
+      "before": 1472,
+      "after": 1472,
+      "detail": false,
+      "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.2,
+        "error": 0.002,
+        "permissive": false
+      },
+      "actualError": 0
+    },
+    {
+      "nodes": [
+        "Vanec_Robe_Local_Repair_rear_lower_slit"
+      ],
+      "material": "Hunyuan_Body_PBR",
+      "before": 1472,
+      "after": 1472,
+      "detail": false,
+      "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.2,
+        "error": 0.002,
+        "permissive": false
+      },
+      "actualError": 0
     }
   ],
-  "elapsedMs": 608.1582,
+  "elapsedMs": 704.9961000000001,
   "verified": {
     "texturesByteExact": true,
     "materialsPreserved": true,

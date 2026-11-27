@@ -7,23 +7,23 @@
     "detailRatio": 0.45,
     "error": 0.001
   },
-  "sourceUrl": "/miniatures/varis-264feff1b076.glb",
-  "sourceSha256": "264feff1b076e6fc0b7d75f72a143e9e02948c4de5e5cef3bd91dbda0defbd5d",
-  "sourceBytes": 25467436,
-  "sourceTriangles": 905238,
-  "sourceGeometryBytes": 26592146,
-  "geometryBytes": 12717478,
-  "filename": "varis-balanced-3bde75b45ae6.glb",
-  "sha256": "3bde75b45ae635a153cf4feea197df92959b30d1a89b58b5a47ebb0a0e07a52c",
-  "bytes": 18422152,
-  "triangles": 348006,
+  "sourceUrl": "/miniatures/varis-hunyuan-body-f53129851ba5.glb",
+  "sourceSha256": "f53129851ba5a69eea76203c5f8b2e81c380b6da4b868beef8d5ad0b05c53f8d",
+  "sourceBytes": 27141076,
+  "sourceTriangles": 906532,
+  "sourceGeometryBytes": 26692202,
+  "geometryBytes": 12884882,
+  "filename": "varis-balanced-acf866584260.glb",
+  "sha256": "acf866584260b1fb90e1ba9abd2dded6d2db4b1f431177ccce25be23bac8009a",
+  "bytes": 20192116,
+  "triangles": 352100,
   "baseCenter": [
     0.08445727825164795,
     -0.9991905093193054,
     -0.0005622506141662598
   ],
   "baseDiameter": 1.2431232929229736,
-  "textureBytes": 10721935,
+  "textureBytes": 12371895,
   "textures": [
     {
       "name": "",
@@ -96,30 +96,43 @@
       "mime": "image/png",
       "sha256": "c453a9a0a034d4356381de4d9ebe223d1318930541c75e40e9cf1a73b0d9057f",
       "bytes": 222370
+    },
+    {
+      "name": "Hunyuan_Body_MR",
+      "mime": "image/webp",
+      "sha256": "df96706f093ed351f16d35811f6bb1e875a79850b71b0df137cdb90857d0214d",
+      "bytes": 276308
+    },
+    {
+      "name": "Hunyuan_Body_Albedo",
+      "mime": "image/webp",
+      "sha256": "1f036dd569c8703e50a284a0c14ad310db6b336b4480897438a5006069b6963c",
+      "bytes": 1083908
+    },
+    {
+      "name": "Preserved_Base_Albedo",
+      "mime": "image/webp",
+      "sha256": "390e11249984d6f426723c7c8097230601ac6f4b5fa56cb51150e9675a63df45",
+      "bytes": 289744
     }
   ],
   "primitives": [
-    {
-      "nodes": [
-        "Varis_Preserved_Body"
-      ],
-      "material": "",
-      "before": 34810,
-      "after": 24104,
-      "detail": false,
-      "preserved": false,
-      "actualError": 0.0009957047877833247
-    },
     {
       "nodes": [
         "Varis_Refined_Face_and_Hair"
       ],
       "material": "PBR_Material",
       "before": 213329,
-      "after": 112931,
+      "after": 112901,
       "detail": true,
-      "preserved": false,
-      "actualError": 0.0009964070050045848
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
+      "actualError": 0.000990416738204658
     },
     {
       "nodes": [
@@ -129,8 +142,14 @@
       "before": 111425,
       "after": 50141,
       "detail": true,
-      "preserved": false,
-      "actualError": 0.00007778952567605302
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
+      "actualError": 0.00007772742537781596
     },
     {
       "nodes": [
@@ -140,8 +159,14 @@
       "before": 5163,
       "after": 1135,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0005101350834593177
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.000503266928717494
     },
     {
       "nodes": [
@@ -151,8 +176,14 @@
       "before": 51712,
       "after": 11376,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.00023148530453909189
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.00023234280524775386
     },
     {
       "nodes": [
@@ -160,10 +191,16 @@
       ],
       "material": "VarisV4_Dark_Leather_Edges",
       "before": 3584,
-      "after": 902,
+      "after": 918,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009162610513158143
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009403676958754659
     },
     {
       "nodes": [
@@ -174,6 +211,13 @@
       "after": 128,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -184,8 +228,14 @@
       "before": 7168,
       "after": 1576,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0008416516939178109
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0008406452252529562
     },
     {
       "nodes": [
@@ -196,6 +246,13 @@
       "after": 44,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -204,10 +261,16 @@
       ],
       "material": "VarisV4_Dark_Leather_Edges",
       "before": 3072,
-      "after": 1212,
+      "after": 1238,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009937556460499763
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009594222065061331
     },
     {
       "nodes": [
@@ -215,9 +278,15 @@
       ],
       "material": "VarisV4_Waxed_Tan_Stitch",
       "before": 4800,
-      "after": 1528,
+      "after": 1544,
       "detail": false,
-      "preserved": false,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0.0009972897823899984
     },
     {
@@ -229,6 +298,13 @@
       "after": 40,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -240,6 +316,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -248,10 +331,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 1964,
+      "after": 1960,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.000985622638836503
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.000981413060799241
     },
     {
       "nodes": [
@@ -262,6 +351,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -273,6 +369,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -281,10 +384,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 2072,
+      "after": 2084,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009762812405824661
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009751516045071185
     },
     {
       "nodes": [
@@ -295,6 +404,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -306,6 +422,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -314,10 +437,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 2082,
+      "after": 2084,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.000997247057966888
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009905321057885885
     },
     {
       "nodes": [
@@ -328,6 +457,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -339,6 +475,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -347,10 +490,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 1928,
+      "after": 1920,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009801130509003997
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009996049338951707
     },
     {
       "nodes": [
@@ -361,6 +510,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -372,6 +528,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -380,10 +543,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 2076,
+      "after": 2080,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009762117988429964
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.000975399452727288
     },
     {
       "nodes": [
@@ -394,6 +563,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -405,6 +581,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -413,10 +596,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 2098,
+      "after": 2086,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009788224706426263
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009765135473571718
     },
     {
       "nodes": [
@@ -427,6 +616,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -438,6 +634,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -446,10 +649,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 1928,
+      "after": 1924,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009924775222316384
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009964810451492667
     },
     {
       "nodes": [
@@ -460,6 +669,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -471,6 +687,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -479,10 +702,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 2082,
+      "after": 2076,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.000991634326055646
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009771112818270922
     },
     {
       "nodes": [
@@ -493,6 +722,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -504,6 +740,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -512,10 +755,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 2088,
+      "after": 2078,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009956068824976683
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009930150117725134
     },
     {
       "nodes": [
@@ -526,6 +775,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -537,6 +793,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -545,10 +808,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 1926,
+      "after": 1918,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009983812924474478
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009993731509894133
     },
     {
       "nodes": [
@@ -559,6 +828,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -570,6 +846,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -578,10 +861,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 2084,
+      "after": 2082,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0009759695967659354
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009762783301994205
     },
     {
       "nodes": [
@@ -592,6 +881,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -603,6 +899,13 @@
       "after": 64,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -611,10 +914,16 @@
       ],
       "material": "VarisV4_Natural_Feathers",
       "before": 2364,
-      "after": 2082,
+      "after": 2090,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.000997042516246438
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009956121211871505
     },
     {
       "nodes": [
@@ -625,28 +934,13 @@
       "after": 448,
       "detail": false,
       "preserved": true,
-      "actualError": 0
-    },
-    {
-      "nodes": [
-        "VarisV5_Right_Original_Bracer_Clip"
-      ],
-      "material": "",
-      "before": 46,
-      "after": 46,
-      "detail": false,
-      "preserved": true,
-      "actualError": 0
-    },
-    {
-      "nodes": [
-        "VarisV5_Left_Original_Bracer_Clip"
-      ],
-      "material": "",
-      "before": 58,
-      "after": 58,
-      "detail": false,
-      "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -655,10 +949,16 @@
       ],
       "material": "DrukV7_Gauntlet_Leather",
       "before": 18858,
-      "after": 8690,
+      "after": 8696,
       "detail": true,
-      "preserved": false,
-      "actualError": 0.0009957044385373592
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
+      "actualError": 0.0009764964343048632
     },
     {
       "nodes": [
@@ -669,6 +969,13 @@
       "after": 734,
       "detail": true,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -677,10 +984,16 @@
       ],
       "material": "DrukV7_Gauntlet_Leather",
       "before": 2323,
-      "after": 1723,
+      "after": 1731,
       "detail": true,
-      "preserved": false,
-      "actualError": 0.0009974349522963166
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
+      "actualError": 0.0009791023330762982
     },
     {
       "nodes": [
@@ -690,8 +1003,14 @@
       "before": 62184,
       "after": 13680,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.00007152182661229745
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.00007152781472541392
     },
     {
       "nodes": [
@@ -701,8 +1020,14 @@
       "before": 61567,
       "after": 13543,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.00007450654811691493
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.00007315856782952324
     },
     {
       "nodes": [
@@ -712,8 +1037,14 @@
       "before": 16474,
       "after": 3624,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0001463271037209779
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.000142933931783773
     },
     {
       "nodes": [
@@ -723,8 +1054,14 @@
       "before": 17159,
       "after": 3773,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.00016431276162620634
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.00016380834858864546
     },
     {
       "nodes": [
@@ -732,10 +1069,16 @@
       ],
       "material": "DrukV7_Gauntlet_Leather",
       "before": 19387,
-      "after": 8919,
+      "after": 8959,
       "detail": true,
-      "preserved": false,
-      "actualError": 0.0009763513226062059
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
+      "actualError": 0.0009765430586412549
     },
     {
       "nodes": [
@@ -746,6 +1089,13 @@
       "after": 734,
       "detail": true,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -756,8 +1106,14 @@
       "before": 85634,
       "after": 18838,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.00009884958853945136
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.00009956293797586113
     },
     {
       "nodes": [
@@ -768,6 +1124,13 @@
       "after": 1625,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -778,8 +1141,14 @@
       "before": 85945,
       "after": 18907,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.00009648454579291865
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.00009888199565466493
     },
     {
       "nodes": [
@@ -790,6 +1159,13 @@
       "after": 1544,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -800,8 +1176,14 @@
       "before": 28532,
       "after": 6276,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.00010997788194799796
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.00010999477672157809
     },
     {
       "nodes": [
@@ -812,6 +1194,13 @@
       "after": 5,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -822,8 +1211,14 @@
       "before": 29518,
       "after": 6492,
       "detail": false,
-      "preserved": false,
-      "actualError": 0.0001293072127737105
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.00013227429008111358
     },
     {
       "nodes": [
@@ -834,6 +1229,13 @@
       "after": 5,
       "detail": false,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -845,6 +1247,13 @@
       "after": 1539,
       "detail": true,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
       "actualError": 0
     },
     {
@@ -856,10 +1265,105 @@
       "after": 1580,
       "detail": true,
       "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.45,
+        "error": 0.001
+      },
+      "actualError": 0
+    },
+    {
+      "nodes": [
+        "Varis_Back_Quiver_Closure"
+      ],
+      "material": "Varis_Back_Quiver_Closure_Cloth",
+      "before": 1294,
+      "after": 1294,
+      "detail": false,
+      "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0
+    },
+    {
+      "nodes": [
+        "Varis_Preserved_Body"
+      ],
+      "material": "Hunyuan_Body_PBR",
+      "before": 25247,
+      "after": 18801,
+      "detail": false,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.000990785309113562
+    },
+    {
+      "nodes": [
+        "Varis_Preserved_Body"
+      ],
+      "material": "Preserved_Original_Regions",
+      "before": 9563,
+      "after": 8049,
+      "detail": false,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0.0009999123867601156
+    },
+    {
+      "nodes": [
+        "VarisV5_Right_Original_Bracer_Clip"
+      ],
+      "material": "Hunyuan_Body_PBR",
+      "before": 46,
+      "after": 46,
+      "detail": false,
+      "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
+      "actualError": 0
+    },
+    {
+      "nodes": [
+        "VarisV5_Left_Original_Bracer_Clip"
+      ],
+      "material": "Hunyuan_Body_PBR",
+      "before": 58,
+      "after": 58,
+      "detail": false,
+      "preserved": true,
+      "seamSafeBody": false,
+      "seamSafeHead": false,
+      "untexturedHair": false,
+      "reduction": {
+        "ratio": 0.22,
+        "error": 0.001
+      },
       "actualError": 0
     }
   ],
-  "elapsedMs": 1019.0347000000002,
+  "elapsedMs": 1184.0285,
   "verified": {
     "texturesByteExact": true,
     "materialsPreserved": true,
